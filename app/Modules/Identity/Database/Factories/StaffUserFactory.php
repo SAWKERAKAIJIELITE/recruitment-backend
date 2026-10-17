@@ -1,0 +1,45 @@
+<?php
+
+namespace App\Modules\Identity\Database\Factories;
+
+use App\Modules\Identity\Models\Role;
+use App\Modules\Identity\Models\StaffUser;
+use Illuminate\Database\Eloquent\Factories\Factory;
+
+/** @extends Factory<StaffUser> */
+class StaffUserFactory extends Factory
+{
+    protected $model = StaffUser::class;
+
+    public function definition(): array
+    {
+        return [
+            // 'type' => User::TYPE_STAFF,
+            'username' => fake()->unique()->userName(),
+            'first_name' => fake()->firstName(),
+            'last_name' => fake()->lastName(),
+            'email' => null,
+            'password' => 'password',          // the 'hashed' cast hashes it
+            'is_active' => true,
+            'must_change_password' => false,
+        ];
+    }
+
+    // public function candidate(): static
+    // {
+    //     return $this->state(['type' => User::TYPE_CANDIDATE]);
+    // }
+
+    public function inactive(): static
+    {
+        return $this->state(['is_active' => false]);
+    }
+
+    /** Requires RolesAndPermissionsSeeder to have run. */
+    public function withRole(string $slug): static
+    {
+        return $this->afterCreating(function (StaffUser $user) use ($slug) {
+            $user->roles()->attach(Role::where('slug', $slug)->firstOrFail());
+        });
+    }
+}
