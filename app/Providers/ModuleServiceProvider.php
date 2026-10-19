@@ -32,6 +32,16 @@ class ModuleServiceProvider extends ServiceProvider
             if (is_file($routes)) {
                 $this->loadRoutesFrom($routes);
             }
+
+            if ($this->app->runningInConsole()) {
+                $module = basename($moduleDir);
+
+                $this->commands(
+                    collect(File::glob($moduleDir . '/Console/*Command.php'))
+                        ->map(fn(string $file) => "App\\Modules\\{$module}\\Console\\" . basename($file, '.php'))
+                        ->all()
+                );
+            }
         }
     }
 }

@@ -27,6 +27,7 @@ class RolesAndPermissionsSeeder extends Seeder
         'users.manage' => 'إدارة المستخدمين والأدوار',
         'audit.view' => 'عرض سجلات التدقيق',
         'audit.view_related' => 'عرض تدقيق العمليات ذات الصلة فقط',
+        'devices.approve' => 'اعتماد الأجهزة الموثوقة وإلغاؤها',
     ];
 
     private const ROLES = [
@@ -65,6 +66,7 @@ class RolesAndPermissionsSeeder extends Seeder
                 'contracts.manage',
                 'users.manage',
                 'audit.view',
+                'devices.approve',
             ],
         ],
     ];

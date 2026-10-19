@@ -11,22 +11,22 @@ return new class extends Migration
     {
         Schema::create('staff_users', function (Blueprint $table) {
             $table->uuid('id')->primary();
+            $table->string('personal_number')->unique();
             // $table->string('type', 20);                       // staff | candidate
             $table->string('username', 50)->unique();        // stored lowercase
-            $table->string('first_name');
-            $table->string('last_name');
-            // $table->string('email')->nullable()->unique();
+            $table->string('first_name',15);
+            $table->string('last_name',15);
             $table->string('password');
             $table->boolean('is_active')->default(true);
-            $table->boolean('must_change_password')->default(false);
+            // $table->boolean('must_change_password')->default(false);
             $table->timestampTz('last_login_at')->nullable();
             $table->timestampsTz();
         });
 
         // DB::statement("ALTER TABLE users ADD CONSTRAINT users_type_check CHECK (type IN ('staff', 'candidate'))");
         DB::statement("ALTER TABLE staff_users ADD CONSTRAINT staff_users_username_format CHECK (username ~ '^[a-z._-]{3,50}$')");
-        // DB::statement("ALTER TABLE staff_users ADD CONSTRAINT staff_users_first_name_format CHECK (first_name ~ '^[a-z0-9._-]{3,50}$')");
-        // DB::statement("ALTER TABLE staff_users ADD CONSTRAINT staff_users_last_name_format CHECK (last_name ~ '^[a-z0-9._-]{3,50}$')");
+        DB::statement("ALTER TABLE staff_users ADD CONSTRAINT staff_users_first_name_format CHECK (first_name !~ '[0-9]' AND LENGTH(first_name) >= 3)");
+        DB::statement("ALTER TABLE staff_users ADD CONSTRAINT staff_users_last_name_format CHECK (last_name !~ '[0-9]' AND LENGTH(last_name) >= 3)");
 
         Schema::create('sessions', function (Blueprint $table) {
             $table->string('id')->primary();

@@ -3,37 +3,47 @@
 namespace App\Modules\Identity\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Modules\Identity\Actions\IssueLoginChallenge;
 use App\Modules\Identity\Actions\LoginStaff;
+use App\Modules\Identity\Actions\StaffLoginData;
+use App\Modules\Identity\Http\Requests\ChallengeRequest;
 use App\Modules\Identity\Http\Requests\LoginRequest;
 use App\Modules\Identity\Http\Resources\StaffUserResource;
-// use App\Modules\Identity\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 
 class StaffAuthController extends Controller
 {
+    /**
+     * Request a login challenge
+     *
+     * Step 1 of login. The device signs the returned challenge together with the username.
+     *
+     * @unauthenticated
+     */
+    public function challenge(ChallengeRequest $request, IssueLoginChallenge $issue): JsonResponse
+    {
+        return response()->json($issue->execute($request->validated('device_id')));
+    }
+
+    /**
+     * Log in
+     *
+     * Step 2 of login. Requires a signature made with the device's private key.
+     *
+     * @unauthenticated
+     */
     public function login(LoginRequest $request, LoginStaff $loginStaff): JsonResponse
     {
-        // $user = User::where('username', Str::lower(trim($request->validated('username'))))->first();
-
-        // // One generic failure for unknown user, wrong password and inactive account,
-        // // so the response never reveals which accounts exist.
-        // if (!$user || !$user->is_active || !Hash::check($request->validated('password'), $user->password)) {
-        //     throw ValidationException::withMessages([
-        //         'username' => [trans('auth.failed')],
-        //     ]);
-        // }
-
-        // $user->forceFill(['last_login_at' => now()])->save();
-
-        // $token = $user->createToken($request->validated('device_name') ?? 'api')->plainTextToken;
-
-        $result = $loginStaff->execute(
-            $request->validated('username'),
-            $request->validated('password'),
-            $request->validated('device_name') ?? 'api',
-        );
+        $result = $loginStaff->execute(new StaffLoginData(
+            deviceId: $request->validated('device_id'),
+            challengeId: $request->validated('challenge_id'),
+            signature: $request->validated('signature'),
+            username: $request->validated('username'),
+            password: $request->validated('password'),
+            tokenName: $request->validated('device_name') ?? 'api',
+        ));
 
         return response()->json([
             'token' => $result['token'],

@@ -10,6 +10,11 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Dedoc\Scramble\Scramble;
+use Dedoc\Scramble\Support\Generator\OpenApi;
+use Dedoc\Scramble\Support\Generator\SecurityScheme;
+use App\Modules\Identity\Models\AccessToken;
+use Laravel\Sanctum\Sanctum;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -26,6 +31,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Scramble::configure()->withDocumentTransformers(function (OpenApi $openApi) {
+            $openApi->secure(SecurityScheme::http('bearer'));
+        });
         // Any ability whose name equals a permission slug ("reports.view") is answered from the
         // user's effective permissions. We only ever return true or null (never false), so Policies
         // for resource-level rules ("candidate sees only their own attempt") still get their say.
@@ -37,10 +45,19 @@ class AppServiceProvider extends ServiceProvider
             $username = Str::lower((string) $request->input('username'));
 
             return [
-                Limit::perMinute(7,5)->by('ip:' . $request->ip()),
+                Limit::perMinute(30)->by('ip:' . $request->ip()),
                 Limit::perMinute(5)->by('user:' . $username . '|' . $request->ip()),
             ];
-        // return Limit::perMinute(5)->by(Str::lower((string) $request->input('username')) . '|' . $request->ip());
         });
+        Sanctum::usePersonalAccessTokenModel(AccessToken::class);
+
+        RateLimiter::for('device-register', fn(Request $request) => Limit::perHour(20)->by($request->ip()));
+
+        RateLimiter::for('device-status', fn(Request $request) => Limit::perMinute(30)->by($request->ip()));
+
+        RateLimiter::for('device-challenge', fn(Request $request) => [
+            Limit::perMinute(60)->by('ip:' . $request->ip()),
+            Limit::perMinute(10)->by('device:' . $request->input('device_id')),
+        ]);
     }
 }

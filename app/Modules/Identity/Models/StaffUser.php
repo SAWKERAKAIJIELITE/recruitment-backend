@@ -19,14 +19,14 @@ class StaffUser extends Authenticatable
     // public const TYPE_CANDIDATE = 'candidate';
 
     protected $fillable = [
-        'type',
+        // 'type',
         'username',
         'first_name',
         'last_name',
-        'email',
+        'personal_number',
         'password',
         'is_active',
-        'must_change_password',
+        // 'must_change_password',
     ];
 
     protected $hidden = ['password'];
@@ -39,7 +39,7 @@ class StaffUser extends Authenticatable
         return [
             'password' => 'hashed',
             'is_active' => 'boolean',
-            'must_change_password' => 'boolean',
+            // 'must_change_password' => 'boolean',
             'last_login_at' => 'datetime',
         ];
     }
@@ -108,5 +108,10 @@ class StaffUser extends Authenticatable
         $denied = $direct->reject(fn($p) => (bool) $p->pivot->is_granted)->pluck('slug')->all();
 
         return collect($fromRoles)->merge($granted)->unique()->diff($denied)->values();
+    }
+
+    public function devices(): BelongsToMany
+    {
+        return $this->belongsToMany(StaffDevice::class, 'device_assignments', 'staff_user_id', 'staff_device_id');
     }
 }

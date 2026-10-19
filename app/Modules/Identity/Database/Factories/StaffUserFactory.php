@@ -15,13 +15,13 @@ class StaffUserFactory extends Factory
     {
         return [
             // 'type' => User::TYPE_STAFF,
-            'username' => fake()->unique()->userName(),
+            'username' => fake()->unique()->regexify('^[a-z._-]{3,50}$'),
             'first_name' => fake()->firstName(),
             'last_name' => fake()->lastName(),
-            'email' => null,
+            'personal_number' => fake()->unique()->regexify('[0-9]{9}'),
             'password' => 'password',          // the 'hashed' cast hashes it
             'is_active' => true,
-            'must_change_password' => false,
+            // 'must_change_password' => false,
         ];
     }
 

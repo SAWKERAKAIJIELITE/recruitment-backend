@@ -39,7 +39,7 @@ class PermissionResolutionTest extends TestCase
         );
         $this->assertEqualsCanonicalizing(['reports.view', 'audit.view'], $manager->permissionSlugs()->all());
         $this->assertEqualsCanonicalizing(
-            ['reports.view', 'imports.manage', 'candidates.manage', 'exam_bank.manage', 'interviews.manage', 'contracts.manage', 'users.manage', 'audit.view'],
+            ['devices.approve' ,'reports.view', 'imports.manage', 'candidates.manage', 'exam_bank.manage', 'interviews.manage', 'contracts.manage', 'users.manage', 'audit.view'],
             $admin->permissionSlugs()->all()
         );
     }

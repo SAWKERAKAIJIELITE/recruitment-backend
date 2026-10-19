@@ -5,11 +5,13 @@ namespace Tests\Feature\Identity;
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
+use Tests\Support\StaffTestHelpers;
 use Tests\TestCase;
 
 class StaffAuthTest extends TestCase
 {
-    use RefreshDatabase;
+    use RefreshDatabase, StaffTestHelpers;
 
     private const LOGIN = '/api/v1/staff/auth/login';
     private const ME = '/api/v1/staff/auth/me';
@@ -21,54 +23,78 @@ class StaffAuthTest extends TestCase
         $this->seed(RolesAndPermissionsSeeder::class);
     }
 
-    public function test_staff_logs_in_with_case_insensitive_username(): void
+    public function test_staff_logs_in_from_an_approved_device_with_case_insensitive_username(): void
     {
-        StaffUserFactory::new()->withRole('recruitment_staff')
-            ->create(['username' => 'sara', 'password' => 'secret-pass']);
+        $user = StaffUserFactory::new()
+        ->withRole('recruitment_staff')
+        ->create(['username' => 'sara', 'password' => 'secret-pass']);
 
-        $response = $this->postJson(self::LOGIN, ['username' => 'Sara', 'password' => 'secret-pass'])
+        ['device' => $device, 'key' => $key] = $this->approvedDevice($user);
+
+        $response = $this->deviceLogin($device, $key, 'Sara', 'secret-pass')
             ->assertOk()
-            ->assertJsonStructure(['token', 'token_type', 'user' => ['id', 'username', 'roles', 'permissions']])
+            ->assertJsonStructure([
+                'token', 'token_type', 'user' => ['id', 'username', 'roles', 'permissions']
+            ])
             ->assertJsonPath('user.roles.0', 'recruitment_staff');
 
         $this->assertContains('reports.view', $response->json('user.permissions'));
         $this->assertNotContains('attempts.extend', $response->json('user.permissions'));
+        $this->assertDatabaseHas('personal_access_tokens', ['staff_device_id' => $device->id]);
+        $this->assertNotNull($device->fresh()->last_seen_at);
     }
 
     public function test_wrong_password_is_rejected(): void
     {
-        StaffUserFactory::new()->create(['username' => 'sara', 'password' => 'secret-pass']);
+        $user = StaffUserFactory::new()
+        ->create(['username' => 'sara', 'password' => 'secret-pass']);
 
-        $this->postJson(self::LOGIN, ['username' => 'sara', 'password' => 'nope'])
+        ['device' => $device, 'key' => $key] = $this->approvedDevice($user);
+
+        $this->deviceLogin($device, $key, 'sara', 'nope')
             ->assertStatus(422)
             ->assertJsonValidationErrors('username');
     }
 
     public function test_unknown_user_gets_the_same_failure_as_a_wrong_password(): void
     {
-        StaffUserFactory::new()->create(['username' => 'sara', 'password' => 'secret-pass']);
+        $user = StaffUserFactory::new()
+        ->create(['username' => 'sara', 'password' => 'secret-pass']);
 
-        $wrongPassword = $this->postJson(self::LOGIN, ['username' => 'sara', 'password' => 'nope']);
-        $unknownUser = $this->postJson(self::LOGIN, ['username' => 'ghost', 'password' => 'nope']);
+        ['device' => $device, 'key' => $key] = $this->approvedDevice($user);
+
+        $wrongPassword = $this->deviceLogin($device, $key, 'sara', 'nope');
+        $unknownUser = $this->deviceLogin($device, $key, 'ghost', 'nope');
 
         $this->assertSame($wrongPassword->json('errors'), $unknownUser->json('errors'));
     }
 
     public function test_inactive_account_cannot_log_in(): void
     {
-        StaffUserFactory::new()->inactive()->create(['username' => 'off', 'password' => 'secret-pass']);
+        $user = StaffUserFactory::new()
+        ->inactive()
+        ->create(['username' => 'off', 'password' => 'secret-pass']);
 
-        $this->postJson(self::LOGIN, ['username' => 'off', 'password' => 'secret-pass'])
-            ->assertStatus(422);
+        ['device' => $device, 'key' => $key] = $this->approvedDevice($user);
+
+        $this->deviceLogin($device, $key, 'off', 'secret-pass')->assertStatus(422);
     }
 
     public function test_login_is_rate_limited_per_username_and_ip(): void
     {
+        $body = [
+            'device_id' => (string) Str::uuid(),
+            'challenge_id' => (string) Str::uuid(),
+            'signature' => 'x',
+            'username' => 'x',
+            'password' => 'y',
+        ];
+
         for ($i = 0; $i < 5; $i++) {
-            $this->postJson(self::LOGIN, ['username' => 'x', 'password' => 'y'])->assertStatus(422);
+            $this->postJson(self::LOGIN, $body)->assertStatus(422);
         }
 
-        $this->postJson(self::LOGIN, ['username' => 'x', 'password' => 'y'])->assertStatus(429);
+        $this->postJson(self::LOGIN, $body)->assertStatus(429);
     }
 
     public function test_me_requires_authentication(): void
@@ -78,10 +104,11 @@ class StaffAuthTest extends TestCase
 
     public function test_me_returns_the_token_owner(): void
     {
-        $user = StaffUserFactory::new()->withRole('general_manager')->create(['username' => 'boss']);
-        $token = $user->createToken('test')->plainTextToken;
+        $user = StaffUserFactory::new()
+        ->withRole('general_manager')
+        ->create(['username' => 'boss']);
 
-        $this->withToken($token)->getJson(self::ME)
+        $this->asStaff($user)->getJson(self::ME)
             ->assertOk()
             ->assertJsonPath('user.username', 'boss');
     }
@@ -89,9 +116,8 @@ class StaffAuthTest extends TestCase
     public function test_logout_revokes_the_token(): void
     {
         $user = StaffUserFactory::new()->create();
-        $token = $user->createToken('test')->plainTextToken;
 
-        $this->withToken($token)->postJson(self::LOGOUT)->assertNoContent();
+        $this->asStaff($user)->postJson(self::LOGOUT)->assertNoContent();
 
         $this->assertDatabaseCount('personal_access_tokens', 0);
     }
