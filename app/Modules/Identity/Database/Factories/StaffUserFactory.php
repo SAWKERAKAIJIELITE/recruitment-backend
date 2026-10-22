@@ -21,6 +21,7 @@ class StaffUserFactory extends Factory
             'personal_number' => fake()->unique()->regexify('[0-9]{9}'),
             'password' => 'password',          // the 'hashed' cast hashes it
             'is_active' => true,
+            // 'reported_mac'=>fake()->unique()->macAddress
             // 'must_change_password' => false,
         ];
     }

@@ -2,6 +2,7 @@
 
 namespace Tests\Support;
 
+use App\Modules\Identity\Enums\DeviceStatus;
 use App\Modules\Identity\Models\StaffDevice;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Identity\Support\DeviceCrypto;
@@ -9,25 +10,21 @@ use Illuminate\Testing\TestResponse;
 
 trait StaffTestHelpers
 {
-    /** @return array{key: \OpenSSLAsymmetricKey, public_pem: string} */
+    /** Each test method gets a fresh instance, so the counter restarts for every test. */
+    private int $nextDeviceKey = 0;
+
+    /**
+     * The next unused fixed key pair (see TestDeviceKeys for why keys are not generated here).
+     *
+     * @return array{key: \OpenSSLAsymmetricKey, public_pem: string}
+     */
     protected function newDeviceKey(): array
     {
-        $options = [
-            'private_key_type' => OPENSSL_KEYTYPE_EC,
-            'curve_name' => 'prime256v1',
-            'config' => getenv('OPENSSL_CONF') ?: base_path('tests/openssl.cnf')
-        ];
+        $index = $this->nextDeviceKey++;
 
-        // On Windows, PHP often cannot find openssl.cnf and key generation fails.
-        // Fix: set the OPENSSL_CONF environment variable to PHP's extras/ssl/openssl.cnf.
-        // if ($conf = getenv('OPENSSL_CONF')) {
-        //     $options['config'] = $conf;
-        // }
+        $this->assertLessThan(TestDeviceKeys::count(), $index, 'The test needs more fixed keys: add one to TestDeviceKeys.');
 
-        $key = openssl_pkey_new($options);
-        $this->assertNotFalse($key, 'openssl_pkey_new failed: ' . openssl_error_string());
-
-        return ['key' => $key, 'public_pem' => openssl_pkey_get_details($key)['key']];
+        return TestDeviceKeys::get($index);
     }
 
     protected function sign($key, string $payload): string
@@ -47,14 +44,14 @@ trait StaffTestHelpers
             'label' => 'Pending PC',
             'public_key' => $parsed['pem'],
             'fingerprint' => $parsed['fingerprint'],
-            'status' => StaffDevice::STATUS_PENDING,
+            'reported_mac' => '00:11:22:33:44:55',
         ]);
 
         return ['device' => $device, 'key' => $pair['key']];
     }
 
     /** @return array{device: StaffDevice, key: \OpenSSLAsymmetricKey} */
-    protected function approvedDevice(StaffUser ...$users): array
+    protected function approvedDevice(StaffUser $owner): array
     {
         $pair = $this->newDeviceKey();
         $parsed = DeviceCrypto::parsePublicKey($pair['public_pem']);
@@ -64,11 +61,11 @@ trait StaffTestHelpers
             'label' => 'Approved PC',
             'public_key' => $parsed['pem'],
             'fingerprint' => $parsed['fingerprint'],
-            'status' => StaffDevice::STATUS_APPROVED,
+            'reported_mac' => '00:11:22:33:44:55',
+            'status' => DeviceStatus::Approved,
+            'staff_user_id' => $owner->id,
             'approved_at' => now(),
         ])->save();
-
-        $device->staffUsers()->attach(collect($users)->pluck('id')->all());
 
         return ['device' => $device, 'key' => $pair['key']];
     }
@@ -86,7 +83,7 @@ trait StaffTestHelpers
             $challenge['challenge_id'],
             $challenge['challenge'],
             $device->id,
-            strtolower(trim($username))
+            $username
         );
     }
 

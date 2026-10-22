@@ -8,9 +8,14 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Source of truth for the RBAC matrix (document §02).
- * Only plain ✓ cells appear in ROLES. ✓* cells are granted per user via permission_user.
- * Safe to re-run: it upserts by slug and re-syncs each role's permissions.
+ * Default RBAC matrix (analysis doc §02).
+ *
+ * - The permission catalogue is upserted on every run.
+ * - A role receives its default permissions ONLY when it is created. After that the database is the
+ *   source of truth: administrators change roles through the access-management API, and re-running this
+ *   seeder never overwrites their changes.
+ * - Only plain ✓ cells appear in ROLES. ✓* cells are individual-only permissions, granted per user.
+ * - Candidates are not staff and have no roles.
  */
 class RolesAndPermissionsSeeder extends Seeder
 {
@@ -18,6 +23,7 @@ class RolesAndPermissionsSeeder extends Seeder
         'reports.view' => 'مؤشرات وتقارير مفصلة',
         'imports.manage' => 'استيراد ملفات Excel',
         'candidates.manage' => 'تحرير بيانات المرشحين',
+        'candidates.view_sensitive' => 'الاطلاع على الرقم الوطني والبيانات الصحية والاجتماعية للمرشحين',
         'exam_bank.manage' => 'بنك الأسئلة وخطط الاختبار',
         'exams.take' => 'تقديم الاختبار',
         'attempts.extend' => 'تعديل مدة محاولة نشطة',
@@ -29,6 +35,9 @@ class RolesAndPermissionsSeeder extends Seeder
         'audit.view_related' => 'عرض تدقيق العمليات ذات الصلة فقط',
         'devices.approve' => 'اعتماد الأجهزة الموثوقة وإلغاؤها',
     ];
+
+    /** The ✓* cells: may be granted to individual users, never attached to a role. */
+    private const INDIVIDUAL_ONLY = ['attempts.extend', 'exceptions.approve', 'candidates.view_sensitive'];
 
     private const ROLES = [
         'general_manager' => [
@@ -75,14 +84,19 @@ class RolesAndPermissionsSeeder extends Seeder
     {
         DB::transaction(function () {
             foreach (self::PERMISSIONS as $slug => $label) {
-                Permission::updateOrCreate(['slug' => $slug], ['label_ar' => $label]);
+                Permission::updateOrCreate(
+                    ['slug' => $slug],
+                    ['label_ar' => $label, 'individual_only' => in_array($slug, self::INDIVIDUAL_ONLY, true)]
+                );
             }
 
             foreach (self::ROLES as $slug => [$label, $permissionSlugs]) {
-                $role = Role::updateOrCreate(['slug' => $slug], ['label_ar' => $label]);
-                $role->permissions()->sync(
-                    Permission::whereIn('slug', $permissionSlugs)->pluck('id')
-                );
+                $role = Role::firstOrCreate(['slug' => $slug], ['label_ar' => $label]);
+                if ($role->wasRecentlyCreated) {
+                    $role->permissions()->sync(
+                        Permission::whereIn('slug', $permissionSlugs)->pluck('id')
+                    );
+                }
             }
         });
     }

@@ -131,4 +131,27 @@ class StaffAuthTest extends TestCase
 
         $this->withToken($token)->getJson(self::ME)->assertUnauthorized();
     }
+
+    public function test_login_with_an_arabic_username_typed_in_any_variant(): void
+    {
+        $user = StaffUserFactory::new()->create(['username' => 'أحمد', 'password' => 'secret-pass']);
+        ['device' => $device, 'key' => $key] = $this->approvedDevice($user);
+
+        $this->assertSame('احمد', $user->username);   // stored in the normalised form
+
+        // Typed with a different alef, and with harakat: still the same person.
+        $this->deviceLogin($device, $key, 'إَحْمَد', 'secret-pass')->assertOk();
+    }
+
+    public function test_staff_token_lives_for_a_day(): void
+    {
+        $user = StaffUserFactory::new()->create(['username' => 'sara', 'password' => 'secret-pass']);
+        ['device' => $device, 'key' => $key] = $this->approvedDevice($user);
+
+        $this->deviceLogin($device, $key, 'sara', 'secret-pass')->assertOk();
+
+        $expiresAt = \Illuminate\Support\Carbon::parse(\Illuminate\Support\Facades\DB::table('personal_access_tokens')->value('expires_at'));
+
+        $this->assertEqualsWithDelta(now()->addDay()->timestamp, $expiresAt->timestamp, 60);
+    }
 }

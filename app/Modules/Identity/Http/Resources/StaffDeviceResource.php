@@ -20,11 +20,11 @@ class StaffDeviceResource extends JsonResource
             'requested_at' => $this->created_at,
             'approved_at' => $this->approved_at,
             'revoked_at' => $this->revoked_at,
-            'staff_users' => $this->whenLoaded('staffUsers', fn() => $this->staffUsers->map(fn($user) => [
-                'id' => $user->id,
-                'username' => $user->username,
-                'full_name' => $user->full_name,
-            ])->values()),
+            'staff_user' => $this->whenLoaded('staffUser', fn() => $this->staffUser === null ? null : [
+                'id' => $this->staffUser->id,
+                'username' => $this->staffUser->username,
+                'full_name' => $this->staffUser->full_name,
+            ]),
         ];
     }
 }

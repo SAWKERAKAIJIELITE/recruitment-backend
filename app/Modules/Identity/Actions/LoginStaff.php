@@ -6,7 +6,6 @@ use App\Modules\Identity\Models\DeviceLoginChallenge;
 use App\Modules\Identity\Models\StaffDevice;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Identity\Support\DeviceCrypto;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
@@ -14,25 +13,28 @@ use Illuminate\Validation\ValidationException;
 class LoginStaff
 {
     /**
-     * Step 2b will add device and signature verification at the top of this method.
-     *
      * @return array{token: string, user: StaffUser}
      *
      * @throws ValidationException one generic message for every failure reason
      */
     public function execute(StaffLoginData $data): array
     {
-        $username = Str::lower(trim($data->username));
+        // $username = Str::lower(trim($data->username));
 
         // Stage 1, the machine: no password is touched until the device has proved itself.
-        $device = $this->proveDevice($data, $username);
+        // The signed username is the string exactly as the client sent it (the client trims it first);
+        // normalising happens only for the lookup below, so clients never need to know our rules.
+        $device = $this->proveDevice($data, $data->username);
 
         if ($device === null) {
             $this->fail('device_or_signature', $data->deviceId);
         }
 
         // Stage 2, the person.
-        $user = StaffUser::where('username', $username)->first();
+        $user = StaffUser::where(
+            'username',
+            mb_strtolower(trim($data->username))
+        )->first();
 
         if ($user === null) {
             Hash::make($data->password);   // burn comparable CPU time so "no such user" isn't faster
@@ -40,20 +42,26 @@ class LoginStaff
         }
 
         $passwordMatches = Hash::check($data->password, $user->password);
-        $assigned = $device->staffUsers()->whereKey($user->id)->exists();
+        $ownsDevice = $device->staff_user_id === $user->id;
 
-        if (!$passwordMatches || !$user->is_active || !$assigned) {
+        if (!$passwordMatches || !$user->is_active || !$ownsDevice) {
             $this->fail(match (true) {
                 !$passwordMatches => 'bad_password',
                 !$user->is_active => 'inactive_user',
-                default => 'not_assigned_to_device',
+                default => 'device_belongs_to_someone_else',
             }, $device->id, $user->id);
         }
 
         $device->forceFill(['last_seen_at' => now()])->save();
         $user->forceFill(['last_login_at' => now()])->save();
 
-        $newToken = $user->createToken($data->tokenName);
+        // $newToken = $user->createToken($data->tokenName);
+        // Staff tokens live for a week (config); the global Sanctum expiration is disabled on purpose.
+        $newToken = $user->createToken(
+            $data->tokenName,
+            ['*'],
+            now()->addMinutes((int) config('staff_auth.token_lifetime_minutes')),
+        );
         $newToken->accessToken->forceFill(['staff_device_id' => $device->id])->save();
 
         return [
@@ -63,7 +71,7 @@ class LoginStaff
     }
 
     /** Consumes the challenge (single use) and verifies the signature. Null = not proven. */
-    private function proveDevice(StaffLoginData $data, string $username): ?StaffDevice
+    private function proveDevice(StaffLoginData $data, string $signedUsername): ?StaffDevice
     {
         // One atomic UPDATE: valid, unexpired, unused and bound to this device, or nothing happens.
         // The challenge is burned even if the signature turns out wrong.
@@ -86,7 +94,7 @@ class LoginStaff
         }
 
         // The challenge text comes from our database, never from the client.
-        $payload = DeviceCrypto::loginPayload($challenge->id, $challenge->challenge, $device->id, $username);
+        $payload = DeviceCrypto::loginPayload($challenge->id, $challenge->challenge, $device->id, $signedUsername);
 
         return DeviceCrypto::verify($device->public_key, $payload, $data->signature) ? $device : null;
     }

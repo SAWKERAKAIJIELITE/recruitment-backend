@@ -18,6 +18,8 @@ return new class extends Migration {
             $table->uuid('id')->primary();
             $table->string('slug', 100)->unique();
             $table->string('label_ar', 150);
+            // true = may only be granted to individual users, never attached to a role (the ✓* cells)
+            $table->boolean('individual_only')->default(false);
             $table->timestampsTz();
         });
 

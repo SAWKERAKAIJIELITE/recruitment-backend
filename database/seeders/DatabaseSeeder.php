@@ -2,9 +2,9 @@
 
 namespace Database\Seeders;
 
-// use App\Models\User;
 use App\Modules\Identity\Database\Seeders\DevUsersSeeder;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
+use App\Modules\Recruitment\Database\Seeders\DistrictsSeeder;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
@@ -17,14 +17,8 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // User::factory(10)->create();
-
-        // User::factory()->create([
-        //     'name' => 'Test User',
-        //     'email' => 'test@example.com',
-        // ]);
-
         $this->call(RolesAndPermissionsSeeder::class);
+        // $this->call(DistrictsSeeder::class);
 
         if (app()->environment('local')) {
             $this->call(DevUsersSeeder::class);

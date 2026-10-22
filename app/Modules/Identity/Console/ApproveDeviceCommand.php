@@ -14,10 +14,10 @@ class ApproveDeviceCommand extends Command
 {
     protected $signature = 'staff:approve-device
         {device : Device id printed at registration}
-        {usernames* : Staff usernames allowed to log in from this device}
+        {username : Staff username who owns this device}
         {--fingerprint= : Fingerprint shown on the employee\'s screen (required)}';
 
-    protected $description = 'Approve a pending staff device and assign it to staff users';
+    protected $description = 'Approve a pending staff device and make it the property of one staff user';
 
     public function handle(ApproveDevice $approve): int
     {
@@ -41,24 +41,23 @@ class ApproveDeviceCommand extends Command
             return self::FAILURE;
         }
 
-        $usernames = collect($this->argument('usernames'))->map(fn($name) => Str::lower(trim($name)));
-        $users = StaffUser::whereIn('username', $usernames)->get();
+        $owner = StaffUser::where('username', mb_strtolower(trim($this->argument('username'))))->first();
 
-        if ($users->count() !== $usernames->unique()->count()) {
-            $this->error('Unknown username(s): ' . $usernames->diff($users->pluck('username'))->implode(', '));
+        if ($owner === null) {
+            $this->error('Unknown username.');
 
             return self::FAILURE;
         }
 
         try {
-            $approve->execute($device, null, $this->option('fingerprint'), $users->pluck('id')->all());
+            $approve->execute($device, null, $this->option('fingerprint'), $owner);
         } catch (ValidationException $e) {
             $this->error(collect($e->errors())->flatten()->implode(' '));
 
             return self::FAILURE;
         }
 
-        $this->info("Device {$device->id} approved for: " . $users->pluck('username')->implode(', '));
+        $this->info("Device {$device->id} approved for: " . $owner->username);
 
         return self::SUCCESS;
     }

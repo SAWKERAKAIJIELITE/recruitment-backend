@@ -4,7 +4,7 @@ namespace Tests\Feature\Identity;
 
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
-use App\Modules\Identity\Models\StaffDevice;
+use App\Modules\Identity\Enums\DeviceStatus;
 use App\Modules\Identity\Models\StaffUser;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -40,7 +40,7 @@ class DeviceLoginTest extends TestCase
     public function test_revoked_device_cannot_log_in(): void
     {
         ['device' => $device, 'key' => $key] = $this->approvedDevice($this->user);
-        $device->forceFill(['status' => StaffDevice::STATUS_REVOKED, 'revoked_at' => now()])->save();
+        $device->forceFill(['status' => DeviceStatus::Revoked, 'revoked_at' => now()])->save();
 
         $this->deviceLogin($device, $key, 'sara', 'secret-pass')->assertStatus(422);
     }
@@ -67,7 +67,7 @@ class DeviceLoginTest extends TestCase
         ['device' => $device, 'key' => $key] = $this->approvedDevice($this->user);
         $challenge = $this->requestChallenge($device);
 
-        $this->travel(2)->minutes();
+        $this->travel((int) config('staff_auth.challenge_ttl_seconds') + 1)->seconds();
 
         $this->postJson(self::LOGIN, $this->loginBody($device, $key, $challenge, 'sara', 'secret-pass'))
             ->assertStatus(422);
@@ -92,7 +92,7 @@ class DeviceLoginTest extends TestCase
         $this->postJson(self::LOGIN, $body)->assertStatus(422);
     }
 
-    public function test_user_must_be_assigned_to_the_device(): void
+    public function test_device_must_belong_to_the_user_logging_in(): void
     {
         StaffUserFactory::new()->create(['username' => 'omar', 'password' => 'omar-pass']);
         ['device' => $device, 'key' => $key] = $this->approvedDevice($this->user);   // assigned to sara only
@@ -109,13 +109,14 @@ class DeviceLoginTest extends TestCase
 
     public function test_challenge_is_bound_to_its_device(): void
     {
+        $omar = StaffUserFactory::new()->create(['username' => 'omar', 'password' => 'omar-pass']);
         ['device' => $deviceA] = $this->approvedDevice($this->user);
-        ['device' => $deviceB, 'key' => $keyB] = $this->approvedDevice($this->user);
+        ['device' => $deviceB, 'key' => $keyB] = $this->approvedDevice($omar);
 
         $challengeForA = $this->requestChallenge($deviceA);
 
         // Device B tries to use the challenge that was issued to device A.
-        $this->postJson(self::LOGIN, $this->loginBody($deviceB, $keyB, $challengeForA, 'sara', 'secret-pass'))
+        $this->postJson(self::LOGIN, $this->loginBody($deviceB, $keyB, $challengeForA, 'omar', 'omar-pass'))
             ->assertStatus(422);
     }
 }

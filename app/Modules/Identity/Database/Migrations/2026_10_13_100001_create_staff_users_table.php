@@ -17,7 +17,7 @@ return new class extends Migration
             $table->string('first_name',15);
             $table->string('last_name',15);
             $table->string('password');
-            $table->boolean('is_active')->default(true);
+            $table->boolean('is_active')->default(true)->index();
             // $table->boolean('must_change_password')->default(false);
             $table->timestampTz('last_login_at')->nullable();
             $table->timestampsTz();
@@ -31,7 +31,7 @@ return new class extends Migration
         Schema::create('sessions', function (Blueprint $table) {
             $table->string('id')->primary();
             $table->foreignUuid('staff_user_id')->nullable()->index();
-            $table->string('ip_address', 45)->nullable();
+            $table->ipAddress('ip_address')->nullable();
             $table->text('user_agent')->nullable();
             $table->longText('payload');
             $table->integer('last_activity')->index();

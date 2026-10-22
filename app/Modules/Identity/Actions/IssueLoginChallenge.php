@@ -8,7 +8,9 @@ use Illuminate\Support\Str;
 
 class IssueLoginChallenge
 {
-    /** @return array{challenge_id: string, challenge: string, expires_at: string} */
+    /**
+     * @return array{challenge_id: string, challenge: string, expires_at: string}
+     * */
     public function execute(string $deviceId): array
     {
         $expiresAt = now()->addSeconds((int) config('staff_auth.challenge_ttl_seconds'));

@@ -3,12 +3,12 @@
 namespace App\Providers;
 
 use App\Modules\Identity\Models\StaffUser;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Str;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Dedoc\Scramble\Scramble;
 use Dedoc\Scramble\Support\Generator\OpenApi;
@@ -31,6 +31,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Mass assignment safety net: assigning a non-fillable attribute throws instead of being silently
+        // dropped (outside production). Business-controlled columns are set with forceFill() on purpose.
+        Model::preventSilentlyDiscardingAttributes(app()->environment('production') === false);
+
         Scramble::configure()->withDocumentTransformers(function (OpenApi $openApi) {
             $openApi->secure(SecurityScheme::http('bearer'));
         });
@@ -42,7 +46,7 @@ class AppServiceProvider extends ServiceProvider
         });
 
         RateLimiter::for('staff-login', function (Request $request) {
-            $username = Str::lower((string) $request->input('username'));
+            $username = mb_strtolower(trim((string) $request->input('username')));
 
             return [
                 Limit::perMinute(30)->by('ip:' . $request->ip()),

@@ -1,6 +1,9 @@
 <?php
 
 use App\Modules\Identity\Http\Controllers\StaffDeviceController;
+use App\Modules\Identity\Http\Controllers\StaffUserController;
+use App\Modules\Identity\Http\Controllers\PermissionController;
+use App\Modules\Identity\Http\Controllers\RoleController;
 use App\Modules\Identity\Http\Controllers\StaffAuthController;
 use App\Modules\Identity\Http\Middleware\EnsureStaffIsActive;
 use Illuminate\Support\Facades\Route;
@@ -13,9 +16,9 @@ Route::middleware('api')->prefix('api/v1')->group(function () {
 
     Route::prefix('staff')->group(function () {
 
-        // Device enrolment: public, because the device is not trusted yet.
         Route::post('devices/register', [StaffDeviceController::class, 'register'])
             ->middleware('throttle:device-register');
+
         Route::get('devices/{device}/status', [StaffDeviceController::class, 'status'])
             ->whereUuid('device')
             ->middleware('throttle:device-status');
@@ -38,5 +41,24 @@ Route::middleware('api')->prefix('api/v1')->group(function () {
                 Route::post('{device}/approve', [StaffDeviceController::class, 'approve'])->whereUuid('device');
                 Route::post('{device}/revoke', [StaffDeviceController::class, 'revoke'])->whereUuid('device');
             });
+
+        // Access management: roles, permissions and per-user overrides
+        Route::middleware(['auth:staff', EnsureStaffIsActive::class, 'can:users.manage'])->group(function () {
+            Route::get('permissions', [PermissionController::class, 'index']);
+
+            Route::get('roles', [RoleController::class, 'index']);
+            Route::post('roles/{role:slug}/permissions', [RoleController::class, 'addPermissions']);
+            Route::delete('roles/{role:slug}/permissions/{permission:slug}', [RoleController::class, 'removePermission'])
+                ->scopeBindings();
+
+            Route::get('users', [StaffUserController::class, 'index']);
+            Route::get('users/{user}', [StaffUserController::class, 'show'])->whereUuid('user');
+            Route::post('users/{user}/roles', [StaffUserController::class, 'addRole'])->whereUuid('user');
+            Route::delete('users/{user}/roles/{role:slug}', [StaffUserController::class, 'removeRole'])
+                ->whereUuid('user')->scopeBindings();
+            Route::post('users/{user}/permissions', [StaffUserController::class, 'setPermission'])->whereUuid('user');
+            Route::delete('users/{user}/permissions/{permission:slug}', [StaffUserController::class, 'clearPermission'])
+                ->whereUuid('user')->scopeBindings();
+        });
     });
 });

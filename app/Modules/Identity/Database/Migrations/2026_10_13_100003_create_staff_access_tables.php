@@ -17,7 +17,7 @@ return new class extends Migration {
         Schema::create('permission_staff_user', function (Blueprint $table) {
             $table->foreignUuid('staff_user_id')->constrained()->restrictOnDelete();
             $table->foreignUuid('permission_id')->constrained()->restrictOnDelete();
-            $table->boolean('is_granted')->default(true);
+            $table->boolean('is_granted')->default(true)->index();
             $table->foreignUuid('granted_by')->nullable()->constrained('staff_users')->restrictOnDelete();
             $table->timestampsTz();
             $table->primary(['staff_user_id', 'permission_id']);

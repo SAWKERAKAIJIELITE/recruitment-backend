@@ -15,8 +15,6 @@ class StaffUserResource extends JsonResource
             // 'type' => $this->type,
             'username' => $this->username,
             'full_name' => $this->full_name,
-            'email' => $this->email,
-            'must_change_password' => $this->must_change_password,
             'roles' => $this->roles->pluck('slug')->values(),
             // For showing or hiding UI only. The server re-checks every request.
             'permissions' => $this->permissionSlugs(),

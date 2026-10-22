@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Support\Collection;
 use Laravel\Sanctum\HasApiTokens;
@@ -110,8 +112,15 @@ class StaffUser extends Authenticatable
         return collect($fromRoles)->merge($granted)->unique()->diff($denied)->values();
     }
 
-    public function devices(): BelongsToMany
+    /** Every device this user has ever owned (history, including revoked ones). */
+    public function devices(): HasMany
     {
-        return $this->belongsToMany(StaffDevice::class, 'device_assignments', 'staff_user_id', 'staff_device_id');
+        return $this->hasMany(StaffDevice::class, 'staff_user_id');
+    }
+
+    /** The one approved device the user can log in from (null if none). */
+    public function device(): HasOne
+    {
+        return $this->hasOne(StaffDevice::class, 'staff_user_id')->where('status', 'approved');
     }
 }

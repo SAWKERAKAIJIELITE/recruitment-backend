@@ -15,8 +15,8 @@ class ApproveDeviceRequest extends FormRequest
     {
         return [
             'fingerprint' => ['required', 'string', 'max:64'],
-            'staff_user_ids' => ['required', 'array', 'min:1'],
-            'staff_user_ids.*' => ['uuid', 'distinct', 'exists:staff_users,id'],
+            'staff_user_id' => ['required', 'uuid', 'exists:staff_users,id'],
+            // 'staff_user_ids.*' => ['uuid', 'distinct', 'exists:staff_users,id'],
         ];
     }
 }

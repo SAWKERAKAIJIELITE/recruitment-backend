@@ -2,6 +2,7 @@
 
 namespace App\Modules\Identity\Actions;
 
+use App\Modules\Identity\Enums\DeviceStatus;
 use App\Modules\Identity\Models\AccessToken;
 use App\Modules\Identity\Models\StaffDevice;
 use App\Modules\Identity\Models\StaffUser;
@@ -12,13 +13,13 @@ class RevokeDevice
 {
     public function execute(StaffDevice $device, ?StaffUser $actor, string $reason): StaffDevice
     {
-        if ($device->status === StaffDevice::STATUS_REVOKED) {
+        if ($device->status === DeviceStatus::Revoked) {
             throw ValidationException::withMessages(['device' => ['The device is already revoked.']]);
         }
 
         DB::transaction(function () use ($device, $actor, $reason) {
             $device->forceFill([
-                'status' => StaffDevice::STATUS_REVOKED,
+                'status' => DeviceStatus::Revoked,
                 'revoked_by' => $actor?->id,
                 'revoked_at' => now(),
                 'revoke_reason' => $reason,
