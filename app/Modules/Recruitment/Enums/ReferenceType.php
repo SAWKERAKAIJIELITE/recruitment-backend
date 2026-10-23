@@ -2,27 +2,54 @@
 
 namespace App\Modules\Recruitment\Enums;
 
+use App\Modules\Recruitment\Models\AcademicQualification;
 use App\Modules\Recruitment\Models\ApplicationCategory;
+use App\Modules\Recruitment\Models\Area;
 use App\Modules\Recruitment\Models\District;
-use App\Modules\Recruitment\Models\JobTitle;
-use App\Modules\Recruitment\Models\SourceOffice;
+use App\Modules\Recruitment\Models\HealthCondition;
+use App\Modules\Recruitment\Models\JobPosition;
+use App\Modules\Recruitment\Models\MaritalStatus;
+use App\Modules\Recruitment\Models\NominatingEntity;
+use App\Modules\Recruitment\Models\Specialization;
 
 /** The managed lists (the hidden "_Lists" sheet of the Excel template). The value is the URL segment. */
 enum ReferenceType: string
 {
-    case SourceOffices = 'source-offices';
-    case JobTitles = 'job-titles';
-    case Governorates = 'governorates';
-    case Categories = 'categories';
+    case Districts = 'districts';
+    case Areas = 'areas';
+    case NominatingEntities = 'nominating-entities';
+    case JobPositions = 'job-positions';
+    case ApplicationCategories = 'application-categories';
+    case AcademicQualifications = 'academic-qualifications';
+    case Specializations = 'specializations';
+    case MaritalStatuses = 'marital-statuses';
+    case HealthConditions = 'health-conditions';
 
     /** @return class-string<\Illuminate\Database\Eloquent\Model> */
     public function model(): string
     {
         return match ($this) {
-            self::SourceOffices => SourceOffice::class,
-            self::JobTitles => JobTitle::class,
-            self::Governorates => District::class,
-            self::Categories => ApplicationCategory::class,
+            self::Districts => District::class,
+            self::Areas => Area::class,
+            self::NominatingEntities => NominatingEntity::class,
+            self::JobPositions => JobPosition::class,
+            self::ApplicationCategories => ApplicationCategory::class,
+            self::AcademicQualifications => AcademicQualification::class,
+            self::Specializations => Specialization::class,
+            self::MaritalStatuses => MaritalStatus::class,
+            self::HealthConditions => HealthCondition::class,
         };
+    }
+
+    /** Areas belong to a district: their names are unique per district and they are listed per district. */
+    public function isScopedToDistrict(): bool
+    {
+        return $this === self::Areas;
+    }
+
+    /** @return list<string> */
+    public static function values(): array
+    {
+        return array_column(self::cases(), 'value');
     }
 }

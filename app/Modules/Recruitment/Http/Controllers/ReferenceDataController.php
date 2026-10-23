@@ -13,53 +13,77 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 /**
- * The managed lists. {type} is one of: source-offices, job-titles, governorates, categories.
+ * The managed lists. {type} is one of: districts, areas, nominating-entities, job-positions,
+ * application-categories, academic-qualifications, specializations, marital-statuses, health-conditions.
  * Any signed-in staff user can read them; changing them needs candidates.manage.
  */
 class ReferenceDataController extends Controller
 {
-    /** List entries. Archived ones are hidden unless include_archived=1. */
+    /**
+     * List entries
+     *
+     * Archived entries are hidden unless `include_archived=1`. For areas, `district_id` limits the list
+     * to one district.
+     */
     public function index(Request $request, string $type): AnonymousResourceCollection
     {
-        $request->validate(['include_archived' => ['nullable', 'boolean']]);
+        $filters = $request->validate([
+            'include_archived' => ['nullable', 'boolean'],
+            'district_id' => ['nullable', 'integer'],
+        ]);
 
-        $query = ReferenceType::from($type)->model()::query()->orderBy('name_key');
+        $referenceType = ReferenceType::from($type);
 
-        if ($request->boolean('include_archived')) {
-            $query->withTrashed();
-        }
+        $query = $referenceType->model()::query()
+            ->when($request->boolean('include_archived'), fn($query) => $query->withTrashed())
+            ->when(
+                $referenceType->isScopedToDistrict() && isset($filters['district_id']),
+                fn($query) => $query->where('district_id', $filters['district_id']),
+            )
+            ->orderBy('name_key');
 
         return ReferenceItemResource::collection($query->get());
     }
 
-    /** Add an entry (a name that already exists, in any spelling, is refused). */
+    /**
+     * Add an entry
+     *
+     * A name that already exists, in any spelling, is refused (422), also when that entry is archived:
+     * restore it instead. A new area needs `district_id`.
+     */
     public function store(ReferenceItemRequest $request, string $type, ManageReferenceData $manage): JsonResponse
     {
-        $item = $manage->create(ReferenceType::from($type)->model(), $request->validated('name_ar'));
+        $item = $manage->create(
+            ReferenceType::from($type),
+            $request->validated('name_ar'),
+            $request->validated('district_id') === null ? null : (int) $request->validated('district_id'),
+        );
 
         return (new ReferenceItemResource($item))->response()->setStatusCode(201);
     }
 
     /** Rename an entry. */
-    public function update(ReferenceItemRequest $request, string $type, string $id, ManageReferenceData $manage): ReferenceItemResource
+    public function update(ReferenceItemRequest $request, string $type, int $id, ManageReferenceData $manage): ReferenceItemResource
     {
-        return new ReferenceItemResource($manage->rename($this->find($type, $id), $request->validated('name_ar')));
+        $referenceType = ReferenceType::from($type);
+
+        return new ReferenceItemResource($manage->rename($referenceType, $this->find($referenceType, $id), $request->validated('name_ar')));
     }
 
     /** Archive an entry: it leaves the lists but stays valid for existing applications. */
-    public function archive(string $type, string $id, ManageReferenceData $manage): ReferenceItemResource
+    public function archive(string $type, int $id, ManageReferenceData $manage): ReferenceItemResource
     {
-        return new ReferenceItemResource($manage->archive($this->find($type, $id)));
+        return new ReferenceItemResource($manage->archive($this->find(ReferenceType::from($type), $id)));
     }
 
     /** Bring an archived entry back. */
-    public function restore(string $type, string $id, ManageReferenceData $manage): ReferenceItemResource
+    public function restore(string $type, int $id, ManageReferenceData $manage): ReferenceItemResource
     {
-        return new ReferenceItemResource($manage->restore($this->find($type, $id)));
+        return new ReferenceItemResource($manage->restore($this->find(ReferenceType::from($type), $id)));
     }
 
-    private function find(string $type, string $id): Model
+    private function find(ReferenceType $type, int $id): Model
     {
-        return ReferenceType::from($type)->model()::withTrashed()->findOrFail($id);
+        return $type->model()::withTrashed()->findOrFail($id);
     }
 }

@@ -3,15 +3,13 @@
 namespace App\Modules\Recruitment\Http\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\Modules\Audit\Support\AuditTrail;
 use App\Modules\Recruitment\Actions\CreateApplication;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Http\Requests\StoreApplicationRequest;
 use App\Modules\Recruitment\Http\Resources\ApplicationResource;
 use App\Modules\Recruitment\Http\Resources\ApplicationSummaryResource;
 use App\Modules\Recruitment\Models\Application;
-use App\Modules\Recruitment\Support\BlindIndex;
-use App\Modules\Recruitment\Support\NationalId;
+use App\Modules\Recruitment\Support\NationalNumber;
 use App\Support\ArabicText;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,40 +21,44 @@ class ApplicationController extends Controller
     /**
      * Search applications
      *
-     * `q` matches a nomination number exactly, or part of a name (any spelling of أ/ا, ى/ي, ة/ه).
-     * `national_id` is an exact match. Newest first.
+     * `q` matches a nomination number exactly, or part of a name in any spelling (أ/ا, ى/ي, ة/ه).
+     * `national_number` is an exact match (Arabic-Indic digits accepted). Newest first, 25 per page.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
         $filters = $request->validate([
             'q' => ['nullable', 'string', 'max:150'],
-            'national_id' => ['nullable', 'string', 'max:30'],
+            'national_number' => ['nullable', 'string', 'max:30'],
             'status' => ['nullable', Rule::enum(ApplicationStatus::class)],
-            'job_title_id' => ['nullable', 'uuid'],
-            'source_office_id' => ['nullable', 'uuid'],
-            'from' => ['nullable', 'date'],
-            'to' => ['nullable', 'date', 'after_or_equal:from'],
+            'job_position_id' => ['nullable', 'integer'],
+            'nominating_entity_id' => ['nullable', 'integer'],
+            'application_category_id' => ['nullable', 'integer'],
+            'residence_district_id' => ['nullable', 'integer'],
+            'from' => ['nullable', 'date_format:Y-m-d'],
+            'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
         ]);
 
         $applications = Application::query()
-            ->with(['candidate', 'jobTitle', 'sourceOffice'])
+            ->with(['candidate', 'jobPosition', 'nominatingEntity'])
             ->when($filters['q'] ?? null, function ($query, string $q) {
                 $like = '%' . addcslashes(ArabicText::searchKey($q), '\\%_') . '%';
 
                 $query->where(fn($inner) => $inner
-                    ->where('nomination_number', trim($q))
+                    ->where('nomination_number', ArabicText::digitsToAscii(trim($q)))
                     ->orWhereHas('candidate', fn($candidate) => $candidate->where('name_search_key', 'like', $like)));
             })
-            ->when($filters['national_id'] ?? null, fn($query, string $id) => $query->whereHas(
+            ->when($filters['national_number'] ?? null, fn($query, string $number) => $query->whereHas(
                 'candidate',
-                fn($candidate) => $candidate->where('national_id_hash', BlindIndex::for(NationalId::normalize($id))),
+                fn($candidate) => $candidate->where('national_number', NationalNumber::normalize($number)),
             ))
             ->when($filters['status'] ?? null, fn($query, string $status) => $query->where('current_status', $status))
-            ->when($filters['job_title_id'] ?? null, fn($query, string $id) => $query->where('job_title_id', $id))
-            ->when($filters['source_office_id'] ?? null, fn($query, string $id) => $query->where('source_office_id', $id))
-            ->when($filters['from'] ?? null, fn($query, string $date) => $query->whereDate('created_at', '>=', $date))
-            ->when($filters['to'] ?? null, fn($query, string $date) => $query->whereDate('created_at', '<=', $date))
-            ->latest()
+            ->when($filters['job_position_id'] ?? null, fn($query, $id) => $query->where('job_position_id', $id))
+            ->when($filters['nominating_entity_id'] ?? null, fn($query, $id) => $query->where('nominating_entity_id', $id))
+            ->when($filters['application_category_id'] ?? null, fn($query, $id) => $query->where('application_category_id', $id))
+            ->when($filters['residence_district_id'] ?? null, fn($query, $id) => $query->where('residence_district_id', $id))
+            ->when($filters['from'] ?? null, fn($query, string $date) => $query->where('created_at', '>=', $date))
+            ->when($filters['to'] ?? null, fn($query, string $date) => $query->where('created_at', '<', now()->parse($date)->addDay()->toDateString()))
+            ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->paginate(25);
 
@@ -66,23 +68,16 @@ class ApplicationController extends Controller
     /**
      * Open an application
      *
-     * Finds the person by national ID (or creates them), takes the next nomination number and starts the
-     * history. `sensitive` fields need the candidates.view_sensitive permission (otherwise 403).
-     * `candidate_matched` is true when the person was already on file: their stored data is not overwritten.
+     * Finds the person by national number (or creates them), takes the next nomination number and starts
+     * the history. `candidate_matched` is true when the person was already on file: the person's stored
+     * data is kept and the `candidate` fields sent are ignored. 422 when the person already has a live
+     * application for this job position, or when the area does not belong to the district.
      */
     public function store(StoreApplicationRequest $request, CreateApplication $create): JsonResponse
     {
-        $input = $request->validated();
+        $result = $create->execute($request->validated(), $request->user());
 
-        $sendsSensitive = array_filter($input['sensitive'] ?? [], fn($value) => $value !== null) !== [];
-
-        if ($sendsSensitive && ! $request->user()->can('candidates.view_sensitive')) {
-            abort(403, 'Marital and health details need the candidates.view_sensitive permission.');
-        }
-
-        $result = $create->execute($input, $request->user());
-
-        $application = $result['application']->load(['candidate.governorate', 'candidate.sensitiveDetails', 'jobTitle', 'sourceOffice', 'category', 'statusEvents.actor']);
+        $application = $result['application']->load(ApplicationResource::RELATIONS);
 
         return (new ApplicationResource($application))
             ->additional(['candidate_matched' => $result['candidate_matched']])
@@ -91,17 +86,8 @@ class ApplicationController extends Controller
     }
 
     /** One application file with the person and the full status history. */
-    public function show(Request $request, Application $application): ApplicationResource
+    public function show(Application $application): ApplicationResource
     {
-        $application->load(['candidate.governorate', 'candidate.sensitiveDetails', 'jobTitle', 'sourceOffice', 'category', 'statusEvents.actor']);
-
-        if ($request->user()->can('candidates.view_sensitive')) {
-            AuditTrail::record('candidate.sensitive_viewed', $request->user(), [
-                'application_id' => $application->id,
-                'candidate_id' => $application->candidate_id,
-            ]);
-        }
-
-        return new ApplicationResource($application);
+        return new ApplicationResource($application->load(ApplicationResource::RELATIONS));
     }
 }

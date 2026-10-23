@@ -8,7 +8,7 @@ use App\Modules\Recruitment\Http\Controllers\ReferenceDataController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('api')->prefix('api/v1/staff')->group(function () {
-    $types = array_column(ReferenceType::cases(), 'value');
+    $types = ReferenceType::values();
 
     Route::middleware(['auth:staff', EnsureStaffIsActive::class])->group(function () use ($types) {
         // Managed lists: any staff user may read, candidates.manage may change.
@@ -16,9 +16,9 @@ Route::middleware('api')->prefix('api/v1/staff')->group(function () {
 
         Route::middleware('can:candidates.manage')->group(function () use ($types) {
             Route::post('reference/{type}', [ReferenceDataController::class, 'store'])->whereIn('type', $types);
-            Route::put('reference/{type}/{id}', [ReferenceDataController::class, 'update'])->whereIn('type', $types)->whereUuid('id');
-            Route::delete('reference/{type}/{id}', [ReferenceDataController::class, 'archive'])->whereIn('type', $types)->whereUuid('id');
-            Route::post('reference/{type}/{id}/restore', [ReferenceDataController::class, 'restore'])->whereIn('type', $types)->whereUuid('id');
+            Route::put('reference/{type}/{id}', [ReferenceDataController::class, 'update'])->whereIn('type', $types)->whereNumber('id');
+            Route::delete('reference/{type}/{id}', [ReferenceDataController::class, 'archive'])->whereIn('type', $types)->whereNumber('id');
+            Route::post('reference/{type}/{id}/restore', [ReferenceDataController::class, 'restore'])->whereIn('type', $types)->whereNumber('id');
 
             Route::post('applications', [ApplicationController::class, 'store']);
         });

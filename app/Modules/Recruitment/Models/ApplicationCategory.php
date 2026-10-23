@@ -9,4 +9,6 @@ use Illuminate\Database\Eloquent\Model;
 class ApplicationCategory extends Model
 {
     use IsReferenceData;
+
+    protected $table = 'application_categories';
 }

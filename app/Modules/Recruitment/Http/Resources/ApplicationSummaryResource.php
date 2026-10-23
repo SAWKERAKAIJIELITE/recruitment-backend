@@ -20,8 +20,9 @@ class ApplicationSummaryResource extends JsonResource
             'status' => $this->current_status,
             'status_label' => $this->current_status->labelAr(),
             'candidate_name' => $this->candidate->full_name,
-            'job_title' => $this->jobTitle->name_ar,
-            'source_office' => $this->sourceOffice->name_ar,
+            'national_number' => $this->candidate->national_number,
+            'job_position' => $this->jobPosition->name_ar,
+            'nominating_entity' => $this->nominatingEntity->name_ar,
             'created_at' => $this->created_at,
         ];
     }

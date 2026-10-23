@@ -6,12 +6,27 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
- * The full application file: the application, the person, and the history.
+ * The full application file: the application, the person, and the history in order.
  *
  * @mixin \App\Modules\Recruitment\Models\Application
  */
 class ApplicationResource extends JsonResource
 {
+    /** The relations the file shows; load them before building the resource. */
+    public const RELATIONS = [
+        'candidate.birthPlace',
+        'nominatingEntity',
+        'jobPosition',
+        'category',
+        'academicQualification',
+        'specialization',
+        'maritalStatus',
+        'healthCondition',
+        'residenceDistrict',
+        'residenceArea',
+        'statusEvents.actor',
+    ];
+
     public function toArray(Request $request): array
     {
         return [
@@ -19,19 +34,35 @@ class ApplicationResource extends JsonResource
             'nomination_number' => $this->nomination_number,
             'status' => $this->current_status,
             'status_label' => $this->current_status->labelAr(),
-            'job_title' => ['id' => $this->jobTitle->id, 'name_ar' => $this->jobTitle->name_ar],
-            'source_office' => ['id' => $this->sourceOffice->id, 'name_ar' => $this->sourceOffice->name_ar],
-            'category' => $this->category === null ? null : ['id' => $this->category->id, 'name_ar' => $this->category->name_ar],
+            'nominating_entity' => ReferenceSummary::of($this->nominatingEntity),
+            'job_position' => ReferenceSummary::of($this->jobPosition),
+            'category' => ReferenceSummary::of($this->category),
             'existing_employee_number' => $this->existing_employee_number,
-            'notes' => $this->notes,
+            'education' => [
+                'academic_qualification' => ReferenceSummary::of($this->academicQualification),
+                'specialization' => ReferenceSummary::of($this->specialization),
+                'studying_years' => $this->studying_years,
+                'quran_parts_memorized' => $this->quran_parts_memorized,
+            ],
+            'marital_status' => ReferenceSummary::of($this->maritalStatus),
+            'health' => [
+                'condition' => ReferenceSummary::of($this->healthCondition),
+                'details' => $this->health_details,
+            ],
+            'residence' => [
+                'district' => ReferenceSummary::of($this->residenceDistrict),
+                'area' => ReferenceSummary::of($this->residenceArea),
+                'details' => $this->residence_details,
+            ],
+            'phone_number' => $this->phone_number,
             'availability' => [
                 'works_for_other_government_entity' => $this->works_for_other_government_entity,
-                'can_stay_overnight' => $this->can_stay_overnight,
-                'full_time_available' => $this->full_time_available,
-                'declared_at' => $this->availability_declared_at,
+                'full_commitment' => $this->full_commitment,
+                'overnight_work' => $this->overnight_work,
             ],
+            'notes' => $this->notes,
             'candidate' => new CandidateResource($this->candidate),
-            'history' => StatusEventResource::collection($this->whenLoaded('statusEvents')),
+            'history' => StatusEventResource::collection($this->history()),
             'created_at' => $this->created_at,
         ];
     }

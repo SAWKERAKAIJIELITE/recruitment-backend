@@ -14,8 +14,8 @@ return new class extends Migration
             $table->string('personal_number')->unique();
             // $table->string('type', 20);                       // staff | candidate
             $table->string('username', 50)->unique();        // stored lowercase
-            $table->string('first_name',15);
-            $table->string('last_name',15);
+            $table->string('first_name',50);
+            $table->string('last_name',50);
             $table->string('password');
             $table->boolean('is_active')->default(true)->index();
             // $table->boolean('must_change_password')->default(false);

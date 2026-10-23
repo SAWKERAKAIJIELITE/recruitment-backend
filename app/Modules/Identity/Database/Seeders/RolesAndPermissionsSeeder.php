@@ -23,7 +23,6 @@ class RolesAndPermissionsSeeder extends Seeder
         'reports.view' => 'مؤشرات وتقارير مفصلة',
         'imports.manage' => 'استيراد ملفات Excel',
         'candidates.manage' => 'تحرير بيانات المرشحين',
-        'candidates.view_sensitive' => 'الاطلاع على الرقم الوطني والبيانات الصحية والاجتماعية للمرشحين',
         'exam_bank.manage' => 'بنك الأسئلة وخطط الاختبار',
         'exams.take' => 'تقديم الاختبار',
         'attempts.extend' => 'تعديل مدة محاولة نشطة',
@@ -37,7 +36,7 @@ class RolesAndPermissionsSeeder extends Seeder
     ];
 
     /** The ✓* cells: may be granted to individual users, never attached to a role. */
-    private const INDIVIDUAL_ONLY = ['attempts.extend', 'exceptions.approve', 'candidates.view_sensitive'];
+    private const INDIVIDUAL_ONLY = ['attempts.extend', 'exceptions.approve'];
 
     private const ROLES = [
         'general_manager' => [

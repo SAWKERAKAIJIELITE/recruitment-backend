@@ -17,7 +17,7 @@ class DistrictsSeeder extends Seeder
     public function run(): void
     {
         foreach (self::NAMES as $name) {
-            // Matched by normalised name, so re-running never duplicates or resurrects a renamed entry.
+            // Matched by normalized name, so re-running never duplicates or resurrects a renamed entry.
             District::withTrashed()->firstOrCreate(['name_key' => ArabicText::searchKey($name)], ['name_ar' => $name]);
             // District::withTrashed()->firstOrCreate(['name_key' => $name], ['name_ar' => $name]);
         }

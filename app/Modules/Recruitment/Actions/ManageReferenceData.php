@@ -2,24 +2,33 @@
 
 namespace App\Modules\Recruitment\Actions;
 
+use App\Modules\Recruitment\Enums\ReferenceType;
 use App\Support\ArabicText;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\ValidationException;
 
-/** Create, rename, archive and restore entries of the managed lists (source offices, job titles, ...). */
+/**
+ * Create, rename, archive and restore entries of the managed lists. A name must be unique in its list,
+ * in any spelling (ArabicText::searchKey). Areas are unique within their district only.
+ */
 class ManageReferenceData
 {
-    /** @param  class-string<Model>  $modelClass */
-    public function create(string $modelClass, string $name): Model
+    public function create(ReferenceType $type, string $name, ?int $districtId = null): Model
     {
-        $this->assertNameIsFree($modelClass, $name, null);
+        $this->assertNameIsFree($type, $name, $districtId, null);
 
-        return $modelClass::create(['name_ar' => $name]);
+        $attributes = ['name_ar' => $name];
+
+        if ($type->isScopedToDistrict()) {
+            $attributes['district_id'] = $districtId;
+        }
+
+        return $type->model()::create($attributes);
     }
 
-    public function rename(Model $item, string $name): Model
+    public function rename(ReferenceType $type, Model $item, string $name): Model
     {
-        $this->assertNameIsFree($item::class, $name, $item->getKey());
+        $this->assertNameIsFree($type, $name, $type->isScopedToDistrict() ? $item->district_id : null, $item->getKey());
 
         $item->update(['name_ar' => $name]);
 
@@ -41,11 +50,12 @@ class ManageReferenceData
         return $item;
     }
 
-    private function assertNameIsFree(string $modelClass, string $name, ?string $exceptId): void
+    private function assertNameIsFree(ReferenceType $type, string $name, ?int $districtId, int|string|null $exceptId): void
     {
-        $clash = $modelClass::withTrashed()
+        $clash = $type->model()::withTrashed()
             ->where('name_key', ArabicText::searchKey($name))
-            ->when($exceptId, fn($query) => $query->whereKeyNot($exceptId))
+            ->when($type->isScopedToDistrict(), fn($query) => $query->where('district_id', $districtId))
+            ->when($exceptId !== null, fn($query) => $query->whereKeyNot($exceptId))
             ->first();
 
         if ($clash === null) {
@@ -53,9 +63,7 @@ class ManageReferenceData
         }
 
         throw ValidationException::withMessages([
-            'name_ar' => [$clash->trashed()
-                ? 'An archived entry with this name already exists: restore it instead.'
-                : 'An entry with this name already exists.'],
+            'name_ar' => [__($clash->trashed() ? 'recruitment.name_archived' : 'recruitment.name_taken')],
         ]);
     }
 }

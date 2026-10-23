@@ -6,18 +6,41 @@ use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Models\Candidate;
-use App\Modules\Recruitment\Support\BlindIndex;
-use App\Modules\Recruitment\Support\NationalId;
+use App\Modules\Recruitment\Support\NationalNumber;
 use App\Modules\Recruitment\Support\NominationNumberGenerator;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
  * Opens an application for a person: finds or creates the person, takes the next nomination number,
- * and writes the first history row, all in one transaction (the Imports step will reuse this per row).
+ * and writes the first history event, all in one transaction. The Excel import will reuse it per row.
  */
 class CreateApplication
 {
+    /** The application fields of the input (everything except the person). */
+    private const APPLICATION_FIELDS = [
+        'nominating_entity_id',
+        'job_position_id',
+        'application_category_id',
+        'existing_employee_number',
+        'academic_qualification_id',
+        'specialization_id',
+        'studying_years',
+        'quran_parts_memorized',
+        'marital_status_id',
+        'health_condition_id',
+        'health_details',
+        'residence_district_id',
+        'residence_area_id',
+        'residence_details',
+        'phone_number',
+        'works_for_other_government_entity',
+        'full_commitment',
+        'overnight_work',
+        'notes',
+    ];
+
     public function __construct(
         private readonly ApplicationLifecycle $lifecycle,
         private readonly NominationNumberGenerator $numbers,
@@ -25,85 +48,63 @@ class CreateApplication
     }
 
     /**
-     * @param  array  $input  validated request data (see StoreApplicationRequest)
+     * @param  array  $input  validated data (see StoreApplicationRequest)
      * @return array{application: Application, candidate_matched: bool}
      */
     public function execute(array $input, StaffUser $actor): array
     {
         return DB::transaction(function () use ($input, $actor) {
-            [$candidate, $matched] = $this->findOrCreateCandidate($input['candidate'], $input['sensitive'] ?? []);
+            [$candidate, $matched] = $this->findOrCreateCandidate($input['candidate']);
 
-            $this->assertNoLiveApplicationForTitle($candidate, $input['job_title_id']);
+            $this->assertNoLiveApplicationForPosition($candidate, (int) $input['job_position_id']);
 
-            $availability = $input['availability'] ?? [];
-            $declared = array_filter($availability, fn($value) => $value !== null) !== [];
-
-            $application = new Application([
-                'candidate_id' => $candidate->id,
-                'job_title_id' => $input['job_title_id'],
-                'source_office_id' => $input['source_office_id'],
-                'category_id' => $input['category_id'] ?? null,
-                'existing_employee_number' => $input['existing_employee_number'] ?? null,
-                'notes' => $input['notes'] ?? null,
-                'works_for_other_government_entity' => $availability['works_for_other_government_entity'] ?? null,
-                'can_stay_overnight' => $availability['can_stay_overnight'] ?? null,
-                'full_time_available' => $availability['full_time_available'] ?? null,
-            ]);
-
+            $application = new Application(Arr::only($input, self::APPLICATION_FIELDS));
+            $application->candidate_id = $candidate->id;
             $application->forceFill([
                 'nomination_number' => $this->numbers->next(),
-                'current_status' => ApplicationStatus::AwaitingExam,
-                'availability_declared_at' => $declared ? now() : null,
                 'created_by' => $actor->id,
             ])->save();
 
             $this->lifecycle->open($application, $actor);
+
+            $application->setRelation('candidate', $candidate);
 
             return ['application' => $application, 'candidate_matched' => $matched];
         });
     }
 
     /**
-     * A person is recognised only by national ID (never by name: two people can share a name).
+     * A person is recognized only by national number, never by name: two people can share a name.
      * A matched person keeps the data already on file; a new application never overwrites it.
      *
      * @return array{0: Candidate, 1: bool}
      */
-    private function findOrCreateCandidate(array $data, array $sensitive): array
+    private function findOrCreateCandidate(array $data): array
     {
-        $nationalId = isset($data['national_id']) ? NationalId::normalize($data['national_id']) : '';
-        unset($data['national_id']);
+        $nationalNumber = NationalNumber::normalize($data['national_number']);
 
-        if ($nationalId !== '') {
-            $existing = Candidate::where('national_id_hash', BlindIndex::for($nationalId))->first();
+        // Locked, so two requests for the same new person cannot both decide "not on file yet"
+        // (the unique index would refuse the second one anyway).
+        $existing = Candidate::query()->where('national_number', $nationalNumber)->lockForUpdate()->first();
 
-            if ($existing !== null) {
-                return [$existing, true];
-            }
+        if ($existing !== null) {
+            return [$existing, true];
         }
 
-        $candidate = new Candidate($data);
-        $candidate->setNationalId($nationalId);
-        $candidate->save();
-
-        if (array_filter($sensitive, fn($value) => $value !== null) !== []) {
-            $candidate->sensitiveDetails()->create($sensitive);
-        }
-
-        return [$candidate, false];
+        return [Candidate::create(['national_number' => $nationalNumber] + $data), false];
     }
 
-    private function assertNoLiveApplicationForTitle(Candidate $candidate, string $jobTitleId): void
+    private function assertNoLiveApplicationForPosition(Candidate $candidate, int $jobPositionId): void
     {
         $exists = Application::query()
             ->where('candidate_id', $candidate->id)
-            ->where('job_title_id', $jobTitleId)
+            ->where('job_position_id', $jobPositionId)
             ->whereNotIn('current_status', ApplicationStatus::terminalValues())
             ->exists();
 
         if ($exists) {
             throw ValidationException::withMessages([
-                'job_title_id' => ['This person already has a live application for this job title.'],
+                'job_position_id' => [__('recruitment.live_application_exists')],
             ]);
         }
     }

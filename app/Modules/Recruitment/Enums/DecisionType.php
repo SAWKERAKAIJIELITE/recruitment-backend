@@ -11,7 +11,7 @@ enum DecisionType: string
     /** The status follows from a recorded result: an exam attempt, an interview, a contract record. */
     case Outcome = 'outcome';
 
-    /** An authorised administrative exception (for example: failed the exams but is allowed to proceed). */
+    /** An authorized administrative exception (for example: failed the exams but is allowed to proceed). */
     case Exception = 'exception';
 
     /** An absence excuse was accepted, so a new appointment follows. */

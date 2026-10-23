@@ -37,6 +37,7 @@ trait StaffTestHelpers
     /** @return array{device: StaffDevice, key: \OpenSSLAsymmetricKey} */
     protected function pendingDevice(): array
     {
+        $index = $this->nextDeviceKey;
         $pair = $this->newDeviceKey();
         $parsed = DeviceCrypto::parsePublicKey($pair['public_pem']);
 
@@ -44,7 +45,8 @@ trait StaffTestHelpers
             'label' => 'Pending PC',
             'public_key' => $parsed['pem'],
             'fingerprint' => $parsed['fingerprint'],
-            'reported_mac' => '00:11:22:33:44:55',
+            'reported_mac' => $this->testMac($index),
+            'os_info' => 'Windows 11',
         ]);
 
         return ['device' => $device, 'key' => $pair['key']];
@@ -53,6 +55,7 @@ trait StaffTestHelpers
     /** @return array{device: StaffDevice, key: \OpenSSLAsymmetricKey} */
     protected function approvedDevice(StaffUser $owner): array
     {
+        $index = $this->nextDeviceKey;
         $pair = $this->newDeviceKey();
         $parsed = DeviceCrypto::parsePublicKey($pair['public_pem']);
 
@@ -61,13 +64,20 @@ trait StaffTestHelpers
             'label' => 'Approved PC',
             'public_key' => $parsed['pem'],
             'fingerprint' => $parsed['fingerprint'],
-            'reported_mac' => '00:11:22:33:44:55',
+            'reported_mac' => $this->testMac($index),
+            'os_info' => 'Windows 11',
             'status' => DeviceStatus::Approved,
             'staff_user_id' => $owner->id,
             'approved_at' => now(),
         ])->save();
 
         return ['device' => $device, 'key' => $pair['key']];
+    }
+
+    /** reported_mac is unique, so every fixture device gets its own address. */
+    protected function testMac(int $index): string
+    {
+        return sprintf('02:00:00:00:00:%02x', $index);
     }
 
     protected function requestChallenge(StaffDevice $device): array

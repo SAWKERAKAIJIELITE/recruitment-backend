@@ -6,7 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
- * One row of an application's history.
+ * One event of an application's history. from_status is the previous event's status (null for the first).
  *
  * @mixin \App\Modules\Recruitment\Models\ApplicationStatusEvent
  */
@@ -15,7 +15,8 @@ class StatusEventResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'from_status' => $this->from_status,
+            'id' => $this->id,
+            'from_status' => $this->fromStatus(),
             'to_status' => $this->to_status,
             'to_status_label' => $this->to_status->labelAr(),
             'decision_type' => $this->decision_type,
