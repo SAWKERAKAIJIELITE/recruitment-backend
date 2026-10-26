@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Applications and their status history (D-024, D-027, D-033).
+ * Applications and their status history (D-024, D-033, D-037, D-038, D-039).
  *
  * The history is the single source of truth. It is a linear chain: every event points to the event
  * before it, of the same application, and no two events can follow the same one. applications.current_status
@@ -24,9 +24,11 @@ return new class extends Migration {
         'interview_absent',
         'awaiting_contract',
         'contract_written',
+        'contract_ended',
+        'closed',
     ];
 
-    private const DECISION_TYPES = ['created', 'outcome', 'exception', 'excuse_accepted'];
+    private const DECISION_TYPES = ['created', 'outcome', 'exception', 'excuse_accepted', 'closure'];
 
     public function up(): void
     {
@@ -51,12 +53,13 @@ return new class extends Migration {
             $table->foreignId('academic_qualification_id')->index()->constrained('academic_qualifications')->restrictOnDelete();
             $table->foreignId('specialization_id')->index()->constrained('specializations')->restrictOnDelete();
             $table->unsignedSmallInteger('studying_years')->nullable()->index();
+            $table->boolean('studies_discontinued')->default(false);   // "3 ومنقطع": studied 3 years, then stopped (D-044)
             $table->unsignedSmallInteger('quran_parts_memorized')->nullable()->index();
             $table->foreignId('marital_status_id')->index()->constrained('marital_statuses')->restrictOnDelete();
             $table->foreignId('health_condition_id')->index()->constrained('health_conditions')->restrictOnDelete();
             $table->text('health_details')->nullable();
             $table->foreignId('residence_district_id')->index()->constrained('districts')->restrictOnDelete();
-            $table->unsignedBigInteger('residence_area_id');
+            $table->unsignedBigInteger('residence_area_id')->nullable();   // optional (D-043); when given, it must be in the district
             $table->text('residence_details')->nullable();
             $table->string('phone_number', 16);
             $table->boolean('works_for_other_government_entity')->index();
@@ -77,27 +80,14 @@ return new class extends Migration {
         });
 
         DB::statement('ALTER TABLE applications ADD CONSTRAINT applications_studying_years_range CHECK (studying_years IS NULL OR studying_years <= 15)');
+        DB::statement('ALTER TABLE applications ADD CONSTRAINT applications_discontinued_has_years CHECK (NOT studies_discontinued OR studying_years IS NOT NULL)');
         DB::statement('ALTER TABLE applications ADD CONSTRAINT applications_quran_parts_range CHECK (quran_parts_memorized IS NULL OR quran_parts_memorized <= 30)');
         DB::statement("ALTER TABLE applications ADD CONSTRAINT applications_phone_number_format CHECK (phone_number ~ '^\\+?[0-9]{6,15}$')");
         // DB::statement("ALTER TABLE applications ADD CONSTRAINT applications_phone_number_format CHECK (phone_number !~ '[a-zA-Z]')");
 
-        // foreach ([
-        //     'health_conditions',
-        //     'marital_status',
-        //     'job_position',
-        //     'academic_qualification',
-        //     'specialization',
-        //     'nominating_entities',
-        //     'application_categories'
-        // ] as $tableName) {
-        //     Schema::table('applications', function (Blueprint $table) use ($tableName) {
-        //         $table->foreignId("{$tableName}_id")->index()->constrained($tableName)->restrictOnDelete();
-        //     });
-        // }
-
-        // A person cannot have two live applications for the same job title. The policy for repeat
-        // applications is still open (recruitment cycles), so this is deliberately conservative.
-        DB::statement("CREATE UNIQUE INDEX applications_one_live_per_position ON applications (candidate_id, job_position_id) WHERE current_status NOT IN ('interview_failed', 'contract_written')");
+        // A person has at most one live application, whatever the job position (D-037). An application stops
+        // being live only when its contract ended without renewal or authorized staff closed it.
+        DB::statement("CREATE UNIQUE INDEX applications_one_live_per_person ON applications (candidate_id) WHERE current_status NOT IN ('contract_ended', 'closed')");
 
         Schema::create('application_status_events', function (Blueprint $table) {
             $table->uuid('id')->primary();
@@ -108,12 +98,10 @@ return new class extends Migration {
             $table->enum('decision_type', self::DECISION_TYPES);
             $table->text('reason')->nullable();
             $table->foreignUuid('actor_id')->nullable()->constrained('staff_users')->restrictOnDelete();
-            // The exam attempt / interview / contract that caused this move. Those tables do not exist yet,
-            // so this is a plain reference (no foreign key) that later modules fill.
-            $table->string('related_type', 50)->nullable();
-            $table->uuid('related_id')->nullable();
-            $table->timestampTz('occurred_at');
-            $table->timestampTz('created_at');
+            // What caused the move (exam attempt, interview, contract, ...) is one real foreign-key column per
+            // cause, added by the module that owns the cause's table (StatusEventCauseColumns, D-038).
+            $table->timestampTz('occurred_at');   // when the decision happened in reality (D-039)
+            $table->timestampTz('created_at');    // when it was recorded
 
             $table->unique(['application_id', 'id']);   // target of the composite key below
             $table->index(['application_id', 'occurred_at']);
@@ -129,7 +117,9 @@ return new class extends Migration {
         DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_first_is_created CHECK ((previous_event_id IS NULL) = (decision_type = 'created'))");
         DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_created_awaits_exam CHECK (decision_type <> 'created' OR to_status = 'awaiting_exam')");
         // Person-made decisions need a real reason and the staff user who made them.
-        DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_decisions_are_accountable CHECK (decision_type NOT IN ('exception', 'excuse_accepted') OR (btrim(coalesce(reason, '')) <> '' AND actor_id IS NOT NULL))");
+        DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_decisions_are_accountable CHECK (decision_type NOT IN ('exception', 'excuse_accepted', 'closure') OR (btrim(coalesce(reason, '')) <> '' AND actor_id IS NOT NULL))");
+        // A decision cannot be dated after it was recorded (D-039).
+        DB::statement('ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_not_recorded_before_it_happened CHECK (occurred_at <= created_at)');
 
         $this->createTriggers();
     }
@@ -157,16 +147,23 @@ return new class extends Migration {
             $$
                 DECLARE
                     tail uuid;
+                    tail_occurred_at timestamptz;
                 BEGIN
                     PERFORM 1 FROM applications WHERE id = NEW.application_id FOR UPDATE;
 
-                    SELECT e.id INTO tail
+                    SELECT e.id, e.occurred_at INTO tail, tail_occurred_at
                     FROM application_status_events e
                     WHERE e.application_id = NEW.application_id
                     AND NOT EXISTS (SELECT 1 FROM application_status_events n WHERE n.previous_event_id = e.id);
 
                     IF NEW.previous_event_id IS DISTINCT FROM tail THEN
                         RAISE EXCEPTION 'Event must follow the latest event % of application %', coalesce(tail::text, '(none)'), NEW.application_id
+                            USING ERRCODE = 'integrity_constraint_violation';
+                    END IF;
+
+                    -- Decisions happen in order: none can be dated before the one it follows (D-039).
+                    IF tail_occurred_at IS NOT NULL AND NEW.occurred_at < tail_occurred_at THEN
+                        RAISE EXCEPTION 'Event of application % is dated % but the previous event is dated %', NEW.application_id, NEW.occurred_at, tail_occurred_at
                             USING ERRCODE = 'integrity_constraint_violation';
                     END IF;
 

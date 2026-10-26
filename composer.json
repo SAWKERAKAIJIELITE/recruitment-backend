@@ -11,7 +11,8 @@
         "knuckleswtf/scribe": "*",
         "laravel/framework": "^12.0",
         "laravel/sanctum": "^4.0",
-        "laravel/tinker": "^2.10.1"
+        "laravel/tinker": "^2.10.1",
+        "phpoffice/phpspreadsheet": "^5.10"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

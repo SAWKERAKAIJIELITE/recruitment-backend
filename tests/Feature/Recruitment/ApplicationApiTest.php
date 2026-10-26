@@ -97,7 +97,8 @@ class ApplicationApiTest extends TestCase
     public function test_the_same_person_is_recognised_by_national_number_and_their_file_is_not_overwritten(): void
     {
         $staff = $this->hiringStaff();
-        $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload())->assertCreated();
+        $first = $this->openApplication($staff);
+        $this->closeApplication($first);
 
         $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload([
             'job_position_id' => $this->jobPosition('إداري')->id,
@@ -124,40 +125,87 @@ class ApplicationApiTest extends TestCase
         $this->assertDatabaseCount('candidates', 2);
     }
 
-    public function test_a_live_application_for_the_same_position_is_refused(): void
+    public static function anyPosition(): array
+    {
+        return ['same job position' => [false], 'another job position' => [true]];
+    }
+
+    #[DataProvider('anyPosition')]
+    public function test_a_person_with_a_live_application_cannot_get_another(bool $otherPosition): void
     {
         $staff = $this->hiringStaff();
-        $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload())->assertCreated();
+        $live = $this->openApplication($staff);
 
-        $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload())
-            ->assertStatus(422)
-            ->assertJsonPath('errors.job_position_id.0', __('recruitment.live_application_exists'));
+        $response = $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload(
+            $otherPosition ? ['job_position_id' => $this->jobPosition('إداري')->id] : [],
+        ))->assertStatus(422);
+
+        // The error key contains a dot, so it is read directly rather than through a JSON path.
+        $this->assertSame(
+            __('recruitment.live_application_exists', ['number' => $live->nomination_number]),
+            $response->json('errors')['candidate.national_number'][0],
+        );
 
         $this->assertDatabaseCount('applications', 1);
     }
 
-    public function test_after_a_final_outcome_the_person_can_apply_for_the_same_position_again(): void
+    public static function outcomesThatKeepThePersonLive(): array
+    {
+        return [
+            'exam failed' => [[[S::ExamFailed, D::Outcome]]],
+            'exam absent' => [[[S::ExamAbsent, D::Outcome]]],
+            'interview failed' => [[[S::AwaitingInterview, D::Outcome], [S::InterviewFailed, D::Outcome]]],
+            'contract written' => [[[S::AwaitingInterview, D::Outcome], [S::AwaitingContract, D::Outcome], [S::ContractWritten, D::Outcome]]],
+        ];
+    }
+
+    /** Only "contract ended" and "closed" end an application (D-037). */
+    #[DataProvider('outcomesThatKeepThePersonLive')]
+    public function test_failing_or_being_absent_does_not_free_the_person(array $moves): void
     {
         $staff = $this->hiringStaff();
-        $id = $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload())->json('data.id');
+        $application = $this->openApplication($staff);
+        foreach ($moves as [$to, $type]) {
+            app(ApplicationLifecycle::class)->move($application, $to, $type);
+        }
 
-        $application = Application::findOrFail($id);
-        app(ApplicationLifecycle::class)->move($application, S::AwaitingInterview, D::Outcome);
-        app(ApplicationLifecycle::class)->move($application, S::InterviewFailed, D::Outcome);
+        $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload(['job_position_id' => $this->jobPosition('إداري')->id]))
+            ->assertStatus(422);
+    }
+
+    public function test_after_closing_the_person_can_be_nominated_again(): void
+    {
+        $staff = $this->hiringStaff();
+        $this->closeApplication($this->openApplication($staff));
 
         $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload())->assertCreated();
 
         $this->assertDatabaseCount('applications', 2);
     }
 
-    public function test_the_database_itself_refuses_two_live_applications_for_one_position(): void
+    public function test_after_the_contract_ended_the_person_can_be_nominated_again(): void
+    {
+        $staff = $this->hiringStaff();
+        $application = $this->openApplication($staff);
+        foreach ([S::AwaitingInterview, S::AwaitingContract, S::ContractWritten, S::ContractEnded] as $to) {
+            app(ApplicationLifecycle::class)->move($application, $to, D::Outcome);
+        }
+
+        $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload())->assertCreated();
+    }
+
+    public function test_the_database_itself_refuses_two_live_applications_for_one_person(): void
     {
         $first = $this->openApplication();
         $copy = (array) DB::table('applications')->where('id', $first->id)->first();
 
         $this->expectException(QueryException::class);
 
-        DB::table('applications')->insert(array_replace($copy, ['id' => (string) Str::uuid(), 'nomination_number' => 'MANUAL-1']));
+        DB::table('applications')->insert(array_replace($copy, [
+            'id' => (string) Str::uuid(),
+            'nomination_number' => 'MANUAL-1',
+            'job_position_id' => $this->jobPosition('إداري')->id,
+        ]));
     }
 
     public function test_a_failed_request_leaves_nothing_behind(): void
@@ -173,7 +221,128 @@ class ApplicationApiTest extends TestCase
         $this->assertDatabaseCount('application_status_events', 1);
     }
 
+    // ---- closing an application ----
+
+    private function closer()
+    {
+        return $this->allow($this->hiringStaff(), 'applications.close');
+    }
+
+    public function test_closing_needs_the_individual_permission(): void
+    {
+        $application = $this->openApplication();
+
+        $this->asStaff($this->hiringStaff())->postJson(self::URL . "/{$application->id}/close", ['reason' => 'انسحب المرشح'])
+            ->assertForbidden();
+        $this->assertSame(S::AwaitingExam, $application->fresh()->current_status);
+    }
+
+    public function test_authorised_staff_close_an_application_with_a_reason(): void
+    {
+        $closer = $this->closer();
+        $application = $this->openApplication();
+
+        $this->asStaff($closer)->postJson(self::URL . "/{$application->id}/close", ['reason' => 'انسحب المرشح'])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'closed')
+            ->assertJsonPath('data.history.1.decision_type', 'closure')
+            ->assertJsonPath('data.history.1.from_status', 'awaiting_exam')
+            ->assertJsonPath('data.history.1.reason', 'انسحب المرشح')
+            ->assertJsonPath('data.history.1.actor.id', $closer->id);
+    }
+
+    public function test_a_reason_is_required_to_close(): void
+    {
+        $application = $this->openApplication();
+
+        $this->asStaff($this->closer())->postJson(self::URL . "/{$application->id}/close", ['reason' => ' '])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('reason');
+    }
+
+    public function test_a_closing_decision_can_be_dated_in_the_past_but_not_in_the_future(): void
+    {
+        $closer = $this->closer();
+        $this->travelTo('2026-03-01 09:00:00');
+        $application = $this->openApplication();
+        $this->travelBack();
+
+        $this->asStaff($closer)->postJson(self::URL . "/{$application->id}/close", ['reason' => 'قرار ورقي', 'occurred_at' => now()->addDay()->toDateString()])
+            ->assertStatus(422)->assertJsonValidationErrors('occurred_at');
+        $this->asStaff($closer)->postJson(self::URL . "/{$application->id}/close", ['reason' => 'قرار ورقي', 'occurred_at' => '2026-02-01'])
+            ->assertStatus(422)->assertJsonValidationErrors('occurred_at');   // before the application was opened
+
+        $this->asStaff($closer)->postJson(self::URL . "/{$application->id}/close", ['reason' => 'قرار ورقي', 'occurred_at' => '2026-03-05 10:30:00'])
+            ->assertOk()
+            ->assertJsonPath('data.history.1.occurred_at', '2026-03-05T10:30:00.000000Z');
+    }
+
+    public function test_closing_with_todays_date_works_for_an_application_opened_today(): void
+    {
+        $application = $this->openApplication();
+
+        $this->asStaff($this->closer())->postJson(self::URL . "/{$application->id}/close", ['reason' => 'قرار اليوم', 'occurred_at' => now()->toDateString()])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'closed');
+    }
+
+    public function test_an_ended_application_or_a_written_contract_cannot_be_closed(): void
+    {
+        $closer = $this->closer();
+        $closed = $this->openApplication();
+        $this->closeApplication($closed);
+
+        $this->asStaff($closer)->postJson(self::URL . "/{$closed->id}/close", ['reason' => 'مرة ثانية'])
+            ->assertStatus(422)->assertJsonValidationErrors('status');
+
+        $hired = $this->openApplication(null, ['candidate' => ['national_number' => '55555555555']]);
+        foreach ([S::AwaitingInterview, S::AwaitingContract, S::ContractWritten] as $to) {
+            app(ApplicationLifecycle::class)->move($hired, $to, D::Outcome);
+        }
+
+        $this->asStaff($closer)->postJson(self::URL . "/{$hired->id}/close", ['reason' => 'خطأ'])
+            ->assertStatus(422)
+            ->assertJsonPath('errors.status.0', __('recruitment.illegal_transition', ['status' => S::ContractWritten->labelAr()]));
+    }
+
     // ---- residence: the area must be inside the district ----
+
+    public function test_the_residence_area_is_optional(): void
+    {
+        $this->asStaff($this->hiringStaff())->postJson(self::URL, $this->applicationPayload(['residence_area_id' => null, 'residence_details' => 'تدمر، الحي الغربي']))
+            ->assertCreated()
+            ->assertJsonPath('data.residence.area', null)
+            ->assertJsonPath('data.residence.district.name_ar', 'دمشق')
+            ->assertJsonPath('data.residence.details', 'تدمر، الحي الغربي');
+    }
+
+    public function test_discontinued_studies_need_the_number_of_years(): void
+    {
+        $staff = $this->hiringStaff();
+
+        $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload(['studies_discontinued' => true, 'studying_years' => null]))
+            ->assertStatus(422)->assertJsonValidationErrors('studying_years');
+
+        $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload(['studies_discontinued' => true, 'studying_years' => 3]))
+            ->assertCreated()
+            ->assertJsonPath('data.education.studying_years', 3)
+            ->assertJsonPath('data.education.studies_discontinued', true);
+    }
+
+    public function test_studies_are_not_discontinued_unless_said(): void
+    {
+        $this->asStaff($this->hiringStaff())->postJson(self::URL, $this->applicationPayload())
+            ->assertCreated()->assertJsonPath('data.education.studies_discontinued', false);
+    }
+
+    public function test_the_database_refuses_discontinued_studies_without_years(): void
+    {
+        $application = $this->openApplication();
+
+        $this->expectException(QueryException::class);
+
+        DB::table('applications')->where('id', $application->id)->update(['studies_discontinued' => true, 'studying_years' => null]);
+    }
 
     public function test_an_area_of_another_district_is_refused(): void
     {

@@ -16,8 +16,9 @@ class StaffUserFactory extends Factory
         return [
             // 'type' => User::TYPE_STAFF,
             'username' => fake()->unique()->regexify('^[a-z._-]{3,50}$'),
-            'first_name' => fake()->firstName(),
-            'last_name' => fake()->lastName(),
+            // The database refuses names shorter than 3 characters; Faker sometimes returns "Al" or "Ng".
+            'first_name' => fake()->valid(fn(string $name) => mb_strlen($name) >= 3)->firstName(),
+            'last_name' => fake()->valid(fn(string $name) => mb_strlen($name) >= 3)->lastName(),
             'personal_number' => fake()->unique()->regexify('[0-9]{9}'),
             'password' => 'password',          // the 'hashed' cast hashes it
             'is_active' => true,

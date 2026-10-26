@@ -15,9 +15,11 @@ class ApplicationStatusTest extends TestCase
         }
     }
 
-    public function test_only_two_statuses_are_terminal(): void
+    public function test_only_contract_ended_and_closed_are_terminal(): void
     {
-        $this->assertEqualsCanonicalizing(['interview_failed', 'contract_written'], S::terminalValues());
+        $this->assertEqualsCanonicalizing(['contract_ended', 'closed'], S::terminalValues());
+        $this->assertTrue(S::ExamFailed->isLive());
+        $this->assertTrue(S::ContractWritten->isLive());
     }
 
     public function test_every_transition_target_is_a_real_status(): void
@@ -60,6 +62,7 @@ class ApplicationStatusTest extends TestCase
     {
         $this->assertTrue(D::Exception->needsReasonAndActor());
         $this->assertTrue(D::ExcuseAccepted->needsReasonAndActor());
+        $this->assertTrue(D::Closure->needsReasonAndActor());
         $this->assertFalse(D::Outcome->needsReasonAndActor());
         $this->assertFalse(D::Created->needsReasonAndActor());
     }

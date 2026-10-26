@@ -3,7 +3,6 @@
 namespace App\Modules\Recruitment\Actions;
 
 use App\Modules\Identity\Models\StaffUser;
-use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Models\Candidate;
 use App\Modules\Recruitment\Support\NationalNumber;
@@ -27,6 +26,7 @@ class CreateApplication
         'academic_qualification_id',
         'specialization_id',
         'studying_years',
+        'studies_discontinued',
         'quran_parts_memorized',
         'marital_status_id',
         'health_condition_id',
@@ -54,23 +54,66 @@ class CreateApplication
     public function execute(array $input, StaffUser $actor): array
     {
         return DB::transaction(function () use ($input, $actor) {
-            [$candidate, $matched] = $this->findOrCreateCandidate($input['candidate']);
+            self::lockPeople([$input['candidate']['national_number']]);
 
-            $this->assertNoLiveApplicationForPosition($candidate, (int) $input['job_position_id']);
-
-            $application = new Application(Arr::only($input, self::APPLICATION_FIELDS));
-            $application->candidate_id = $candidate->id;
-            $application->forceFill([
-                'nomination_number' => $this->numbers->next(),
-                'created_by' => $actor->id,
-            ])->save();
-
-            $this->lifecycle->open($application, $actor);
-
-            $application->setRelation('candidate', $candidate);
-
-            return ['application' => $application, 'candidate_matched' => $matched];
+            return $this->createLocked($input, $actor, $this->numbers->next());
         });
+    }
+
+    /**
+     * For callers that open many applications in one transaction (the Excel import): no savepoint per
+     * application. The caller must hold the transaction, have locked the people with lockPeople(), and
+     * pass a nomination number it reserved.
+     *
+     * @return array{application: Application, candidate_matched: bool}
+     */
+    public function createLocked(array $input, StaffUser $actor, string $nominationNumber): array
+    {
+        if (DB::transactionLevel() === 0) {
+            throw new \LogicException('CreateApplication::createLocked() must run inside a transaction.');
+        }
+
+        [$candidate, $matched] = $this->findOrCreateCandidate($input['candidate']);
+
+        $this->assertNoLiveApplication($candidate);
+
+        $fields = Arr::only($input, self::APPLICATION_FIELDS);
+        $fields['studies_discontinued'] = (bool) ($fields['studies_discontinued'] ?? false);   // NOT NULL, default false
+
+        $application = new Application($fields);
+        $application->candidate_id = $candidate->id;
+        $application->forceFill([
+            'nomination_number' => $nominationNumber,
+            'created_by' => $actor->id,
+        ])->save();
+
+        $this->lifecycle->open($application, $actor);
+
+        $application->setRelation('candidate', $candidate);
+
+        return ['application' => $application, 'candidate_matched' => $matched];
+    }
+
+    /**
+     * Serializes everything that creates or opens applications for these people until the transaction
+     * ends (a transaction-level advisory lock per national number, taken in a fixed order so two callers
+     * cannot deadlock). Whoever holds the lock can trust what it reads about these people (D-041).
+     *
+     * @param  list<string>  $nationalNumbers
+     */
+    public static function lockPeople(array $nationalNumbers): void
+    {
+        $numbers = array_values(array_unique(array_map(fn(string $number) => NationalNumber::normalize($number), $nationalNumbers)));
+        sort($numbers);
+
+        if ($numbers === []) {
+            return;
+        }
+
+        DB::select(
+            "SELECT pg_advisory_xact_lock(hashtextextended('candidate:' || n, 0)) FROM unnest(?::text[]) WITH ORDINALITY AS t(n, i) ORDER BY i",
+            ['{' . implode(',', $numbers) . '}'],
+        );
     }
 
     /**
@@ -83,9 +126,9 @@ class CreateApplication
     {
         $nationalNumber = NationalNumber::normalize($data['national_number']);
 
-        // Locked, so two requests for the same new person cannot both decide "not on file yet"
-        // (the unique index would refuse the second one anyway).
-        $existing = Candidate::query()->where('national_number', $nationalNumber)->lockForUpdate()->first();
+        // The caller holds this person's advisory lock (lockPeople), so no one else can create them meanwhile;
+        // the unique index stays the last guard.
+        $existing = Candidate::query()->where('national_number', $nationalNumber)->first();
 
         if ($existing !== null) {
             return [$existing, true];
@@ -94,17 +137,14 @@ class CreateApplication
         return [Candidate::create(['national_number' => $nationalNumber] + $data), false];
     }
 
-    private function assertNoLiveApplicationForPosition(Candidate $candidate, int $jobPositionId): void
+    /** One live application per person, whatever the job position (D-037). */
+    private function assertNoLiveApplication(Candidate $candidate): void
     {
-        $exists = Application::query()
-            ->where('candidate_id', $candidate->id)
-            ->where('job_position_id', $jobPositionId)
-            ->whereNotIn('current_status', ApplicationStatus::terminalValues())
-            ->exists();
+        $live = Application::query()->where('candidate_id', $candidate->id)->live()->value('nomination_number');
 
-        if ($exists) {
+        if ($live !== null) {
             throw ValidationException::withMessages([
-                'job_position_id' => [__('recruitment.live_application_exists')],
+                'candidate.national_number' => [__('recruitment.live_application_exists', ['number' => $live])],
             ]);
         }
     }

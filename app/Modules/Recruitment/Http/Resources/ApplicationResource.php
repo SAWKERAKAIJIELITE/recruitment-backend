@@ -42,6 +42,7 @@ class ApplicationResource extends JsonResource
                 'academic_qualification' => ReferenceSummary::of($this->academicQualification),
                 'specialization' => ReferenceSummary::of($this->specialization),
                 'studying_years' => $this->studying_years,
+                'studies_discontinued' => $this->studies_discontinued,
                 'quran_parts_memorized' => $this->quran_parts_memorized,
             ],
             'marital_status' => ReferenceSummary::of($this->maritalStatus),

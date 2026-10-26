@@ -5,6 +5,7 @@ namespace App\Modules\Recruitment\Models;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Support\PhoneNumber;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -12,7 +13,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-/** One nomination of one person for one job title (the main business entity). */
+/** One nomination of one person for one job position: the main business entity (D-024). */
 class Application extends Model
 {
     use HasUuids;
@@ -30,6 +31,7 @@ class Application extends Model
         'academic_qualification_id',
         'specialization_id',
         'studying_years',
+        'studies_discontinued',
         'quran_parts_memorized',
         'marital_status_id',
         'health_condition_id',
@@ -52,6 +54,7 @@ class Application extends Model
         return [
             'current_status' => ApplicationStatus::class,
             'studying_years' => 'integer',
+            'studies_discontinued' => 'boolean',
             'quran_parts_memorized' => 'integer',
             'works_for_other_government_entity' => 'boolean',
             'full_commitment' => 'boolean',
@@ -62,6 +65,12 @@ class Application extends Model
     protected function phoneNumber(): Attribute
     {
         return Attribute::make(set: fn(string $value) => PhoneNumber::normalize($value));
+    }
+
+    /** Applications that have not ended yet: a person can have only one (D-037). */
+    public function scopeLive(Builder $query): void
+    {
+        $query->whereNotIn('current_status', ApplicationStatus::terminalValues());
     }
 
     public function candidate(): BelongsTo

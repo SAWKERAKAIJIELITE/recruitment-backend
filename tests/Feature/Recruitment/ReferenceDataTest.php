@@ -135,6 +135,29 @@ class ReferenceDataTest extends TestCase
             ->assertJsonPath('errors.name_ar.0', __('recruitment.name_archived'));
     }
 
+    public static function archivedFlags(): array
+    {
+        return ['1' => ['1', 1], 'true' => ['true', 1], '0' => ['0', 0], 'false' => ['false', 0]];
+    }
+
+    #[DataProvider('archivedFlags')]
+    public function test_include_archived_accepts_true_false_and_one_zero(string $flag, int $expected): void
+    {
+        $manager = $this->manager();
+        $id = $this->asStaff($manager)->postJson($this->url('job-positions'), ['name_ar' => 'مؤقت'])->json('item.id');
+        $this->asStaff($manager)->deleteJson($this->url('job-positions', "/{$id}"))->assertOk();
+
+        $this->asStaff($manager)->getJson($this->url('job-positions') . "?include_archived={$flag}")->assertOk()->assertJsonCount($expected, 'data');
+        $this->asStaff($manager)->getJson($this->url('job-positions') . '?include_archived=maybe')->assertStatus(422);
+    }
+
+    public function test_district_id_is_refused_for_lists_other_than_areas(): void
+    {
+        $this->asStaff($this->manager())->postJson($this->url('job-positions'), ['name_ar' => 'سائق', 'district_id' => $this->district()->id])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('district_id');
+    }
+
     public function test_unknown_type_and_bad_ids_are_404(): void
     {
         $manager = $this->manager();

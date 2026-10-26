@@ -37,7 +37,7 @@ return new class extends Migration {
             });
         }
 
-        // Areas (neighbourhoods) live inside a district. The same area name may exist in two districts,
+        // Areas (neighborhoods) live inside a district. The same area name may exist in two districts,
         // so the name is unique per district only.
         Schema::create('areas', function (Blueprint $table) {
             $table->id();

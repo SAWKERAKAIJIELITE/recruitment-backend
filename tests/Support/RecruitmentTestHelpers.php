@@ -3,7 +3,11 @@
 namespace Tests\Support;
 
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
+use App\Modules\Identity\Models\Permission;
 use App\Modules\Identity\Models\StaffUser;
+use App\Modules\Recruitment\Actions\ApplicationLifecycle;
+use App\Modules\Recruitment\Enums\ApplicationStatus;
+use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Actions\CreateApplication;
 use App\Modules\Recruitment\Models\AcademicQualification;
 use App\Modules\Recruitment\Models\Application;
@@ -40,6 +44,20 @@ trait RecruitmentTestHelpers
     protected function hiringStaff(): StaffUser
     {
         return StaffUserFactory::new()->withRole('recruitment_staff')->create();
+    }
+
+    /** Grants an individual permission (for example applications.close). */
+    protected function allow(StaffUser $user, string $permission): StaffUser
+    {
+        $user->permissions()->attach(Permission::where('slug', $permission)->value('id'), ['is_granted' => true]);
+
+        return $user;
+    }
+
+    /** Ends an application through the lifecycle, as authorised staff would. */
+    protected function closeApplication(Application $application): void
+    {
+        app(ApplicationLifecycle::class)->move($application, ApplicationStatus::Closed, DecisionType::Closure, $this->hiringStaff(), 'Closed for the test');
     }
 
     /** @return array<string, int> the default reference entry of each list, keyed by request field */

@@ -3,7 +3,11 @@
 namespace App\Modules\Recruitment\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Modules\Recruitment\Actions\ApplicationLifecycle;
 use App\Modules\Recruitment\Actions\CreateApplication;
+use App\Modules\Recruitment\Enums\DecisionType;
+use App\Modules\Recruitment\Exceptions\IllegalStatusTransition;
+use App\Modules\Recruitment\Http\Requests\CloseApplicationRequest;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Http\Requests\StoreApplicationRequest;
 use App\Modules\Recruitment\Http\Resources\ApplicationResource;
@@ -14,7 +18,9 @@ use App\Support\ArabicText;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class ApplicationController extends Controller
 {
@@ -89,5 +95,55 @@ class ApplicationController extends Controller
     public function show(Application $application): ApplicationResource
     {
         return new ApplicationResource($application->load(ApplicationResource::RELATIONS));
+    }
+
+    /**
+     * Close an application
+     *
+     * Ends the application (status `closed`) so the person can be nominated again. Needs the individual
+     * permission `applications.close` and a reason. `occurred_at` dates the decision if it was taken earlier;
+     * it cannot be in the future or before the application's previous decision. 422 when the application
+     * has already ended or has a written contract (a contract ends through the Contracts module).
+     */
+    public function close(CloseApplicationRequest $request, Application $application, ApplicationLifecycle $lifecycle): ApplicationResource
+    {
+        $occurredAt = $request->validated('occurred_at');
+
+        try {
+            $lifecycle->move(
+                $application,
+                ApplicationStatus::Closed,
+                DecisionType::Closure,
+                actor: $request->user(),
+                reason: $request->validated('reason'),
+                occurredAt: $this->decisionDate($occurredAt),
+            );
+        } catch (IllegalStatusTransition $e) {
+            $current = $application->fresh()->current_status;
+
+            // Either the status does not allow closing, or (the only other refusal) the date is wrong.
+            throw ValidationException::withMessages($current->decisionRequiredFor(ApplicationStatus::Closed) === null
+                ? ['status' => [__('recruitment.illegal_transition', ['status' => $current->labelAr()])]]
+                : ['occurred_at' => [$e->getMessage()]]);
+        }
+
+        return new ApplicationResource($application->load(ApplicationResource::RELATIONS));
+    }
+
+    /**
+     * A date without a time means "that day": its end, but never later than now (so closing "today" an
+     * application opened today is accepted, and an earlier day still sorts after that day's events).
+     */
+    private function decisionDate(?string $value): ?\Carbon\CarbonInterface
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) === 1) {
+            return Date::parse($value)->endOfDay()->min(Date::now());
+        }
+
+        return Date::parse($value);
     }
 }

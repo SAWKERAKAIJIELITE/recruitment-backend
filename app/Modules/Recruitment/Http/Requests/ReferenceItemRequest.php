@@ -15,13 +15,20 @@ class ReferenceItemRequest extends FormRequest
 
     public function rules(): array
     {
-        $rules = ['name_ar' => ['required', 'string', 'min:2', 'max:150']];
-
+        $type = $this->route('type');
+        $type = $type instanceof ReferenceType ? $type : ReferenceType::tryFrom((string) $type);
         // A new area names the district it belongs to; renaming never moves an area to another district.
-        if ($this->route('type') === ReferenceType::Areas->value && $this->isMethod('post')) {
-            $rules['district_id'] = ['required', 'integer', Rule::exists('districts', 'id')->whereNull('deleted_at')];
-        }
+        $newArea = $type === ReferenceType::Areas && $this->isMethod('post');
 
-        return $rules;
+        // Every key is listed (none added conditionally), so the API documentation shows all of them.
+        return [
+            'name_ar' => ['required', 'string', 'min:2', 'max:150'],
+            'district_id' => [
+                Rule::requiredIf($newArea),
+                Rule::prohibitedIf(! $newArea),
+                'integer',
+                Rule::exists('districts', 'id')->whereNull('deleted_at'),
+            ],
+        ];
     }
 }

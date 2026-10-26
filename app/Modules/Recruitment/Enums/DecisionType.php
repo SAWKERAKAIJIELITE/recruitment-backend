@@ -17,9 +17,12 @@ enum DecisionType: string
     /** An absence excuse was accepted, so a new appointment follows. */
     case ExcuseAccepted = 'excuse_accepted';
 
+    /** Authorized staff ended the application (permission applications.close, D-037). */
+    case Closure = 'closure';
+
     /** Decisions made by a person must carry a reason and an actor (analysis doc §07). */
     public function needsReasonAndActor(): bool
     {
-        return $this === self::Exception || $this === self::ExcuseAccepted;
+        return in_array($this, [self::Exception, self::ExcuseAccepted, self::Closure], true);
     }
 }

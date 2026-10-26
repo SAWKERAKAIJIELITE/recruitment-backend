@@ -56,7 +56,7 @@ class ManageReferenceData
             ->where('name_key', ArabicText::searchKey($name))
             ->when($type->isScopedToDistrict(), fn($query) => $query->where('district_id', $districtId))
             ->when($exceptId !== null, fn($query) => $query->whereKeyNot($exceptId))
-            ->first();
+            ->first(['id', 'deleted_at']);   // exists() would not tell an archived clash from an active one
 
         if ($clash === null) {
             return;

@@ -36,7 +36,7 @@ class DevUsersSeeder extends Seeder
 
         // The ✓* cells: individual grants
         $this->grant('staff', ['exam_bank.manage', 'attempts.extend', 'exceptions.approve']);
-        $this->grant('manager', ['attempts.extend', 'exceptions.approve']);
+        $this->grant('manager', ['attempts.extend', 'exceptions.approve', 'imports.approve', 'applications.close']);
     }
 
     private function grant(string $username, array $permissionSlugs): void

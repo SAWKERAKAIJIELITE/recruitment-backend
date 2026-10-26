@@ -26,8 +26,6 @@ class StatusEventResource extends JsonResource
                 'username' => $this->actor->username,
                 'full_name' => $this->actor->full_name,
             ]),
-            'related_type' => $this->related_type,
-            'related_id' => $this->related_id,
             'occurred_at' => $this->occurred_at,
         ];
     }

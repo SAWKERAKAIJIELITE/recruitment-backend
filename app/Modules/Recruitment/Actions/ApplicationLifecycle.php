@@ -3,15 +3,18 @@
 namespace App\Modules\Recruitment\Actions;
 
 use App\Modules\Identity\Models\StaffUser;
+use App\Modules\Recruitment\Contracts\StatusChangeCause;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Exceptions\IllegalStatusTransition;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Models\ApplicationStatusEvent;
+use Carbon\CarbonInterface;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 
 /**
- * The only way an application's status changes (analysis doc §03, D-027, D-033).
+ * The only way an application's status changes (analysis doc §03, D-033).
  *
  * The legal moves are checked here, so an illegal jump is refused even when a request reaches the API
  * directly. The change itself is one new event appended to the history chain; the database then copies
@@ -19,21 +22,28 @@ use Illuminate\Support\Facades\DB;
  */
 class ApplicationLifecycle
 {
-    /** Writes the first event of a new application (status awaiting_exam). Call it in the creating transaction. */
+    /**
+     * Writes the first event of a new application (status awaiting_exam). Runs inside the transaction that
+     * creates the application, without a savepoint of its own (an import opens thousands in one transaction).
+     */
     public function open(Application $application, ?StaffUser $actor): ApplicationStatusEvent
     {
-        return DB::transaction(function () use ($application, $actor) {
-            $event = $this->append($application, null, ApplicationStatus::AwaitingExam, DecisionType::Created, $actor, null, null, null);
+        if (DB::transactionLevel() === 0) {
+            throw new \LogicException('ApplicationLifecycle::open() must run in the transaction that creates the application.');
+        }
 
-            $this->reload($application);
+        $event = $this->append($application, null, ApplicationStatus::AwaitingExam, DecisionType::Created, $actor, null, null, Date::now());
 
-            return $event;
-        });
-        // return $this->write($application, null, ApplicationStatus::AwaitingExam, DecisionType::Created, $actor, null, null, null);
+        $this->reload($application);
+
+        return $event;
     }
 
     /**
-     * @throws IllegalStatusTransition when the move, or the decision type behind it, is not allowed
+     * @param  StatusChangeCause|null  $cause  the record behind the move (exam attempt, interview, contract, ...), D-038
+     * @param  CarbonInterface|null  $occurredAt  when the decision happened in reality; now when null (D-039)
+     *
+     * @throws IllegalStatusTransition when the move, the decision type behind it, or its date is not allowed
      */
     public function move(
         Application $application,
@@ -41,10 +51,10 @@ class ApplicationLifecycle
         DecisionType $type,
         ?StaffUser $actor = null,
         ?string $reason = null,
-        ?string $relatedType = null,
-        ?string $relatedId = null,
+        ?StatusChangeCause $cause = null,
+        ?CarbonInterface $occurredAt = null,
     ): ApplicationStatusEvent {
-        return DB::transaction(function () use ($application, $to, $type, $actor, $reason, $relatedType, $relatedId) {
+        return DB::transaction(function () use ($application, $to, $type, $actor, $reason, $cause, $occurredAt) {
             // Lock the row and read the status from the database: two simultaneous moves cannot both win.
             $locked = Application::query()->whereKey($application->getKey())->lockForUpdate()->firstOrFail();
             $from = $locked->current_status;
@@ -65,10 +75,10 @@ class ApplicationLifecycle
                 throw new IllegalStatusTransition("A {$type->value} decision needs a reason and the staff user who made it.");
             }
 
-            $event = $this->append($locked, $this->latestEventId($locked), $to, $type, $actor, $reason, $relatedType, $relatedId);
-            // $event = $this->write($locked, $from, $to, $type, $actor, $reason, $relatedType, $relatedId);
+            $latest = $this->latestEvent($locked);
+            $occurredAt = $this->checkedDate($occurredAt, $latest);
 
-            // $application->setRawAttributes($locked->getAttributes(), true);
+            $event = $this->append($locked, $latest->id, $to, $type, $actor, $reason, $cause, $occurredAt);
 
             $this->reload($application);
 
@@ -77,41 +87,66 @@ class ApplicationLifecycle
     }
 
     /** The event nothing follows yet. The database guarantees there is exactly one. */
-    private function latestEventId(Application $application): ?string
+    private function latestEvent(Application $application): ApplicationStatusEvent
     {
         return ApplicationStatusEvent::query()
             ->where('application_id', $application->getKey())
             ->whereNotExists(fn($next) => $next->from('application_status_events as next')
                 ->whereColumn('next.previous_event_id', 'application_status_events.id'))
-            ->value('id');
+            ->firstOrFail();
+    }
+
+    /**
+     * A decision cannot be dated in the future, nor before the decision it follows (the database refuses
+     * both too; checking here gives a readable error). Stored to the second, like every timestamp.
+     */
+    private function checkedDate(?CarbonInterface $occurredAt, ApplicationStatusEvent $latest): CarbonInterface
+    {
+        $now = Date::now();
+
+        if ($occurredAt === null) {
+            return $now;
+        }
+
+        $occurredAt = Date::instance($occurredAt)->utc()->startOfSecond();
+
+        if ($occurredAt->greaterThan($now)) {
+            throw new IllegalStatusTransition('A decision cannot be dated in the future.');
+        }
+
+        if ($occurredAt->lessThan($latest->occurred_at)) {
+            throw new IllegalStatusTransition("A decision cannot be dated before the previous one ({$latest->occurred_at->toIso8601String()}).");
+        }
+
+        return $occurredAt;
     }
 
     private function append(
         Application $application,
         ?string $previousEventId,
-        // ?ApplicationStatus $from,
         ApplicationStatus $to,
         DecisionType $type,
         ?StaffUser $actor,
         ?string $reason,
-        ?string $relatedType,
-        ?string $relatedId,
+        ?StatusChangeCause $cause,
+        CarbonInterface $occurredAt,
     ): ApplicationStatusEvent {
-        $event = new ApplicationStatusEvent();
-        $event->forceFill([
+        $attributes = [
             'application_id' => $application->getKey(),
-            // 'from_status' => $from,
             'previous_event_id' => $previousEventId,
             'to_status' => $to,
             'decision_type' => $type,
             'reason' => $reason,
             'actor_id' => $actor?->id,
-            'related_type' => $relatedType,
-            'related_id' => $relatedId,
-            'occurred_at' => now(),
-        ])->save();
+            'occurred_at' => $occurredAt,
+        ];
 
-        // $application->forceFill(['current_status' => $to])->save();
+        if ($cause !== null) {
+            $attributes[$cause::statusEventColumn()] = $cause->getKey();
+        }
+
+        $event = new ApplicationStatusEvent();
+        $event->forceFill($attributes)->save();
 
         return $event;
     }
