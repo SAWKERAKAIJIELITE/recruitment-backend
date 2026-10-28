@@ -47,6 +47,15 @@ enum ReferenceType: string
         return $this === self::Areas;
     }
 
+    /**
+     * Lists the owner seeds and that the API only reads (decision D-048): marital statuses. The others are
+     * managed by staff holding candidates.manage.
+     */
+    public function isEditableThroughApi(): bool
+    {
+        return $this !== self::MaritalStatuses;
+    }
+
     /** @return list<string> */
     public static function values(): array
     {

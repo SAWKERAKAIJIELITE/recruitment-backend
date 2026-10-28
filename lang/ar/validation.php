@@ -39,6 +39,8 @@ return [
         'numeric' => 'يجب أن تكون قيمة :attribute :value أو أكثر.',
         'string' => 'يجب أن يكون طول :attribute :value حرفاً أو أكثر.',
     ],
+    'hex_string' => 'يجب أن يحتوي :attribute على أرقام سداسية عشرية فقط (0-9 وA-F)، ويُسمح بالمسافات أو الشرطات بين المجموعات.',
+    'hex_string_length' => 'يجب أن يتكون :attribute من :digits رقماً سداسياً عشرياً.',
     'in' => 'القيمة المختارة في :attribute غير صالحة.',
     'integer' => 'يجب أن يكون :attribute عدداً صحيحاً.',
     'ip' => 'يجب أن يكون :attribute عنوان IP صحيحاً.',
@@ -95,6 +97,7 @@ return [
     // Names shown instead of the raw keys.
     'attributes' => [
         'include_archived' => 'إظهار المؤرشف',
+        'fingerprint' => 'بصمة الجهاز',
         'district_id' => 'المحافظة',
         'name_ar' => 'الاسم',
         'reason' => 'السبب',

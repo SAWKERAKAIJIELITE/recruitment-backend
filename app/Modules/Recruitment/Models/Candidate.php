@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 /**
  * The person, recognized by national number (D-028, D-032). Only facts that do not change between two
@@ -18,14 +19,23 @@ class Candidate extends Model
 {
     use HasUuids;
 
+    /** is_active and the deactivation columns are set only by ChangeCandidateActivation (forceFill). */
     protected $fillable = ['national_number', 'full_name', 'mother_name', 'birth_date', 'birth_place_id', 'notes'];
+
+    protected $attributes = ['is_active' => true];
 
     protected function casts(): array
     {
         return [
             'birth_date' => 'date',
             'is_active' => 'boolean',
+            'deactivated_at' => 'datetime',
         ];
+    }
+
+    public function deactivator(): BelongsTo
+    {
+        return $this->belongsTo(\App\Modules\Identity\Models\StaffUser::class, 'deactivated_by');
     }
 
     /** Always stored as ASCII digits ("٠١٢٣" becomes "0123"; spaces and dashes are dropped). */
@@ -56,5 +66,11 @@ class Candidate extends Model
     public function applications(): HasMany
     {
         return $this->hasMany(Application::class);
+    }
+
+    /** The one application that has not ended (D-037), if any. */
+    public function liveApplication(): HasOne
+    {
+        return $this->hasOne(Application::class)->live();
     }
 }

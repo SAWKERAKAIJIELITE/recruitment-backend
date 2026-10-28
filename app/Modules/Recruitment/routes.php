@@ -3,6 +3,7 @@
 use App\Modules\Identity\Http\Middleware\EnsureStaffIsActive;
 use App\Modules\Identity\Http\Middleware\RequireAnyPermission;
 use App\Modules\Recruitment\Http\Controllers\ApplicationController;
+use App\Modules\Recruitment\Http\Controllers\CandidateController;
 use App\Modules\Recruitment\Http\Controllers\ReferenceDataController;
 use Illuminate\Support\Facades\Route;
 
@@ -19,12 +20,19 @@ Route::middleware('api')->prefix('api/v1/staff')->group(function () {
             Route::post('reference/{type}/{id}/restore', [ReferenceDataController::class, 'restore'])->whereNumber('id');
 
             Route::post('applications', [ApplicationController::class, 'store']);
+            Route::patch('applications/{application}', [ApplicationController::class, 'update'])->whereUuid('application');
+
+            Route::patch('candidates/{candidate}', [CandidateController::class, 'update'])->whereUuid('candidate');
+            Route::post('candidates/{candidate}/deactivate', [CandidateController::class, 'deactivate'])->whereUuid('candidate');
+            Route::post('candidates/{candidate}/activate', [CandidateController::class, 'activate'])->whereUuid('candidate');
         });
 
         // Reading files: the general manager (reports.view) and hiring staff (candidates.manage).
         Route::middleware(RequireAnyPermission::class . ':reports.view,candidates.manage')->group(function () {
             Route::get('applications', [ApplicationController::class, 'index']);
             Route::get('applications/{application}', [ApplicationController::class, 'show'])->whereUuid('application');
+            Route::get('candidates', [CandidateController::class, 'index']);
+            Route::get('candidates/{candidate}', [CandidateController::class, 'show'])->whereUuid('candidate');
         });
 
         // Ending an application frees the person for a new nomination (D-037): an individual permission.

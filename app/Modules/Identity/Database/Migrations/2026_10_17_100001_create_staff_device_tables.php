@@ -13,7 +13,9 @@ return new class extends Migration {
             $table->string('label', 100);
             $table->text('public_key')->unique();  // PEM of the P-256 EC public key
             $table->char('fingerprint', 64)->unique();          // sha256 hex of the SPKI DER bytes
-            $table->macAddress('reported_mac')->unique();     // informational only (D-017)
+            $table->macAddress('reported_mac')
+            // ->unique() // temporarily based on Frontend ask
+            ;     // informational only (D-017)
             $table->string('os_info');
             // PostgreSQL has no ENUM from Laravel: this creates varchar + CHECK (staff_devices_status_check)
             $table->enum('status', ['pending', 'approved', 'revoked'])->default('pending');

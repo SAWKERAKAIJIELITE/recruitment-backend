@@ -20,6 +20,7 @@ return [
     'phone_leading_zero' => 'رقم الهاتف مخزّن في Excel كعدد فحُذف صفره البادئ على الأغلب: هل المقصود :suggestion؟',
     'text_too_long' => '«:field» أطول من :max حرفاً.',
     'duplicate_in_file' => 'الرقم الوطني مكرر في الملف: ورد سابقاً في الصف :row.',
+    'candidate_inactive' => 'هذا الشخص معطَّل ولا يمكن ترشيحه.',
     'live_application' => 'لدى هذا الشخص طلب ترشيح قائم (رقم الترشيح :number).',
     'person_mismatch' => 'الرقم الوطني يعود لشخص مسجل ببيانات مختلفة (:differences). أكّد أنه الشخص نفسه أو استبعد الصف.',
     'difference' => ':field في الملف «:file» والمسجل «:stored»',

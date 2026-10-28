@@ -19,6 +19,7 @@ return [
     'phone_leading_zero' => 'The phone number was stored as a number in Excel, which probably dropped its leading zero: did you mean :suggestion?',
     'text_too_long' => '":field" is longer than :max characters.',
     'duplicate_in_file' => 'The national number appears earlier in the file, on row :row.',
+    'candidate_inactive' => 'This person is deactivated and cannot be nominated.',
     'live_application' => 'This person already has a live application (nomination number :number).',
     'person_mismatch' => 'The national number belongs to a person on file with different data (:differences). Confirm it is the same person or exclude the row.',
     'difference' => ':field in the file ":file", on file ":stored"',

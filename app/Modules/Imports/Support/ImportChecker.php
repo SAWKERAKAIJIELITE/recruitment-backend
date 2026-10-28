@@ -173,6 +173,10 @@ class ImportChecker
             return [$issues, null];
         }
 
+        if (! $person->is_active) {
+            $error('candidate.national_number', 'candidate_inactive');
+        }
+
         if (isset($live[$person->id])) {
             $error('candidate.national_number', 'live_application', ['number' => $live[$person->id]]);
         }

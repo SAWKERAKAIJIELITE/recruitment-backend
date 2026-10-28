@@ -5,11 +5,13 @@ namespace App\Modules\Recruitment\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Modules\Recruitment\Actions\ApplicationLifecycle;
 use App\Modules\Recruitment\Actions\CreateApplication;
+use App\Modules\Recruitment\Actions\UpdateApplication;
 use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Exceptions\IllegalStatusTransition;
 use App\Modules\Recruitment\Http\Requests\CloseApplicationRequest;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Http\Requests\StoreApplicationRequest;
+use App\Modules\Recruitment\Http\Requests\UpdateApplicationRequest;
 use App\Modules\Recruitment\Http\Resources\ApplicationResource;
 use App\Modules\Recruitment\Http\Resources\ApplicationSummaryResource;
 use App\Modules\Recruitment\Models\Application;
@@ -145,5 +147,19 @@ class ApplicationController extends Controller
         }
 
         return Date::parse($value);
+    }
+
+    /**
+     * Correct an application
+     *
+     * Send only the fields that change (the same fields and rules as when opening one, without `candidate`).
+     * Only a live application can be corrected; an ended one is history (422). The person is corrected with
+     * PATCH /candidates/{id}; the status changes only through decisions. Audited.
+     */
+    public function update(UpdateApplicationRequest $request, Application $application, UpdateApplication $update): ApplicationResource
+    {
+        $update->execute($application, $request->validated(), $request->user());
+
+        return new ApplicationResource($application->load(ApplicationResource::RELATIONS));
     }
 }

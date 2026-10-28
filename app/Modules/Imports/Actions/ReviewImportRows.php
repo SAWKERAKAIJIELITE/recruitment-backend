@@ -31,7 +31,7 @@ class ReviewImportRows
         'health_details' => 'text', 'residence_details' => 'text', 'notes' => 'text',
         'candidate.national_number' => 'national_number', 'phone_number' => 'phone',
         'candidate.birth_date' => 'date',
-        'studying_years' => 'integer', 'quran_parts_memorized' => 'integer', 'studies_discontinued' => 'boolean',
+        'studying_years' => 'integer', 'quran_parts_memorized' => 'integer', 'studies_discontinued' => 'flag',
         'works_for_other_government_entity' => 'boolean', 'full_commitment' => 'boolean', 'overnight_work' => 'boolean',
     ];
 
@@ -174,7 +174,7 @@ class ReviewImportRows
         }
 
         if ($value === null || (is_string($value) && trim($value) === '')) {
-            return null;
+            return $kind === 'flag' ? false : null;   // a flag is never unknown: clearing it means "no"
         }
 
         $invalid = fn() => ImportProblem::fail("values.{$key}", 'invalid_correction', ['field' => __("imports.fields.{$key}")]);
@@ -184,6 +184,7 @@ class ReviewImportRows
             'integer' => is_int($value) || (is_string($value) && preg_match('/^\d{1,4}$/', ArabicText::digitsToAscii($value)) === 1)
                 ? (int) ArabicText::digitsToAscii((string) $value) : $invalid(),
             'boolean' => is_bool($value) || in_array($value, [0, 1, '0', '1'], true) ? (bool) $value : $invalid(),
+            'flag' => is_bool($value) || in_array($value, [0, 1, '0', '1'], true) ? (bool) $value : $invalid(),
             'text' => is_string($value) ? trim(preg_replace('/\s+/u', ' ', $value) ?? $value) : $invalid(),
             // Separators are dropped; any other character makes the value invalid (never silently removed).
             'national_number' => is_string($value) && preg_match('/^[\d\s\-.]+$/u', ArabicText::digitsToAscii($value)) === 1

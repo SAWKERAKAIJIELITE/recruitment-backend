@@ -25,7 +25,11 @@ return new class extends Migration {
             // $table->foreignId('residence_district')->constrained('districts')->restrictOnDelete();
             // $table->foreignId('residence_area')->constrained('areas')->restrictOnDelete();
             // $table->text('residence_details')->nullable();
+            // A deactivated person cannot be nominated (D-049); who did it, when and why.
             $table->boolean('is_active')->default(true)->index();
+            $table->timestampTz('deactivated_at')->nullable();
+            $table->foreignUuid('deactivated_by')->nullable()->constrained('staff_users')->restrictOnDelete();
+            $table->text('deactivation_reason')->nullable();
             $table->text('notes')->nullable();
             $table->timestampsTz();
         });
@@ -37,6 +41,7 @@ return new class extends Migration {
         DB::statement("ALTER TABLE candidates ADD CONSTRAINT candidates_full_name_format CHECK (full_name !~ '[0-9٠-٩۰-۹]' AND char_length(btrim(full_name)) >= 3)");
         DB::statement("ALTER TABLE candidates ADD CONSTRAINT candidates_mother_name_format CHECK (mother_name !~ '[0-9٠-٩۰-۹]' AND char_length(btrim(mother_name)) >= 3)");
         DB::statement("ALTER TABLE candidates ADD CONSTRAINT candidates_birth_date_range CHECK (birth_date > DATE '1950-01-01')");
+        DB::statement("ALTER TABLE candidates ADD CONSTRAINT candidates_deactivation_explained CHECK (is_active = (deactivated_at IS NULL) AND (is_active OR btrim(coalesce(deactivation_reason, '')) <> ''))");
     }
 
     public function down(): void

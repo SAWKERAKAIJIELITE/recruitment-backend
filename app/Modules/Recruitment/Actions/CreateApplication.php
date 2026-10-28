@@ -75,6 +75,10 @@ class CreateApplication
 
         [$candidate, $matched] = $this->findOrCreateCandidate($input['candidate']);
 
+        if (! $candidate->is_active) {
+            throw ValidationException::withMessages(['candidate.national_number' => [__('recruitment.candidate_inactive')]]);
+        }
+
         $this->assertNoLiveApplication($candidate);
 
         $fields = Arr::only($input, self::APPLICATION_FIELDS);

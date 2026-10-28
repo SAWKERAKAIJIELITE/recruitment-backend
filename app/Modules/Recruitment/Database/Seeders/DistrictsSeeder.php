@@ -2,13 +2,15 @@
 
 namespace App\Modules\Recruitment\Database\Seeders;
 
+use App\Modules\Recruitment\Database\Seeders\Concerns\SeedsReferenceList;
 use App\Modules\Recruitment\Models\District;
-use App\Support\ArabicText;
 use Illuminate\Database\Seeder;
 
 /** Default list of governorates. Administrators can rename, add and archive entries afterwards. */
 class DistrictsSeeder extends Seeder
 {
+    use SeedsReferenceList;
+
     private const NAMES = [
         'دمشق',
         'ريف دمشق',
@@ -29,10 +31,6 @@ class DistrictsSeeder extends Seeder
 
     public function run(): void
     {
-        foreach (self::NAMES as $name) {
-            // Matched by normalized name, so re-running never duplicates or resurrects a renamed entry.
-            District::withTrashed()->firstOrCreate(['name_key' => ArabicText::searchKey($name)], ['name_ar' => $name]);
-            // District::withTrashed()->firstOrCreate(['name_key' => $name], ['name_ar' => $name]);
-        }
+        $this->seedList(District::class, [...self::NAMES]);
     }
 }

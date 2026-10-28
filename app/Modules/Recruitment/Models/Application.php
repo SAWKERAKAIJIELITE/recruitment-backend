@@ -47,7 +47,7 @@ class Application extends Model
     ];
 
     /** What the database gives a new row; set here so the model is consistent before it is reloaded. */
-    protected $attributes = ['current_status' => 'awaiting_exam'];
+    protected $attributes = ['current_status' => 'awaiting_exam', 'studies_discontinued' => false];
 
     protected function casts(): array
     {

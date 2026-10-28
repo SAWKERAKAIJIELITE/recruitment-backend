@@ -11,7 +11,7 @@ use InvalidArgumentException;
 
 class RegisterDevice
 {
-    public function execute(string $publicKeyPem, string $label, string $mac, ?string $osInfo): StaffDevice
+    public function execute(string $publicKeyPem, string $label, string $mac, string $osInfo): StaffDevice
     {
         try {
             $key = DeviceCrypto::parsePublicKey($publicKeyPem);

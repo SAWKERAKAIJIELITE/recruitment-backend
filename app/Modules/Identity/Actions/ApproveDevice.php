@@ -2,6 +2,7 @@
 
 namespace App\Modules\Identity\Actions;
 
+use App\Rules\HexString;
 use App\Modules\Identity\Enums\DeviceStatus;
 use App\Modules\Identity\Models\StaffDevice;
 use App\Modules\Identity\Models\StaffUser;
@@ -33,7 +34,9 @@ class ApproveDevice
         }
 
         // Typing the fingerprint back turns the human comparison into a real check.
-        $typed = strtoupper(preg_replace('/[^0-9a-f]/i', '', $fingerprint));
+        // Only separators are dropped: any other character makes the comparison fail (the request already
+        // refuses non-hex input with HexString; the console command reaches this directly).
+        $typed = HexString::digits($fingerprint);
 
         if (!hash_equals(strtoupper(substr($device->fingerprint, 0, 32)), $typed)) {
             throw ValidationException::withMessages([
