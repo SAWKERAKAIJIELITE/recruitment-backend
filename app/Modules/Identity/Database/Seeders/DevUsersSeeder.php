@@ -13,19 +13,17 @@ class DevUsersSeeder extends Seeder
     public function run(): void
     {
         $accounts = [
-            ['admin', 'مسؤول النظام', 'system_admin','1234'],
-            ['manager', 'المدير العام', 'general_manager','5678'],
-            ['staff', 'إداري التوظيف', 'recruitment_staff','9012'],
-            // ['candidate1', 'مرشح تجريبي', StaffUser::TYPE_CANDIDATE, 'candidate'],
+            ['admin', 'مسؤول النظام', 'system_admin', '1234'],
+            ['manager', 'المدير العام', 'general_manager', '5678'],
+            ['staff', 'إداري التوظيف', 'recruitment_staff', '9012'],
         ];
 
-        foreach ($accounts as [$username, $name, $roleSlug,$personalNumber]) {
+        foreach ($accounts as [$username, $name, $roleSlug, $personalNumber]) {
             $user = StaffUser::updateOrCreate(
                 ['username' => $username],
                 [
                     'first_name' => explode(' ', $name)[0],
                     'last_name' => explode(' ', $name)[1],
-                    // 'type' => $type,
                     'password' => 'password',
                     'personal_number' => $personalNumber,
                     'is_active' => true

@@ -16,25 +16,16 @@ use Illuminate\Database\Eloquent\Collection;
 use RuntimeException;
 
 /**
- * The active list entries the demo data picks from. The lists come from ReferenceDataSeeder; the nominating
- * entities are the owner's to seed (OD-13), so when there are none yet the demo adds the five names the
- * legacy template uses (matched by normalized name, so the owner's seeder finds them and adds nothing).
+ * The active list entries the demo data picks from. Every list, the nominating entities included, comes from
+ * ReferenceDataSeeder, which runs first.
  */
 final class DemoReferences
 {
-    public const TEMPLATE_ENTITIES = ['الإدارة العامة', 'إعداد الدعاة', 'المعهد الشرعي', 'مركز التحفيظ', 'مديرية الأوقاف'];
-
     /** @var array<string, Collection> */
     private array $lists;
 
     public function __construct()
     {
-        if (NominatingEntity::query()->doesntExist()) {
-            foreach (self::TEMPLATE_ENTITIES as $name) {
-                NominatingEntity::withTrashed()->firstOrCreate(['name_key' => ArabicText::searchKey($name)], ['name_ar' => $name]);
-            }
-        }
-
         $this->lists = [
             'nominating_entity_id' => NominatingEntity::query()->orderBy('id')->get(),
             'job_position_id' => JobPosition::query()->orderBy('id')->get(),

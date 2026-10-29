@@ -42,6 +42,7 @@ return new class extends Migration {
             $table->uuid('id')->primary();
             $table->string('nomination_number', 30)->unique();
             $table->foreignUuid('candidate_id')->index()->constrained()->restrictOnDelete();
+            $table->unique(['id', 'candidate_id']);   // target of composite keys: a record of this application is the same person's
 
             // Where the nomination comes from and what it is for.
             $table->foreignId('nominating_entity_id')->index()->constrained('nominating_entities')->restrictOnDelete();

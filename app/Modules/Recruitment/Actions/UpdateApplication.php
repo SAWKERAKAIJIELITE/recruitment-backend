@@ -27,6 +27,10 @@ class UpdateApplication
                 ]);
             }
 
+            if (array_key_exists('studies_discontinued', $changes)) {
+                $changes['studies_discontinued'] = (bool) $changes['studies_discontinued'];   // null means false, as when opening
+            }
+
             $before = $locked->only(array_keys($changes));
             $locked->fill($changes);
             $dirty = $locked->getDirty();

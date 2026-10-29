@@ -4,7 +4,9 @@ namespace App\Modules\Identity\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Modules\Identity\Actions\ManageStaffAccess;
+use App\Modules\Identity\Actions\RegisterUser;
 use App\Modules\Identity\Http\Requests\AddUserRoleRequest;
+use App\Modules\Identity\Http\Requests\RegisterUserRequest;
 use App\Modules\Identity\Http\Requests\SetUserPermissionRequest;
 use App\Modules\Identity\Http\Resources\StaffUserAccessResource;
 use App\Modules\Identity\Http\Resources\StaffUserSummaryResource;
@@ -13,6 +15,7 @@ use App\Modules\Identity\Models\Role;
 use App\Modules\Identity\Models\StaffUser;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\ValidationException;
 
 class StaffUserController extends Controller
 {
@@ -36,6 +39,27 @@ class StaffUserController extends Controller
         $role = Role::where('slug', $request->validated('role'))->firstOrFail();
 
         return new StaffUserAccessResource($manage->assignRole($user, $role, $request->user()));
+    }
+
+    /**
+     * add new Staff User
+     * @param RegisterUserRequest $request
+     * @return StaffUserAccessResource
+     */
+    public function addStaff(RegisterUserRequest $request): StaffUserAccessResource
+    {
+        $user = StaffUser::Create(
+            [
+                'username' => $request->validated('username'),
+                'first_name' => $request->validated('first_name'),
+                'last_name' => $request->validated('last_name'),
+                'password' => $request->validated('password'),
+                'personal_number' => $request->validated('personal_number'),
+                'is_active' => $request->validated('is_active')
+            ],
+        );
+        $user->roles()->syncWithoutDetaching([Role::where('slug', $request->validated('role'))->value('id')]);
+        return new StaffUserAccessResource($user->load('roles', 'permissions'));
     }
 
     /** Take a role away from a staff user. A role the user does not hold gives 404. */

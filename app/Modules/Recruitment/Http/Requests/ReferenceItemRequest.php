@@ -16,7 +16,7 @@ class ReferenceItemRequest extends FormRequest
     public function rules(): array
     {
         $type = $this->route('type');
-        $type = $type instanceof ReferenceType ? $type : ReferenceType::tryFrom((string) $type);
+        $type = ReferenceType::tryFrom($type instanceof \BackedEnum ? (string) $type->value : (string) $type);
         // A new area names the district it belongs to; renaming never moves an area to another district.
         $newArea = $type === ReferenceType::Areas && $this->isMethod('post');
 

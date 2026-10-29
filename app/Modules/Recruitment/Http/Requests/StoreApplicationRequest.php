@@ -58,7 +58,7 @@ class StoreApplicationRequest extends FormRequest
             'studying_years' => ['nullable', 'required_if_accepted:studies_discontinued', 'integer', 'min:0', 'max:' . R::STUDYING_YEARS_MAX],
             // "3 ومنقطع": studied studying_years years, then stopped (D-044). Omit it for false; null is refused
             // because the column is NOT NULL (the model's default applies when the key is absent).
-            'studies_discontinued' => ['sometimes', 'boolean'],
+            'studies_discontinued' => ['nullable', 'boolean'],   // null or left out: false (CreateApplication)
             'quran_parts_memorized' => ['nullable', 'integer', 'min:0', 'max:' . R::QURAN_PARTS_MAX],
             'marital_status_id' => $lookup('marital_statuses'),
             'health_condition_id' => $lookup('health_conditions'),

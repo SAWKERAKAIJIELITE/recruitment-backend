@@ -14,6 +14,7 @@ use App\Modules\Imports\Support\ReferenceLookup;
 use App\Modules\Imports\Support\RowParser;
 use App\Modules\Imports\Support\SheetData;
 use App\Modules\Imports\Support\WorkbookReader;
+use App\Support\SafeFilename;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -51,7 +52,7 @@ class UploadImportBatch
                 $batch = new ImportBatch();
                 $batch->forceFill([
                     'id' => $id,
-                    'original_filename' => self::safeFilename($file->getClientOriginalName()),
+                    'original_filename' => SafeFilename::of($file->getClientOriginalName(), 'import.xlsx'),
                     'stored_path' => $path,
                     'file_sha256' => $hash,
                     'file_size' => $file->getSize(),
@@ -127,14 +128,6 @@ class UploadImportBatch
         }
     }
 
-    /** The client's name is shown and used in downloads only: no path, no control characters, bounded. */
-    private static function safeFilename(string $name): string
-    {
-        $name = preg_replace('#^.*[/\\\\]#u', '', $name) ?? '';   // no basename(): it is locale-sensitive with Arabic names
-        $name = trim(preg_replace('/[\x00-\x1F\x7F"<>|:*?]+/u', '', $name) ?? '');
-
-        return mb_substr($name === '' ? 'import.xlsx' : $name, 0, 255);
-    }
 
     private function insertRows(ImportBatch $batch, SheetData $sheet, RowParser $parser): void
     {

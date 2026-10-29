@@ -49,7 +49,7 @@ enum ReferenceType: string
 
     /**
      * Lists the owner seeds and that the API only reads (decision D-048): marital statuses. The others are
-     * managed by staff holding candidates.manage.
+     * managed by staff holding candidates.manage (EditableReferenceType lists them for the change endpoints).
      */
     public function isEditableThroughApi(): bool
     {

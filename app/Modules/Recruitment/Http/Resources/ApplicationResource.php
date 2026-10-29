@@ -15,6 +15,7 @@ class ApplicationResource extends JsonResource
     /** The relations the file shows; load them before building the resource. */
     public const RELATIONS = [
         'candidate.birthPlace',
+        'statusEvents.actor',
         'nominatingEntity',
         'jobPosition',
         'category',
@@ -24,7 +25,6 @@ class ApplicationResource extends JsonResource
         'healthCondition',
         'residenceDistrict',
         'residenceArea',
-        'statusEvents.actor',
     ];
 
     public function toArray(Request $request): array

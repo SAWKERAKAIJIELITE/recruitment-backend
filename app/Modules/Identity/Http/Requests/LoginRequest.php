@@ -19,8 +19,11 @@ class LoginRequest extends FormRequest
             'device_id' => ['required', 'uuid'],
             'challenge_id' => ['required', 'uuid'],
             'signature' => ['required', 'string', 'max:512'],
-            'username' => ['required', 'string', 'max:100'],
-            'password' => ['required', 'string', 'max:255',
+            'username' => ['required', 'string', 'max:50', 'min:3'],
+            'password' => [
+                'required',
+                'string',
+                'max:255',
                 // Password::min(8) // Minimum length of 8 characters
                 //     ->letters()          // Must contain at least one letter
                 //     ->mixedCase()        // Must contain both uppercase and lowercase letters

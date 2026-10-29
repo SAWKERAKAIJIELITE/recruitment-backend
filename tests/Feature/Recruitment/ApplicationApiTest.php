@@ -335,6 +335,12 @@ class ApplicationApiTest extends TestCase
             ->assertCreated()->assertJsonPath('data.education.studies_discontinued', false);
     }
 
+    public function test_null_means_studies_were_not_discontinued(): void
+    {
+        $this->asStaff($this->hiringStaff())->postJson(self::URL, $this->applicationPayload(['studies_discontinued' => null]))
+            ->assertCreated()->assertJsonPath('data.education.studies_discontinued', false);
+    }
+
     public function test_the_database_refuses_discontinued_studies_without_years(): void
     {
         $application = $this->openApplication();
@@ -539,7 +545,7 @@ class ApplicationApiTest extends TestCase
 
         $this->asStaff($staff)->getJson(self::URL)
             ->assertOk()
-            ->assertJsonStructure(['data' => [['id', 'nomination_number', 'status', 'status_label', 'candidate_name', 'national_number', 'job_position', 'nominating_entity']], 'links', 'meta']);
+            ->assertJsonStructure(['data' => [['id', 'nomination_number', 'status', 'status_label', 'candidate', 'residence', 'health', 'availability', 'education', 'job_position', 'nominating_entity']], 'links', 'meta']);
     }
 
     public function test_one_application_shows_the_whole_history_in_order(): void

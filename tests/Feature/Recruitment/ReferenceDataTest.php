@@ -6,6 +6,7 @@ use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use App\Modules\Recruitment\Database\Seeders\DistrictsSeeder;
 use App\Modules\Recruitment\Database\Seeders\MaritalStatusesSeeder;
+use App\Modules\Recruitment\Enums\EditableReferenceType;
 use App\Modules\Recruitment\Enums\ReferenceType;
 use App\Modules\Recruitment\Models\District;
 use App\Modules\Recruitment\Models\MaritalStatus;
@@ -34,6 +35,12 @@ class ReferenceDataTest extends TestCase
             ->all();
     }
 
+    /** Flat lists staff may change through the API (marital statuses are seeded only, D-048). */
+    public static function editableTypes(): array
+    {
+        return array_filter(self::flatTypes(), fn(array $case) => ReferenceType::from($case[0])->isEditableThroughApi());
+    }
+
     private function url(string $type, string $suffix = ''): string
     {
         return "/api/v1/staff/reference/{$type}{$suffix}";
@@ -55,7 +62,7 @@ class ReferenceDataTest extends TestCase
         $this->asStaff($nobody)->getJson($this->url($type))->assertOk();
     }
 
-    #[DataProvider('flatTypes')]
+    #[DataProvider('editableTypes')]
     public function test_changing_a_list_needs_candidates_manage(string $type): void
     {
         $generalManager = StaffUserFactory::new()->withRole('general_manager')->create();
@@ -63,7 +70,7 @@ class ReferenceDataTest extends TestCase
         $this->asStaff($generalManager)->postJson($this->url($type), ['name_ar' => 'اسم'])->assertForbidden();
     }
 
-    #[DataProvider('flatTypes')]
+    #[DataProvider('editableTypes')]
     public function test_create_then_list(string $type): void
     {
         $response = $this->asStaff($this->manager())->postJson($this->url($type), ['name_ar' => ' مثال أول '])
@@ -75,7 +82,7 @@ class ReferenceDataTest extends TestCase
         $this->getJson($this->url($type))->assertOk()->assertJsonCount(1, 'data');
     }
 
-    #[DataProvider('flatTypes')]
+    #[DataProvider('editableTypes')]
     public function test_the_same_name_in_another_spelling_is_refused(string $type): void
     {
         $manager = $this->manager();
@@ -86,7 +93,7 @@ class ReferenceDataTest extends TestCase
             ->assertJsonValidationErrors('name_ar');
     }
 
-    #[DataProvider('flatTypes')]
+    #[DataProvider('editableTypes')]
     public function test_rename(string $type): void
     {
         $manager = $this->manager();
@@ -97,7 +104,7 @@ class ReferenceDataTest extends TestCase
             ->assertJsonPath('item.name_ar', 'جديد');
     }
 
-    #[DataProvider('flatTypes')]
+    #[DataProvider('editableTypes')]
     public function test_renaming_onto_an_existing_name_is_refused(string $type): void
     {
         $manager = $this->manager();
@@ -107,7 +114,7 @@ class ReferenceDataTest extends TestCase
         $this->asStaff($manager)->putJson($this->url($type, "/{$id}"), ['name_ar' => 'الاول'])->assertStatus(422);
     }
 
-    #[DataProvider('flatTypes')]
+    #[DataProvider('editableTypes')]
     public function test_archive_hides_restore_brings_back(string $type): void
     {
         $manager = $this->manager();
@@ -123,7 +130,7 @@ class ReferenceDataTest extends TestCase
         $this->asStaff($manager)->getJson($this->url($type))->assertJsonCount(1, 'data');
     }
 
-    #[DataProvider('flatTypes')]
+    #[DataProvider('editableTypes')]
     public function test_an_archived_name_points_to_restore(string $type): void
     {
         $manager = $this->manager();
@@ -156,6 +163,28 @@ class ReferenceDataTest extends TestCase
         $this->asStaff($this->manager())->postJson($this->url('job-positions'), ['name_ar' => 'سائق', 'district_id' => $this->district()->id])
             ->assertStatus(422)
             ->assertJsonValidationErrors('district_id');
+    }
+
+    public function test_marital_statuses_are_only_read_through_the_api(): void
+    {
+        $this->seed(MaritalStatusesSeeder::class);
+        $manager = $this->manager();
+        $id = MaritalStatus::firstOrFail()->id;
+
+        $this->asStaff($manager)->getJson($this->url('marital-statuses'))->assertOk()->assertJsonCount(4, 'data');
+        $this->asStaff($manager)->postJson($this->url('marital-statuses'), ['name_ar' => 'منفصل'])->assertNotFound();
+        $this->asStaff($manager)->putJson($this->url('marital-statuses', "/{$id}"), ['name_ar' => 'منفصل'])->assertNotFound();
+        $this->asStaff($manager)->deleteJson($this->url('marital-statuses', "/{$id}"))->assertNotFound();
+        $this->asStaff($manager)->postJson($this->url('marital-statuses', "/{$id}/restore"))->assertNotFound();
+        $this->assertSame(4, MaritalStatus::count());
+    }
+
+    public function test_the_editable_lists_are_every_list_but_the_seeded_ones(): void
+    {
+        $this->assertSame(
+            array_values(array_map(fn(ReferenceType $type) => $type->value, array_filter(ReferenceType::cases(), fn(ReferenceType $type) => $type->isEditableThroughApi()))),
+            array_map(fn(EditableReferenceType $type) => $type->value, EditableReferenceType::cases()),
+        );
     }
 
     public function test_unknown_type_and_bad_ids_are_404(): void
@@ -196,7 +225,7 @@ class ReferenceDataTest extends TestCase
 
         $this->asStaff($manager)->postJson($this->url('areas'), ['name_ar' => 'الجديدة', 'district_id' => $damascus->id])
             ->assertCreated()
-            ->assertJsonPath('item.district_id', $damascus->id);
+            ->assertJsonPath('item.district_id', ['id'=>$damascus->id,'name_ar'=>$damascus->name_ar, 'archived_at' => $damascus->deleted_at]);
         $this->asStaff($manager)->postJson($this->url('areas'), ['name_ar' => 'الجديدة', 'district_id' => $aleppo->id])
             ->assertCreated();
 
@@ -230,7 +259,7 @@ class ReferenceDataTest extends TestCase
         $this->asStaff($nobody)->getJson($this->url('areas'))->assertJsonCount(3, 'data');
         $this->asStaff($nobody)->getJson($this->url('areas') . "?district_id={$damascus->id}")
             ->assertJsonCount(2, 'data')
-            ->assertJsonPath('data.0.district_id', $damascus->id);
+            ->assertJsonPath('data.0.district_id', ['id'=>$damascus->id,'name_ar'=>$damascus->name_ar, 'archived_at' => $damascus->deleted_at]);
     }
 
     // ---- default lists ----
@@ -240,7 +269,7 @@ class ReferenceDataTest extends TestCase
         $this->seed(DistrictsSeeder::class);
         $this->seed(DistrictsSeeder::class);
 
-        $this->assertSame(14, District::count());
+        $this->assertSame(15, District::count());   // 14 governorates + تدمر (owner's list)
     }
 
     public function test_the_districts_seeder_does_not_bring_back_an_archived_entry(): void
@@ -250,8 +279,8 @@ class ReferenceDataTest extends TestCase
 
         $this->seed(DistrictsSeeder::class);
 
-        $this->assertSame(13, District::count());
-        $this->assertSame(14, District::withTrashed()->count());
+        $this->assertSame(14, District::count());
+        $this->assertSame(15, District::withTrashed()->count());
     }
 
     public function test_default_marital_statuses_are_seeded_once(): void

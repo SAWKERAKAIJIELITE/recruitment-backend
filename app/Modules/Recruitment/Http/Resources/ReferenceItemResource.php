@@ -20,7 +20,7 @@ class ReferenceItemResource extends JsonResource
         return [
             'id' => $this->id,
             'name_ar' => $this->name_ar,
-            'district_id' => $this->when(array_key_exists('district_id', $this->resource->getAttributes()), fn() => $this->district_id),
+            'district_id' => $this->when(array_key_exists('district_id', $this->resource->getAttributes()), fn() => static::make($this->district()->first())),
             'archived_at' => $this->deleted_at,
         ];
     }

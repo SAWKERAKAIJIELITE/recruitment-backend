@@ -42,12 +42,22 @@ class ApplicationController extends Controller
             'nominating_entity_id' => ['nullable', 'integer'],
             'application_category_id' => ['nullable', 'integer'],
             'residence_district_id' => ['nullable', 'integer'],
+            'residence_area_id' => ['nullable', 'integer'],
+            'academic_qualification_id' => ['nullable', 'integer'],
+            'specialization_id' => ['nullable', 'integer'],
+            'marital_status_id' => ['nullable', 'integer'],
+            'health_condition_id' => ['nullable', 'integer'],
+            'studying_years' => ['nullable', 'integer'],
+            'full_commitment' => ['nullable', Rule::in(['true', 'false'])],
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
         ]);
 
         $applications = Application::query()
-            ->with(['candidate', 'jobPosition', 'nominatingEntity'])
+            ->with([
+                'candidate',
+                ...array_slice(ApplicationResource::RELATIONS, 2)
+            ])
             ->when($filters['q'] ?? null, function ($query, string $q) {
                 $like = '%' . addcslashes(ArabicText::searchKey($q), '\\%_') . '%';
 
@@ -64,6 +74,13 @@ class ApplicationController extends Controller
             ->when($filters['nominating_entity_id'] ?? null, fn($query, $id) => $query->where('nominating_entity_id', $id))
             ->when($filters['application_category_id'] ?? null, fn($query, $id) => $query->where('application_category_id', $id))
             ->when($filters['residence_district_id'] ?? null, fn($query, $id) => $query->where('residence_district_id', $id))
+            ->when($filters['residence_area_id'] ?? null, fn($query, $id) => $query->where('residence_area_id', $id))
+            ->when($filters['academic_qualification_id'] ?? null, fn($query, $id) => $query->where('academic_qualification_id', $id))
+            ->when($filters['specialization_id'] ?? null, fn($query, $id) => $query->where('specialization_id', $id))
+            ->when($filters['marital_status_id'] ?? null, fn($query, $id) => $query->where('marital_status_id', $id))
+            ->when($filters['health_condition_id'] ?? null, fn($query, $id) => $query->where('health_condition_id', $id))
+            ->when($filters['studying_years'] ?? null, fn($query, $studying_years) => $query->where('studying_years', $studying_years))
+            ->when(array_key_exists('full_commitment', $filters), fn($query) => $query->where('full_commitment', $request->boolean('full_commitment')))
             ->when($filters['from'] ?? null, fn($query, string $date) => $query->where('created_at', '>=', $date))
             ->when($filters['to'] ?? null, fn($query, string $date) => $query->where('created_at', '<', now()->parse($date)->addDay()->toDateString()))
             ->orderByDesc('created_at')

@@ -6,10 +6,7 @@ use App\Modules\Recruitment\Database\Seeders\Concerns\SeedsReferenceList;
 use App\Modules\Recruitment\Models\NominatingEntity;
 use Illuminate\Database\Seeder;
 
-/**
- * The template's categories (lstCats): a new contractor, or an existing employee ("رقم ذاتي", whose
- * employee number goes in existing_employee_number). Nothing is suggested: the categories are a policy.
- */
+/** The nominating entities used in the legacy template's rows (column B, typed by hand there; OD-13). */
 class NominatingEntitiesSeeder extends Seeder
 {
     use SeedsReferenceList;

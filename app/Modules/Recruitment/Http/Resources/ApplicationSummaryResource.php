@@ -19,10 +19,35 @@ class ApplicationSummaryResource extends JsonResource
             'nomination_number' => $this->nomination_number,
             'status' => $this->current_status,
             'status_label' => $this->current_status->labelAr(),
-            'candidate_name' => $this->candidate->full_name,
-            'national_number' => $this->candidate->national_number,
-            'job_position' => $this->jobPosition->name_ar,
             'nominating_entity' => $this->nominatingEntity->name_ar,
+            'job_position' => $this->jobPosition->name_ar,
+            'category' => $this->category->name_ar,
+            'existing_employee_number' => $this->existing_employee_number,
+            'marital_status' => $this->maritalStatus->name_ar,
+            'phone_number' => $this->phone_number,
+            'education' => [
+                'academic_qualification' => $this->academicQualification->name_ar,
+                'specialization' => $this->specialization->name_ar,
+                'studying_years' => $this->studying_years,
+                'studies_discontinued' => $this->studies_discontinued,
+                'quran_parts_memorized' => $this->quran_parts_memorized,
+            ],
+            'availability' => [
+                'works_for_other_government_entity' => $this->works_for_other_government_entity,
+                'full_commitment' => $this->full_commitment,
+                'overnight_work' => $this->overnight_work,
+            ],
+            'health' => [
+                'health_details' => $this->health_details,
+                'health_condition' => $this->healthCondition->name_ar,
+            ],
+            'residence' => [
+                'residence_details' => $this->residence_details,
+                'residence_district' => $this->residenceDistrict->name_ar,
+                'residence_area' => $this->residenceArea?->name_ar,
+            ],
+            'notes' => $this->notes,
+            'candidate' => new CandidateResource($this->candidate),
             'created_at' => $this->created_at,
         ];
     }

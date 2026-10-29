@@ -60,5 +60,9 @@ Route::middleware('api')->prefix('api/v1')->group(function () {
             Route::delete('users/{user}/permissions/{permission:slug}', [StaffUserController::class, 'clearPermission'])
                 ->whereUuid('user')->scopeBindings();
         });
+
+        Route::middleware(['auth:staff', EnsureStaffIsActive::class, 'can:users.add'])->group(function(){
+            Route::post('new', [StaffUserController::class, 'addStaff']);
+        });
     });
 });

@@ -145,6 +145,39 @@ class DeviceManagementTest extends TestCase
         $this->assertSame(DeviceStatus::Pending, $device->fresh()->status);
     }
 
+    public static function malformedFingerprints(): array
+    {
+        return [
+            'letters beyond F' => ['ZZZZ BEEF DEAD BEEF DEAD BEEF DEAD BEEF'],
+            'too short' => ['DEAD BEEF'],
+            'too long' => ['DEAD BEEF DEAD BEEF DEAD BEEF DEAD BEEF 0000'],
+            'other separators' => ['DEAD/BEEF/DEAD/BEEF/DEAD/BEEF/DEAD/BEEF'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('malformedFingerprints')]
+    public function test_a_malformed_fingerprint_is_refused_before_comparing(string $typed): void
+    {
+        ['device' => $device] = $this->pendingDevice();
+        $admin = StaffUserFactory::new()->withRole('system_admin')->create();
+
+        $this->asStaff($admin)->postJson("/api/v1/staff/devices/{$device->id}/approve", [
+            'fingerprint' => $typed,
+            'staff_user_id' => StaffUserFactory::new()->create()->id,
+        ])->assertStatus(422)->assertJsonValidationErrors('fingerprint');
+    }
+
+    public function test_the_fingerprint_may_be_typed_in_lowercase_with_dashes(): void
+    {
+        ['device' => $device] = $this->pendingDevice();
+        $admin = StaffUserFactory::new()->withRole('system_admin')->create();
+
+        $this->asStaff($admin)->postJson("/api/v1/staff/devices/{$device->id}/approve", [
+            'fingerprint' => strtolower(str_replace(' ', '-', $device->displayFingerprint())),
+            'staff_user_id' => StaffUserFactory::new()->create()->id,
+        ])->assertOk();
+    }
+
     public function test_approval_makes_the_device_the_property_of_one_user(): void
     {
         ['device' => $device] = $this->pendingDevice();

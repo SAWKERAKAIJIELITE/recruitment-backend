@@ -2,6 +2,10 @@
 
 namespace Database\Seeders;
 
+use App\Modules\Documents\Database\Seeders\DocumentsDemoSeeder;
+use App\Modules\Documents\Database\Seeders\DocumentTypesSeeder;
+use App\Modules\Exams\Database\Seeders\ExamsDemoSeeder;
+use App\Modules\Exams\Database\Seeders\ExamSubjectsSeeder;
 use App\Modules\Identity\Database\Seeders\DevUsersSeeder;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use App\Modules\Imports\Database\Seeders\ImportsDemoSeeder;
@@ -20,16 +24,19 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call(RolesAndPermissionsSeeder::class);
-        // Every managed list except the nominating entities, which the owner seeds (OD-13).
         $this->call(ReferenceDataSeeder::class);
+        $this->call(ExamSubjectsSeeder::class);
+        $this->call(DocumentTypesSeeder::class);
 
         if (app()->environment('local')) {
             $this->call(DevUsersSeeder::class);
 
-            // Demo people, applications and import batches. They need the nominating entities: when none are
-            // seeded yet, the demo adds the five names of the legacy template (DemoReferences).
+            // Demo data through the real actions: people and applications, import batches, the question bank and
+            // exam plans, documents.
             $this->call(RecruitmentDemoSeeder::class);
             $this->call(ImportsDemoSeeder::class);
+            $this->call(ExamsDemoSeeder::class);
+            $this->call(DocumentsDemoSeeder::class);
         }
     }
 }

@@ -4,6 +4,7 @@ namespace App\Modules\Recruitment\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Modules\Recruitment\Actions\ManageReferenceData;
+use App\Modules\Recruitment\Enums\EditableReferenceType;
 use App\Modules\Recruitment\Enums\ReferenceType;
 use App\Modules\Recruitment\Http\Requests\ReferenceItemRequest;
 use App\Modules\Recruitment\Http\Resources\ReferenceItemResource;
@@ -16,8 +17,8 @@ use Illuminate\Validation\Rule;
 /**
  * The managed lists. {type} is a ReferenceType value (an unknown one is 404): districts, areas, nominating-entities, job-positions,
  * application-categories, academic-qualifications, specializations, marital-statuses, health-conditions.
- * Any signed-in staff user can read them; changing them needs candidates.manage, except marital statuses,
- * which are seeded and read-only here (403).
+ * Any signed-in staff user can read them; changing them needs candidates.manage. Marital statuses are
+ * seeded and only read here: the change endpoints do not know them (404, D-048).
  */
 class ReferenceDataController extends Controller
 {
@@ -38,7 +39,7 @@ class ReferenceDataController extends Controller
             ->when($request->boolean('include_archived'), fn($query) => $query->withTrashed())
             ->when(
                 $type->isScopedToDistrict() && isset($filters['district_id']),
-                fn($query) => $query->where('district_id', $filters['district_id']),
+                fn($query) => $query->where('district_id', $filters['district_id'])->with('district'),
             )
             ->orderBy('name_key');
 
@@ -50,14 +51,13 @@ class ReferenceDataController extends Controller
      *
      * A name that already exists, in any spelling, is refused (422), also when that entry is archived:
      * restore it instead. `district_id` is required for a new area and refused for the other lists.
-     * Marital statuses are seeded, not added here (403).
      */
-    public function store(ReferenceItemRequest $request, ReferenceType $type, ManageReferenceData $manage): JsonResponse
+    public function store(ReferenceItemRequest $request, EditableReferenceType $type, ManageReferenceData $manage): JsonResponse
     {
-        $this->assertEditable($type);
+        $list = $type->type();
 
         $item = $manage->create(
-            $type,
+            $list,
             $request->validated('name_ar'),
             $request->validated('district_id') === null ? null : (int) $request->validated('district_id'),
         );
@@ -67,33 +67,27 @@ class ReferenceDataController extends Controller
     }
 
     /** Rename an entry. */
-    public function update(ReferenceItemRequest $request, ReferenceType $type, int $id, ManageReferenceData $manage): ReferenceItemResource
+    public function update(ReferenceItemRequest $request, EditableReferenceType $type, int $id, ManageReferenceData $manage): ReferenceItemResource
     {
-        $this->assertEditable($type);
+        $list = $type->type();
 
-        return new ReferenceItemResource($manage->rename($type, $this->find($type, $id), $request->validated('name_ar')));
+        return new ReferenceItemResource($manage->rename($list, $this->find($list, $id), $request->validated('name_ar')));
     }
 
     /** Archive an entry: it leaves the lists but stays valid for existing applications. */
-    public function archive(ReferenceType $type, int $id, ManageReferenceData $manage): ReferenceItemResource
+    public function archive(EditableReferenceType $type, int $id, ManageReferenceData $manage): ReferenceItemResource
     {
-        $this->assertEditable($type);
+        $list = $type->type();
 
-        return new ReferenceItemResource($manage->archive($this->find($type, $id)));
+        return new ReferenceItemResource($manage->archive($this->find($list, $id)));
     }
 
     /** Bring an archived entry back. */
-    public function restore(ReferenceType $type, int $id, ManageReferenceData $manage): ReferenceItemResource
+    public function restore(EditableReferenceType $type, int $id, ManageReferenceData $manage): ReferenceItemResource
     {
-        $this->assertEditable($type);
+        $list = $type->type();
 
-        return new ReferenceItemResource($manage->restore($this->find($type, $id)));
-    }
-
-    /** Seeded lists (marital statuses) are read-only here: 403 (D-048). */
-    private function assertEditable(ReferenceType $type): void
-    {
-        abort_unless($type->isEditableThroughApi(), 403, __('recruitment.list_is_seeded'));
+        return new ReferenceItemResource($manage->restore($this->find($list, $id)));
     }
 
     private function find(ReferenceType $type, int $id): Model

@@ -2,6 +2,7 @@
 
 namespace App\Modules\Recruitment\Models;
 
+use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Support\NationalNumber;
 use App\Support\ArabicText;
 use Illuminate\Database\Eloquent\Casts\Attribute;
@@ -35,7 +36,7 @@ class Candidate extends Model
 
     public function deactivator(): BelongsTo
     {
-        return $this->belongsTo(\App\Modules\Identity\Models\StaffUser::class, 'deactivated_by');
+        return $this->belongsTo(StaffUser::class, 'deactivated_by');
     }
 
     /** Always stored as ASCII digits ("٠١٢٣" becomes "0123"; spaces and dashes are dropped). */
