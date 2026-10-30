@@ -1,6 +1,6 @@
 # Recruitment System: Backend Technical Documentation
 
-Status: end of Step 4, follow-up included (Foundation, staff identity, RBAC, device-bound login, Recruitment, Excel import of the real legacy template). Updated at the end of every step.
+Status: Step 6 (Foundation, staff identity, RBAC, device-bound login, Recruitment with corrections and deactivation, Excel import of the real legacy template, seeders, exam subjects, versioned exam plans, question bank, scoring engine, documents). Updated at the end of every step.
 
 Audience: developers joining or reviewing the backend.
 Companion file: `decisions.md` explains *why* things are the way they are. Decision ids (D-0xx) refer to it.
@@ -25,9 +25,10 @@ Staff and candidates are separate actors with separate tables, login pipelines a
 | Identity: device-bound staff login                             | Done    | Registration, approval, challenge/signature login (D-017)                                                                                                                                              |
 | Identity: user management (create, deactivate, reset password) | Planned |                                                                                                                                                                                                        |
 | Identity: candidate accounts and login                         | Planned | After the Recruitment core (D-016)                                                                                                                                                                     |
-| Recruitment                                                    | Done    | Nine managed lists (areas inside districts), candidates, applications, nomination number, chained status history with database-maintained status, one live application per person, closing (section 8) |
+| Recruitment                                                    | Done    | Nine managed lists (areas inside districts), candidates, applications, nomination number, chained status history with database-maintained status, one live application per person, closing, corrections, deactivating people (section 8) |
 | Imports                                                        | Done    | Legacy Excel template: upload, column detection, row checks, corrections and review, atomic approval, report (section 9)                                                                               |
-| Exams                                                          | Planned | Subjects, parts, question bank, exam plans, scheduling, attempts, scoring                                                                                                                              |
+| Exams                                                          | Started | Subjects and parts, versioned exam plans (one session, parts marked by hand, easy/medium/hard), question bank, pass policy as data, exact scoring engine (section 10). Next: sessions and attempts (D-056) |
+| Documents                                                      | Done    | Document types, uploads checked by content, download, archive, missing documents per application (section 11)                                                                                       |
 | Interviews, Contracts, Reports                                 | Planned |                                                                                                                                                                                                        |
 | Audit                                                          | Started | `AuditTrail` seam only; events go to the application log until the table exists                                                                                                                      |
 | Integration                                                    | Planned | Outbox for the future "Mawarid" integration                                                                                                                                                            |
@@ -203,6 +204,7 @@ Source: analysis doc §02. `✓` = given by the role by default. `✓*` = `indiv
 | `interviews.manage`  |       —       |        ✓        |      ✓      |
 | `contracts.manage`   |       —       |        ✓        |      ✓      |
 | `users.manage`       |       —       |        —        |      ✓      |
+| `users.add`          |       —       |        —        |      ✓      |
 | `devices.approve`    |       —       |        —        |      ✓      |
 | `audit.view`         |       ✓       |        —        |      ✓      |
 | `audit.view_related` |       —       |        ✓        |      —      |
@@ -261,6 +263,7 @@ Base path: `/api/v1/staff`. Send `Accept: application/json`. Protected routes ne
 | DELETE | `/users/{user}/roles/{role}`             | 404 if the user does not hold it                                            |
 | POST   | `/users/{user}/permissions`              | Body `permission`, `effect` = `grant` or `deny`                     |
 | DELETE | `/users/{user}/permissions/{permission}` | Clear the override; 404 if none                                             |
+| POST   | `/new` (`users.add`)                    | Add a staff user with a first role (D-058): `username`, `first_name`, `last_name`, `personal_number` (4 to 50 digits), `is_active`, `role` (slug), `password` + `password_confirmation` (8+, upper and lower case, digit, symbol, not in known leaks). 201. Without `users.manage`, only a role whose permissions the caller holds (403) |
 
 `{role}` and `{permission}` are slugs. Any change that would leave no active staff user able to manage users is rejected with 422 and rolled back. Changes are logged as `access.*` entries.
 
@@ -314,11 +317,12 @@ Holds the managed lists, the people (candidates), their applications, the nomina
 
 ```
 app/Modules/Recruitment/
-├── Actions/       CreateApplication, ApplicationLifecycle, ManageReferenceData
-├── Database/      Migrations (3), Seeders (DistrictsSeeder, MaritalStatusesSeeder)
+├── Actions/       CreateApplication, ApplicationLifecycle, ManageReferenceData,
+│                  UpdateCandidate, UpdateApplication, ChangeCandidateActivation (D-049)
+├── Database/      Migrations (3), Seeders (one per list + ReferenceDataSeeder, demo seeders, section 8.9)
 ├── Enums/         ApplicationStatus, DecisionType, ReferenceType
 ├── Exceptions/    IllegalStatusTransition
-├── Http/          Controllers (ReferenceData, Application), Requests, Resources (+ ReferenceSummary helper)
+├── Http/          Controllers (ReferenceData, Application, Candidate), Requests, Resources (+ ReferenceSummary helper)
 ├── Models/        Candidate, Application, ApplicationStatusEvent, Concerns/IsReferenceData,
 │                  District, Area, NominatingEntity, JobPosition, ApplicationCategory,
 │                  AcademicQualification, Specialization, MaritalStatus, HealthCondition
@@ -346,7 +350,8 @@ app/Modules/Audit/Support/AuditTrail.php
 | name_search_key        | `ArabicText::searchKey(full_name)`, indexed                                |
 | birth_date             | date, CHECK after 1950-01-01                                                 |
 | birth_place_id         | FK `districts`                                                             |
-| is_active, notes       |                                                                              |
+| is_active, notes       | inactive people cannot be nominated (D-049)                                  |
+| deactivated_at, deactivated_by, deactivation_reason | who deactivated the person and why; CHECK: a reason whenever inactive, nothing when active |
 
 **`nomination_counters`**: `year` PK, `last_value`.
 
@@ -451,6 +456,7 @@ Every `add`/`remove` rebuilds the CHECK `application_status_events_at_most_one_c
 - A person is recognised by national number only, never by name. A matched person's stored data is kept: the `candidate` fields of a new application are ignored (`candidate_matched: true`). Application data (phone, residence, education, ...) is per application.
 - **One live application per person** (D-037): 422 on `candidate.national_number` with `recruitment.live_application_exists` (names the live nomination number), and the partial unique index as the last guard. A person can be nominated again only after the contract ended or the application was closed.
 - The national number is required, so every person can be matched (D-032).
+- An inactive person cannot be nominated: 422 `recruitment.candidate_inactive` on `candidate.national_number`, and the import marks the row invalid (`candidate_inactive`). A person with a live application cannot be deactivated (D-049).
 - `CreateApplication::lockPeople()` takes a transaction-level advisory lock per national number (sorted, so callers cannot deadlock). The API create and the import approval both take it, so a check made under the lock cannot be overtaken (D-041).
 
 ### 8.8 API reference
@@ -467,9 +473,15 @@ All under `/api/v1/staff`, staff token required.
 | POST   | `/applications`                  | `candidates.manage`                     | Open an application (finds or creates the person)                                       |
 | GET    | `/applications`                  | `reports.view` or `candidates.manage` | Search and list                                                                         |
 | GET    | `/applications/{id}`             | `reports.view` or `candidates.manage` | File with person and full history                                                       |
+| PATCH  | `/applications/{id}`             | `candidates.manage`                     | Correct a live application: send only the fields that change (D-049)                    |
 | POST   | `/applications/{id}/close`       | `applications.close` (individual)       | End the application: body `reason`, optional `occurred_at` (D-037, D-039)           |
+| GET    | `/candidates`                    | `reports.view` or `candidates.manage` | People: `q` (name in any spelling or national number in any digits), `is_active`, `birth_place_id`, `has_live_application`; 25 per page |
+| GET    | `/candidates/{id}`               | `reports.view` or `candidates.manage` | The person with every application, newest first                                         |
+| PATCH  | `/candidates/{id}`               | `candidates.manage`                     | Correct the person (national number included, never to another person's)                |
+| POST   | `/candidates/{id}/deactivate`    | `candidates.manage`                     | Body `reason`; refused while the person has a live application                         |
+| POST   | `/candidates/{id}/activate`      | `candidates.manage`                     | Nominable again                                                                         |
 
-`{type}` binds to the `ReferenceType` enum (an unknown list is 404): `districts`, `areas`, `nominating-entities`, `job-positions`, `application-categories`, `academic-qualifications`, `specializations`, `marital-statuses` or `health-conditions`; `{id}` is an integer. `district_id` is required for a new area and refused for every other list. A name that already exists in any spelling is refused (422), also when the existing entry is archived (restore it instead). Archived entries cannot be chosen for new applications but still show (with `archived: true`) in existing files.
+`marital-statuses` is only read here: the owner seeds it, and the change endpoints bind `{type}` to `EditableReferenceType`, which does not include it (404, and absent from the API documentation; D-048). Areas come with `district_id` and `district` (`{id, name_ar, archived}`), loaded once for the whole list. For reading, `{type}` binds to the `ReferenceType` enum (an unknown list is 404): `districts`, `areas`, `nominating-entities`, `job-positions`, `application-categories`, `academic-qualifications`, `specializations`, `marital-statuses` or `health-conditions`; `{id}` is an integer. `district_id` is required for a new area and refused for every other list. A name that already exists in any spelling is refused (422), also when the existing entry is archived (restore it instead). Archived entries cannot be chosen for new applications but still show (with `archived: true`) in existing files.
 
 **Open an application** (`POST /applications`), all ids are integers:
 
@@ -490,17 +502,54 @@ All under `/api/v1/staff`, staff token required.
 }
 ```
 
-`residence_area_id` may be null (D-043). `studies_discontinued` defaults to false and requires `studying_years`. Names may not contain digits. Arabic-Indic digits and separators in `phone_number` and `national_number` are converted. `birth_date` is `YYYY-MM-DD`. The area must belong to the district (422 `recruitment.area_not_in_district`). Response 201 with `data` (the file) and `candidate_matched`.
+`residence_area_id` may be null (D-043). `studies_discontinued` may be left out or sent as `null`: both mean false (D-044); `true` requires `studying_years`. Names may not contain digits. Arabic-Indic digits and separators in `phone_number` and `national_number` are converted. `birth_date` is `YYYY-MM-DD`. The area must belong to the district (422 `recruitment.area_not_in_district`). Response 201 with `data` (the file) and `candidate_matched`.
 
-**Search** (`GET /applications`): `q` (nomination number exactly, or part of a name in any spelling), `national_number` (exact, any digit style), `status`, `job_position_id`, `nominating_entity_id`, `application_category_id`, `residence_district_id`, `from`, `to` (`YYYY-MM-DD`, both days included, UTC); 25 per page, newest first.
+**Search** (`GET /applications`, `ApplicationSearch`): every filter is optional; they combine with AND; a filter applies whenever its key has a value, so `0` and `false` filter too. Yes/no values: `1`/`0`/`true`/`false`.
+
+| Filter | Meaning |
+| ------ | ------- |
+| `q` | Nomination number exactly, or part of a name in any spelling |
+| `national_number`, `phone_number`, `existing_employee_number` | Exact (Arabic-Indic digits and separators accepted) |
+| `has_employee_number` | Has an existing employee number or not |
+| `status` | One status, or several: `status[]=exam_failed&status[]=exam_absent` |
+| `live` | `1`: not ended; `0`: contract ended or closed |
+| `job_position_id`, `nominating_entity_id`, `application_category_id`, `academic_qualification_id`, `specialization_id`, `marital_status_id`, `health_condition_id`, `residence_district_id`, `residence_area_id` | Exact list entry |
+| `birth_place_id`, `candidate_active` | The person's birth place; whether the person is active |
+| `studies_discontinued`, `works_for_other_government_entity`, `full_commitment`, `overnight_work` | Yes/no |
+| `studying_years` | Exact; `studying_years_min`, `studying_years_max` for a range |
+| `quran_parts_min`, `quran_parts_max` | Parts memorized, range |
+| `birth_date_from`, `birth_date_to` | `YYYY-MM-DD`, included |
+| `age_min`, `age_max` | Whole years today |
+| `created_by` | The staff user who opened it |
+| `from`, `to` | Opening date, both days included, UTC |
+| `sort` | `created_at` (default, newest first), `nomination_number`, `full_name`, `birth_date`, `status`; `direction` `asc`/`desc` |
+| `per_page` | 5 to 100 (25); filters stay in the page links |
+
+Each row (`ApplicationSummaryResource`) carries the application's data and the person (`candidate`, with birth place and who deactivated them). Its relations load with the page (`ApplicationSummaryResource::RELATIONS`): 14 queries for any page size.
 
 **File** (`GET /applications/{id}`): the application with each list value as `{id, name_ar, archived}`, grouped `education`, `health`, `residence`, `availability`; the `candidate`; and `history` in chain order, each event with `from_status`, `to_status`, `decision_type`, `reason`, `actor`, `occurred_at`.
+
+**Correct an application** (`PATCH /applications/{id}`): any field of the create body except `candidate`; each follows its create rule, `null` clears an optional field. Changing `residence_district_id` without `residence_area_id` keeps the current area only if it belongs to the new district (otherwise 422 on `residence_area_id`); `studies_discontinued: true` needs `studying_years`, sent or stored. 422 on `status` when the application has ended. The nomination number, the person and the status never change here.
+
+**People** (`GET /candidates`): each person with `applications_count` and `live_application` (`id`, `nomination_number`, `status`). `GET /candidates/{id}` adds every application (newest first) and `deactivation` (`at`, `reason`, `by`) when inactive. `PATCH /candidates/{id}` takes `national_number`, `full_name`, `mother_name`, `birth_date`, `birth_place_id`, `notes` with the create rules; a national number that belongs to someone else is 422 `recruitment.national_number_taken`.
 
 **Close** (`POST /applications/{id}/close`): `{"reason": "انسحب المرشح", "occurred_at": "2026-10-20"}`. Returns the file. 422 on `status` when the application has already ended or has a written contract; 422 on `occurred_at` when the date is in the future or before the previous decision.
 
 ### 8.9 Seeding
 
-`DistrictsSeeder` (14 governorates) and `MaritalStatusesSeeder` (أعزب، متزوج، مطلق، أرمل) run with `db:seed` in every environment. Both are idempotent and never bring back an archived entry. The other lists are entered through the API.
+| Seeder | Runs | Content |
+| ------ | ---- | ------- |
+| `ReferenceDataSeeder` | Every environment | Calls the list seeders below, the owner's `NominatingEntitiesSeeder` included (the template's five entities, OD-13) |
+| `DistrictsSeeder` | Every environment | 15 governorates (تدمر included) |
+| `AreasSeeder` | Every environment | Suggested areas per governorate (administrative areas; neighbourhoods for دمشق); a governorate missing from the list is skipped |
+| `MaritalStatusesSeeder` | Every environment | أعزب، متزوج، مطلق، أرمل. The only way to change this list (D-048) |
+| `JobPositionsSeeder`, `ApplicationCategoriesSeeder`, `AcademicQualificationsSeeder`, `SpecializationsSeeder`, `HealthConditionsSeeder` | Every environment | The template's values (`FROM_TEMPLATE`) plus suggestions (`SUGGESTED`); remove a suggestion from the constant, or archive it through the API, if it does not apply |
+| `RecruitmentDemoSeeder` | `APP_ENV=local` | 38 invented people (national numbers `09…`), 39 applications in every status with dated histories (outcomes, an exception, accepted excuses, closures), a person nominated twice, a deactivated person |
+| `ImportsDemoSeeder` | `APP_ENV=local` | Three batches from generated workbooks: approved (six rows, uploaded by `staff`, approved by `manager`), cancelled, pending (valid rows, a person nominated again, a spelling variant, unknown job position, bad phone, duplicate, person mismatch, live application) |
+
+Every list seeder matches entries by normalized name, archived ones included (`Concerns/SeedsReferenceList`): running it again adds only what is missing. The demo seeders use the real actions (the triggers accept nothing else), move the clock back so dates spread over the last months, need `DevUsersSeeder`, and run once. When no nominating entity exists, the demo adds the template's five (`Demo/DemoReferences`). Rebuild a development database with `php artisan migrate:fresh --seed`.
+
+Production: run migrations, then `php artisan db:seed --class="App\Modules\Recruitment\Database\Seeders\ReferenceDataSeeder" --force`, then the owner's nominating entities seeder.
 
 ## 9. Imports module
 
@@ -659,9 +708,177 @@ Refusals of a whole file or batch are 422 on `file` or `batch`: unreadable file,
 
 Audit events: `import.uploaded`, `import.row_corrected` (with before/after), `import.person_confirmed`, `import.row_excluded`, `import.row_included`, `import.approved`, `import.cancelled`.
 
-## 10. Testing
+## 10. Exams module
 
-`php artisan test` (PostgreSQL database `recruitment_test`, `RefreshDatabase`): 422 tests. The suite needs no OpenSSL configuration: tests use fixed keys from `tests/Support/TestDeviceKeys.php` (D-023). Shared helpers are in `tests/Support/StaffTestHelpers.php` (devices get a unique MAC and an `os_info`), `tests/Support/RecruitmentTestHelpers.php` (one entry of every list, a valid application payload, granting an individual permission, closing an application) and `tests/Support/LegacyWorkbook.php` (synthetic workbooks in the real template's layout: three title rows, headers on row 5 with its exact texts, navigation column A, other sheets, text/number/date/formula cells; no real data, §24).
+### 10.1 What it does
+
+What each job position is examined on, the question bank, and how a result is decided (analysis doc §04, §05). Sessions, candidate accounts and attempts come next (D-056); they will use the plan version, the bank and the engine built here.
+
+```
+app/Modules/Exams/
+├── Actions/       ManageExamSubjects, ManageExamPlans (drafts, replace, readiness, publish, delete), ManageQuestions
+├── Database/      Migrations (4), Seeders (ExamSubjectsSeeder, ExamsDemoSeeder)
+├── Enums/         ExamPlanStatus, Assessment (exam | manual), Difficulty (easy | medium | hard)
+├── Http/          Controllers (ExamSubject, ExamPlan, ExamQuestion), Requests, Resources
+├── Models/        ExamSubject, ExamSubjectPart, PassPolicy, ExamPlanVersion, ExamPlanSubject, ExamPlanSubjectPart,
+│                  ExamQuestion, ExamQuestionVersion, Concerns/HasDifficultyCounts
+├── Scoring/       ExamScorer, ScoringPlan, Mark, PassRules, ExamOutcome, SubjectResult (pure PHP, D-052)
+└── routes.php
+```
+
+### 10.2 Database schema
+
+| Table | Notes |
+| ----- | ----- |
+| `exam_subjects` | `id` bigint, `name_ar`, `name_key` unique, timestamps, `deleted_at` (archived) |
+| `exam_subject_parts` | `subject_id`, `name_ar`, `name_key` (unique per subject), `default_weight` numeric(7,2) CHECK > 0, `default_assessment` (`exam` or `manual`); `(subject_id, id)` unique for composite keys |
+| `exam_pass_policies` | `version` unique, `subject_pass_mark`, `tolerance_floor`, `max_tolerated_subjects`, `average_must_exceed`, `description`; CHECK floor ≤ pass mark ≤ 100; append-only (trigger). Version 1 = 60 / 58 / 1 / 70, inserted by the migration |
+| `exam_plan_versions` | uuid; `job_position_id`, `version` (unique per job position), `status` (`draft`, `published`, `retired`), `duration_minutes` (the single session), `pass_policy_id`, `notes`, `created_by`, `published_by`, `published_at`, `retired_at`. CHECKs: publication data exactly for published/retired, `retired_at` exactly for retired, a published plan has a duration. Partial unique indexes: one `published` and one `draft` per job position |
+| `exam_plan_subjects` | `plan_version_id` (cascade), `subject_id`, `position`, `easy_count`, `medium_count`, `hard_count` (a subject scored as a whole: all three ≥ 1; scored from parts: all null) |
+| `exam_plan_subject_parts` | `plan_subject_id`, `plan_version_id`, `subject_id`, `part_id`, `position`, `weight` (> 0), `assessment`, `easy_count`/`medium_count`/`hard_count`, `max_score`. CHECK: an exam part has all three counts ≥ 1 (or none in a draft) and no `max_score`; a manual part has `max_score` > 0 and no counts. Composite keys to its plan subject and to `exam_subject_parts (subject_id, id)` |
+| `exam_questions` | `subject_id`, `part_id` (nullable; composite key: a part of that subject), `difficulty`, `created_by`, timestamps, `deleted_at` (archived) |
+| `exam_question_versions` | `question_id`, `version` (unique per question), `prompt` (not blank), `options` jsonb array of 2 to 6 texts, `correct_option` (index, CHECK < number of options), `created_by`, `created_at`; append-only (trigger) |
+
+Triggers: `exam_plan_versions_frozen` (a non-draft version changes only published → retired with nothing else; only drafts are deleted; a draft cannot jump to retired), `exam_plan_*_frozen` (subjects and parts change only while their version is a draft), `exam_question_versions_append_only`, `exam_pass_policies_append_only`. CHECKs that compare nullable columns use `coalesce`, because a CHECK that evaluates to NULL passes.
+
+### 10.3 Plans: one session, parts marked by hand, three difficulties (D-054)
+
+- Every online question is asked in **one session** (`duration_minutes` of the plan).
+- A part is assessed `exam` (questions in the session) or `manual` (marked by hand outside the session, like التجويد: oral the same day). A manual part has `max_score`, the scale staff mark it out of (default 100; the demo uses 40 for التجويد as in the legacy sheet); its mark enters the engine as `Mark::of(achieved, max_score)`.
+- Every exam subject or part asks **easy, medium and hard** questions, at least one of each.
+- A subject scored as a whole draws on every question of the subject; a part on its own questions only.
+- Publishing checks completeness and the bank: at least one subject and one online question, a duration, counts for every exam item, nothing archived, and enough active questions of each difficulty for each item ("the bank has 3 hard questions, the plan asks 4"). `GET /exam-plans/{id}/readiness` runs the same checks without publishing.
+
+### 10.4 Question bank (D-055)
+
+A question belongs to a subject (optionally a part) and has a difficulty. Its prompt, options and correct option are versions: a correction adds a version and the old one stays (sessions keep the version they drew). Same content again, or only a new difficulty: no new version. Its subject and part never change. Options keep the order they were written in (never shuffled, D-056). Archived questions are hidden and not counted. Only `exam_bank.manage` reads the bank: it contains the answers.
+
+### 10.5 Scoring (`ExamScorer`, D-052)
+
+```php
+$outcome = (new ExamScorer())->score(
+    $plan->scoringPlan(),                                   // subjects, parts and weights of a version
+    [$hadithId => Mark::of(80),                             // whole subject: achieved, max (default 100)
+     $quranId  => [$recitationId => Mark::of(47, 60),       // exam part: points from the questions
+                   $tajweedId    => Mark::of(38, 40)]],     // manual part: entered by staff, out of max_score
+    $plan->passPolicy->rules(),
+);
+$outcome->passed;            // false when any reason applies
+$outcome->reasons;           // [['code' => 'subject_below_floor'|'too_many_below_pass_mark', 'subject_ids' => [...]], ['code' => 'average_not_above']]
+$outcome->subjects[$id];     // SubjectResult: exact score, band (passed | in_tolerance | below_floor), part percentages
+$outcome->toArray();         // display values rounded half-up to 2 places, plus tolerated subjects and the policy version
+```
+
+Marks must cover exactly the plan's subjects and parts (otherwise `InvalidArgumentException`). The doc's five worked examples are unit tests.
+
+### 10.6 API reference
+
+All under `/api/v1/staff`. Subjects and plans: read with `exam_bank.manage`, `candidates.manage` or `reports.view`; change with `exam_bank.manage`. The question bank and plan readiness: `exam_bank.manage` only.
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET | `/exam-subjects` | Subjects with their parts; `?include_archived=1` |
+| POST | `/exam-subjects` | `name_ar`, optional `parts: [{name_ar, default_weight, default_assessment}]` |
+| PUT | `/exam-subjects/{id}` | Rename |
+| DELETE / POST | `/exam-subjects/{id}` / `/exam-subjects/{id}/restore` | Archive / restore |
+| POST | `/exam-subjects/{id}/parts` | Add a part: `name_ar`, `default_weight`, optional `default_assessment` (`exam`) |
+| PATCH | `/exam-subject-parts/{id}` | `name_ar`, `default_weight`, `default_assessment` (published plans keep their copy) |
+| DELETE / POST | `/exam-subject-parts/{id}` / `.../restore` | Archive / restore |
+| GET | `/exam-questions` | 50 per page; `subject_id`, `part_id` (or `none`), `difficulty`, `q`, `include_archived` |
+| GET | `/exam-questions/stats` | Active questions per subject, part and difficulty |
+| GET | `/exam-questions/{id}` | A question with every version |
+| POST | `/exam-questions` | `subject_id`, optional `part_id`, `difficulty`, `prompt`, `options` (2 to 6), `correct_option` (from 0) |
+| PATCH | `/exam-questions/{id}` | `prompt`, `options`, `correct_option` (new version when they change), `difficulty` |
+| DELETE / POST | `/exam-questions/{id}` / `.../restore` | Archive / restore |
+| GET | `/exam-plans` | Versions, newest first; `job_position_id`, `status` |
+| GET | `/exam-plans/{id}` | One version |
+| POST | `/exam-plans` | New draft: `job_position_id`, optional `copy_from` (default: the published version). 422 when a draft exists |
+| PUT | `/exam-plans/{id}` | Replace a draft (below) |
+| GET | `/exam-plans/{id}/readiness` | `{ready, problems}`: what keeps the draft from being published |
+| DELETE | `/exam-plans/{id}` | Delete a draft (204) |
+| POST | `/exam-plans/{id}/publish` | Publish; retires the previous version. 422 lists every problem |
+
+**Replace a draft** (`PUT /exam-plans/{id}`):
+
+```json
+{
+  "duration_minutes": 120, "notes": null,
+  "subjects": [
+    {"subject_id": 1, "questions": {"easy": 8, "medium": 8, "hard": 4}},
+    {"subject_id": 6, "parts": [
+      {"part_id": 1, "weight": "60", "questions": {"easy": 4, "medium": 4, "hard": 2}},
+      {"part_id": 2, "assessment": "manual", "max_score": "40"}
+    ]}
+  ]
+}
+```
+
+Order of `subjects` (and of `parts`) is the exam order. Subjects and parts must be active; a part must belong to its subject; a subject scored from parts takes no `questions`; a manual part takes no `questions` and an exam part no `max_score`; `weight` and `assessment` default to the part's defaults.
+
+### 10.7 Seeding
+
+`ExamSubjectsSeeder` (every environment): the legacy exams sheet's subjects (الحديث النبوي، السيرة النبوية، البناء الإيماني، فقه الجهاد، فقه العبادات، القرآن الكريم = التلاوة 60 in the exam + التجويد 40 marked by hand); re-run safe. `ExamsDemoSeeder` (local): 12 placeholder questions per difficulty for every exam item (216), a published plan for the first job position, a retired and a published version for the second, a draft for the third.
+
+## 11. Documents module
+
+### 11.1 What it does (D-057)
+
+Files along an application's life: what the candidate brings (ID card image, certificates, CV, official documents) and what the organization issues (contract). A **document type** says whether a file belongs to the **person** (kept for every later application, like the ID card) or to **one application** (the contract), whether it is incoming or outgoing, and from which application status it is required. Each application lists its requirements and what is missing; nothing is blocked (owner's choice).
+
+```
+app/Modules/Documents/
+├── Actions/       ManageDocuments (upload, archive), ManageDocumentTypes
+├── Database/      Migrations (1), Seeders (DocumentTypesSeeder, DocumentsDemoSeeder)
+├── Enums/         DocumentScope (candidate | application), DocumentDirection (incoming | outgoing)
+├── Http/          Controllers (Document, DocumentType), Requests, Resources
+├── Models/        Document, DocumentType
+├── Support/       DocumentFile (content checks), DocumentRequirements
+└── routes.php
+config/documents.php    disk, directory, size limit (10 MB), accepted types
+app/Support/SafeFilename.php   shared with the import
+```
+
+### 11.2 Database schema
+
+| Table | Notes |
+| ----- | ----- |
+| `document_types` | `name_ar`, `name_key` unique, `scope`, `direction`, `required_from_status` (an application status, or null: optional), timestamps, `deleted_at` |
+| `documents` | uuid; `document_type_id`, `candidate_id`, `application_id` (null for a person's document; composite key `(application_id, candidate_id)` → `applications (id, candidate_id)`: the same person's application), `original_filename` (sanitised), `stored_path` unique, `mime_type` (detected), `size_bytes`, `sha256`, `notes`, `uploaded_by`, `created_at`, `archived_at`, `archived_by`, `archive_reason` |
+
+CHECK: archive fields all empty or all set with a real reason. Triggers: a document's application matches its type's scope; a document never changes except being archived once, and is never deleted.
+
+### 11.3 Files
+
+Stored on the private disk (`config('documents.disk')`) as `documents/{candidate_id}/{document_id}.{ext}`, never under the client's name, never served from a public URL. Accepted: PDF, JPEG, PNG, WebP up to 10 MB. The type is detected from the content (`finfo`) and must match the extension; a PDF must start with `%PDF-`, an image must be readable as one. A PHP file named `.pdf`, a PDF named `.png`, or a `.docx` are refused (422 on `file`). Downloads are attachments with the detected type, `nosniff`, `private, no-store`, and are audited (`document.downloaded`).
+
+### 11.4 Requirements
+
+`DocumentRequirements::of($application)`: every active type with `required_now` (the application's history contains its `required_from_status`), `present` (active documents: the person's for a person type, this application's for an application type) and `missing`.
+
+### 11.5 API reference
+
+All under `/api/v1/staff`. Types: read by any staff user, changed with `candidates.manage`. Documents: read and download with `reports.view`, `candidates.manage` or `contracts.manage`; upload and archive with `candidates.manage` or `contracts.manage`.
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET | `/document-types` | `?include_archived=1` |
+| POST | `/document-types` | `name_ar`, `scope`, `direction`, `required_from_status` |
+| PATCH | `/document-types/{id}` | `name_ar`, `direction`, `required_from_status` (never `scope`) |
+| DELETE / POST | `/document-types/{id}` / `.../restore` | Archive / restore |
+| GET | `/candidates/{id}/documents` | The person's documents and all their applications' |
+| POST | `/candidates/{id}/documents` | multipart `document_type_id`, `file`, `notes`; person types only |
+| GET | `/applications/{id}/documents` | `{documents, requirements}` |
+| POST | `/applications/{id}/documents` | multipart; a person type is stored on the person, an application type on this application |
+| GET | `/documents/{id}/download` | The original file |
+| POST | `/documents/{id}/archive` | `reason`; once |
+
+### 11.6 Seeding
+
+`DocumentTypesSeeder` (every environment): the owner's examples (صورة البطاقة الشخصية and الشهادات العلمية required from the nomination, السيرة الذاتية, وثائق رسمية, العقد required from `contract_written`) plus suggestions (صورة شخصية, كتاب الترشيح, قرار الاستثناء). `DocumentsDemoSeeder` (local): placeholder PDFs for half of the demo applications and half of the written contracts.
+
+## 12. Testing
+
+`php artisan test` (PostgreSQL database `recruitment_test`, `RefreshDatabase`): 552 tests. The suite needs no OpenSSL configuration: tests use fixed keys from `tests/Support/TestDeviceKeys.php` (D-023). Shared helpers are in `tests/Support/StaffTestHelpers.php` (devices get a unique MAC and an `os_info`), `tests/Support/RecruitmentTestHelpers.php` (one entry of every list, a valid application payload, granting an individual permission, closing an application) and `tests/Support/LegacyWorkbook.php` (synthetic workbooks in the real template's layout: three title rows, headers on row 5 with its exact texts, navigation column A, other sheets, text/number/date/formula cells; no real data, §24).
 
 Tests never commit, so the deferred `applications_have_history` check is tested with `SET CONSTRAINTS applications_have_history IMMEDIATE`.
 
@@ -679,8 +896,19 @@ Tests never commit, so the deferred `applications_have_history` check is tested 
 | `Unit/RecruitmentNormalisationTest`            | National number and phone number normalisation                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `Feature/Recruitment/NominationNumberTest`     | Format, yearly restart, configurable format, no gaps after rollback                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `Feature/Recruitment/ApplicationLifecycleTest` | Moves, refusals, exceptions and excuses, closing, contract end, stale models, chain order and `from_status`, decision dates, cause columns (real FK, at most one, add/remove, safe names); database: append-only, no direct status write, status follows events, no fork, no second first event, no cross-application link, accountable decisions, dates, new application starts at `awaiting_exam`, no application without history                                                                                     |
-| `Feature/Recruitment/ReferenceDataTest`        | All nine lists: read, change, integer keys, spelling-variant duplicates, archive/restore; areas: district required, unique per district, rename stays in district, list per district; seeders                                                                                                                                                                                                                                                                                                                               |
+| `Feature/Recruitment/ReferenceDataTest`        | Marital statuses read only (change endpoints 404), editable lists mirror the seeded rule; all nine lists: read, change, integer keys, spelling-variant duplicates, archive/restore; areas: district required, unique per district, rename stays in district, list per district; seeders                                                                                                                                                                                                                                                                                                                               |
+| `Feature/Recruitment/ApplicationSearchTest`    | Yes/no filters on false, ranges with bounds and 0, one or several statuses, live/ended, list entries of the application and the person, ages and birth dates, numbers in any digits, who opened it, inactive people, sorting (name, number, date), page size and links, fixed query count per page |
+| `Feature/Identity/StaffUserRegistrationTest`   | Account with its role (hashed password, audit), no role beyond one's own permissions without `users.manage`, digits-only unique personal number, strong confirmed password, `users.add` required |
 | `Feature/Recruitment/ApplicationApiTest`       | Opening applications, nomination numbers, national number as text, digit normalisation, person matching, one live application per person (any position; what frees a person), nothing left behind on failure, closing (permission, reason, dates, refusals), area in district (API and database), permissions, validation, database CHECKs, archived entries, search, filters, date range, history                                                                                                                          |
+| `Feature/Recruitment/CandidateApiTest`         | People list and filters, search in any spelling or digits, one person's applications, corrections (audit, search key, national number conflict, same rules), deactivation (live application refused, reason, once, blocks nomination until reactivated), database CHECK, permissions |
+| `Feature/Recruitment/ApplicationUpdateTest`    | Partial corrections and their audit, fields that never change here, ended application refused, district and area combinations, discontinued studies against stored values, same rules as create, permission |
+| `Feature/SeedersTest`                          | Document types (once) and demo documents (some missing, runs once); Exam subjects (template's six, Quran parts, re-run safe) and demo plans in every state; reference lists (no nominating entities, re-run safe, archived and respelled entries kept, areas per governorate); demo: every status, dates in the past, accountable decisions, nominated twice, deactivated, three import batches with every row kind, runs once, uses the owner's nominating entities |
+| `Unit/Exams/ExamScorerTest`                    | The doc's five worked examples, reasons with subjects, tolerated subject, Quran from weighted parts (482/600), relative weights, exact values at 58/60/70 boundaries, thirds, policy versions, mismatched or impossible marks |
+| `Feature/Exams/ExamSubjectApiTest`             | Subjects with parts, names unique in any spelling (parts per subject), archive/restore, part changes, weight format, permissions, audit |
+| `Feature/Exams/ExamPlanApiTest`                | Drafts (empty, copied, from an older version of the same position only), whole replacement in exam order, questions per difficulty (each ≥ 1), parts assessed in the exam or by hand (defaults and overrides, scale), content checks, one draft per position, archived job position, delete, publish (freeze, audit, every problem listed, no online question, bank shortages per difficulty, archived questions not counted, whole subject draws on all its questions, archived subjects/parts), readiness, retiring the previous version, part defaults never reach a published plan, manual mark in the engine, list filters, permissions, version numbers |
+| `Feature/Exams/ExamDatabaseTest`               | Policy 1 present and append-only; published content frozen; published → retired only; retiring changes nothing else; draft not retired directly; publication CHECKs; one published and one draft per position; part in its subject; every difficulty or none (NULL cannot slip through); manual part has a scale and no questions, exam part the reverse; part defaults checked; draft deletion cascades; question versions append-only and well formed; question part in its subject |
+| `Feature/Exams/ExamQuestionApiTest`            | Version 1, part questions, well-formed questions, corrections as versions (none for same content or difficulty only), answer kept among the options, no moving questions, archive and stats, filters (part `none`, search with wildcards escaped), only `exam_bank.manage` |
+| `Feature/Documents/DocumentApiTest`            | Person documents stored on the person from any screen, application documents on their application, kept for a new application, requirements by status and missing list, content checks (fake PDF, PDF named .png, docx, size), download (headers, content, audit), archive (reason, once, file kept), archived type, permissions, types management; database: never changed except archived once, right person and scope |
 | `Unit/HeaderMatcherTest`                       | Header normalisation, exact before contained, similar headers, unknown headers                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `Feature/Imports/ImportUploadTest`             | Real template layout by header names, a row without national number refuses the file, security (unsafe parts, zip bomb, unsafe formulas injected in the sheet XML, content vs extension, filename, cell bounds, nosniff, rate limit), moved/renamed headers, sheet among others, empty rows, missing columns, no header, no rows, not a workbook, extensions, row limit, same file twice and after cancel (AC-10), batch metadata and default entity, permission, list, original download                                   |
 | `Feature/Imports/ImportRowsTest`               | Values and raw cells, optional area (place kept as details), study years with "ومنقطع", dates (serial, 1904, text, Arabic digits, AC-17), leading zeros (AC-16), digits, yes/no, list spellings, unknown/archived values, health and residence details, area per district, missing values, shared rules, in-file duplicates, live application, person mismatch and confirmation, corrections (audit, re-check, duplicates elsewhere, malformed), revalidation, exclude/include, filters, scoped rows, cancelled batch |
@@ -688,15 +916,18 @@ Tests never commit, so the deferred `applications_have_history` check is tested 
 
 API documentation check: `php artisan scramble:analyze` must report no warnings.
 
-## 11. Known limitations and pending work
+## 13. Known limitations and pending work
 
-- Nominating entities are typed by hand in the template: each new entity must be added to the list before its rows can be approved (OD-13). "تدمر" in the template's governorate list is not a seeded district (OD-14).
+- The legacy exams sheet decides results differently from the analysis doc (no 58 tolerance; exactly 70% passes); the system follows the doc, as the owner confirmed (OD-15). Results copied from old sheets can differ.
+- Exam sessions, candidate accounts and attempts are not built yet; their rules are decided (D-056). Archiving questions after a plan is published can leave the bank short: the session draw will refuse and say what is missing.
+- Documents are not scanned for viruses; scanning and a retention period belong to the deployment, like import files (D-045, D-057).
+- Nominating entities are typed by hand in the template: an entity not in the list (seeded or added through the API) keeps its rows from being approved (OD-13).
 - Antivirus scanning of stored originals and a retention period for files with personal data belong to the deployment (D-045).
 - Upload and approval run inside the request (max 2,000 rows by default). Larger files need a queued approval (D-041).
 - `composer.lock` must be updated on a machine with Packagist access (`composer update phpoffice/phpspreadsheet`).
 - Migrations of Recruitment were changed in place again in Step 4: rebuild development databases with `migrate:fresh --seed`. Before the first production deployment, migrations must become append-only.
 - Candidate accounts and login are not built (D-016); candidate printed codes are a design only.
-- No endpoint edits a person or an application yet (OD-10). Exams, interviews and contracts will move statuses through `ApplicationLifecycle` and add their cause columns (D-038).
+- Exams, interviews and contracts will move statuses through `ApplicationLifecycle` and add their cause columns (D-038); until then the demo's outcomes have no cause record.
 - National numbers are stored in plain text (D-032): protect database backups.
 - The legal moves are checked in PHP; the database guarantees the chain, the status copy, the dates and one live application per person, not which moves are legal.
 - Date filters and the nomination-number year use UTC days (the server is UTC; Damascus is UTC+3).
@@ -707,7 +938,7 @@ API documentation check: `php artisan scramble:analyze` must report no warnings.
 - Production needs trusted-proxy configuration for IP-based throttling.
 - Arabic translations exist for login, recruitment and import messages; framework validation messages do not have an Arabic file yet.
 
-## 12. Changelog
+## 14. Changelog
 
 | Step          | Summary                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -719,3 +950,7 @@ API documentation check: `php artisan scramble:analyze` must report no warnings.
 | 3 (completed) | Owner's schema redesign finished: nine lists with integer keys, areas inside districts with a composite key (D-031, D-034); person vs application data (D-031); plain national number, sensitive permission removed (D-032); chained history with database-maintained status (D-033); Latin-only usernames (D-035); one-day staff tokens (D-036); recruitment tests restored and extended                         |
 | 4             | One live application per person, `contract_ended` and `closed`, closure with `applications.close` (D-037); cause columns instead of `related_type/id` (D-038); `occurred_at` as the real decision date (D-039); Excel import of the legacy template: header detection, cell reading, checks, review, locked all-or-nothing approval, report (D-040, D-041); shared field limits (D-042); PhpSpreadsheet |
 | 4 (follow-up) | Real legacy template: its headers, one sheet loaded, 30 MB uploads; residence area optional (D-043); `studies_discontinued` (D-044); upload security (D-045); a row without national number refuses the file (D-046); `imports.approve` with four eyes (D-047); reference API: enum `{type}`, `include_archived=true`, documented `district_id`; Arabic validation messages                             |
+| 6 (follow-up) | On the owner's commit d247aa4. Complete application search (`ApplicationSearch`, sorting, page size); list rows load all their relations; areas with their district without a query each; deactivation CHECK requires all or nothing (D-049); adding staff users through `RegisterStaffUser` with a role-escalation guard (D-058); route files merge `api` and `auth` middleware where every route is authenticated |
+| 6 | On the owner's commit 77f2408. Null `studies_discontinued` means false (D-044); marital statuses unknown to the change endpoints (D-048); nominating entities seeded by the owner (OD-13); the doc's pass rules confirmed (OD-15); plans: one session, parts marked by hand, easy/medium/hard (D-054); question bank (D-055); sessions decided (D-056); documents (D-057) |
+| 5 (Exams part 1) | Subjects and parts; exam plans per job position, versioned and frozen when published (D-053); pass policy as append-only data and the exact scoring engine (D-052); open questions OD-15 to OD-17 |
+| 4 (follow-up 2) | Marital statuses read-only through the API (D-048); people and live applications corrected, people deactivated (D-049); seeders for every list and local demo data (D-050); hexadecimal fingerprint rule (D-051); `studies_discontinued` defaults to false in the model |

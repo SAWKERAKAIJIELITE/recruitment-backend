@@ -15,13 +15,11 @@ use App\Modules\Recruitment\Http\Requests\UpdateApplicationRequest;
 use App\Modules\Recruitment\Http\Resources\ApplicationResource;
 use App\Modules\Recruitment\Http\Resources\ApplicationSummaryResource;
 use App\Modules\Recruitment\Models\Application;
-use App\Modules\Recruitment\Support\NationalNumber;
-use App\Support\ArabicText;
+use App\Modules\Recruitment\Queries\ApplicationSearch;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Date;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class ApplicationController extends Controller
@@ -29,63 +27,31 @@ class ApplicationController extends Controller
     /**
      * Search applications
      *
-     * `q` matches a nomination number exactly, or part of a name in any spelling (أ/ا, ى/ي, ة/ه).
-     * `national_number` is an exact match (Arabic-Indic digits accepted). Newest first, 25 per page.
+     * Every filter is optional; they combine with AND, and 0 or false filter too.
+     *
+     * - `q`: a nomination number exactly, or part of a name in any spelling (أ/ا, ى/ي, ة/ه).
+     * - `national_number`, `phone_number`, `existing_employee_number`: exact (Arabic-Indic digits accepted);
+     *   `has_employee_number`: 1 or 0.
+     * - `status`: one status, or several (`status[]=exam_failed&status[]=exam_absent`); `live`: 1 (not ended) or 0.
+     * - List entries by id: `job_position_id`, `nominating_entity_id`, `application_category_id`,
+     *   `academic_qualification_id`, `specialization_id`, `marital_status_id`, `health_condition_id`,
+     *   `residence_district_id`, `residence_area_id`, and the person's `birth_place_id`.
+     * - Yes/no (1/0, true/false): `studies_discontinued`, `works_for_other_government_entity`, `full_commitment`,
+     *   `overnight_work`, `candidate_active`.
+     * - Ranges (included): `studying_years_min`/`_max`, `quran_parts_min`/`_max`, `birth_date_from`/`_to`,
+     *   `age_min`/`age_max` (whole years today), `from`/`to` (opening date, UTC days). `studying_years`: exact.
+     * - `created_by`: the staff user who opened it.
+     * - `sort`: `created_at` (default, newest first), `nomination_number`, `full_name`, `birth_date`, `status`;
+     *   `direction`: `asc` or `desc`. `per_page`: 5 to 100 (25).
      */
     public function index(Request $request): AnonymousResourceCollection
     {
-        $filters = $request->validate([
-            'q' => ['nullable', 'string', 'max:150'],
-            'national_number' => ['nullable', 'string', 'max:30'],
-            'status' => ['nullable', Rule::enum(ApplicationStatus::class)],
-            'job_position_id' => ['nullable', 'integer'],
-            'nominating_entity_id' => ['nullable', 'integer'],
-            'application_category_id' => ['nullable', 'integer'],
-            'residence_district_id' => ['nullable', 'integer'],
-            'residence_area_id' => ['nullable', 'integer'],
-            'academic_qualification_id' => ['nullable', 'integer'],
-            'specialization_id' => ['nullable', 'integer'],
-            'marital_status_id' => ['nullable', 'integer'],
-            'health_condition_id' => ['nullable', 'integer'],
-            'studying_years' => ['nullable', 'integer'],
-            'full_commitment' => ['nullable', Rule::in(['true', 'false'])],
-            'from' => ['nullable', 'date_format:Y-m-d'],
-            'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
-        ]);
+        ApplicationSearch::prepare($request);
+        $filters = $request->validate(ApplicationSearch::rules());
 
-        $applications = Application::query()
-            ->with([
-                'candidate',
-                ...array_slice(ApplicationResource::RELATIONS, 2)
-            ])
-            ->when($filters['q'] ?? null, function ($query, string $q) {
-                $like = '%' . addcslashes(ArabicText::searchKey($q), '\\%_') . '%';
-
-                $query->where(fn($inner) => $inner
-                    ->where('nomination_number', ArabicText::digitsToAscii(trim($q)))
-                    ->orWhereHas('candidate', fn($candidate) => $candidate->where('name_search_key', 'like', $like)));
-            })
-            ->when($filters['national_number'] ?? null, fn($query, string $number) => $query->whereHas(
-                'candidate',
-                fn($candidate) => $candidate->where('national_number', NationalNumber::normalize($number)),
-            ))
-            ->when($filters['status'] ?? null, fn($query, string $status) => $query->where('current_status', $status))
-            ->when($filters['job_position_id'] ?? null, fn($query, $id) => $query->where('job_position_id', $id))
-            ->when($filters['nominating_entity_id'] ?? null, fn($query, $id) => $query->where('nominating_entity_id', $id))
-            ->when($filters['application_category_id'] ?? null, fn($query, $id) => $query->where('application_category_id', $id))
-            ->when($filters['residence_district_id'] ?? null, fn($query, $id) => $query->where('residence_district_id', $id))
-            ->when($filters['residence_area_id'] ?? null, fn($query, $id) => $query->where('residence_area_id', $id))
-            ->when($filters['academic_qualification_id'] ?? null, fn($query, $id) => $query->where('academic_qualification_id', $id))
-            ->when($filters['specialization_id'] ?? null, fn($query, $id) => $query->where('specialization_id', $id))
-            ->when($filters['marital_status_id'] ?? null, fn($query, $id) => $query->where('marital_status_id', $id))
-            ->when($filters['health_condition_id'] ?? null, fn($query, $id) => $query->where('health_condition_id', $id))
-            ->when($filters['studying_years'] ?? null, fn($query, $studying_years) => $query->where('studying_years', $studying_years))
-            ->when(array_key_exists('full_commitment', $filters), fn($query) => $query->where('full_commitment', $request->boolean('full_commitment')))
-            ->when($filters['from'] ?? null, fn($query, string $date) => $query->where('created_at', '>=', $date))
-            ->when($filters['to'] ?? null, fn($query, string $date) => $query->where('created_at', '<', now()->parse($date)->addDay()->toDateString()))
-            ->orderByDesc('created_at')
-            ->orderByDesc('id')
-            ->paginate(25);
+        $applications = ApplicationSearch::apply(Application::query()->with(ApplicationSummaryResource::RELATIONS), $filters)
+            ->paginate((int) ($filters['per_page'] ?? 25))
+            ->withQueryString();
 
         return ApplicationSummaryResource::collection($applications);
     }

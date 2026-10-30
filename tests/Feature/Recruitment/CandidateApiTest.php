@@ -189,12 +189,28 @@ class CandidateApiTest extends TestCase
         $this->asStaff($staff)->postJson(self::URL . "/{$person->id}/deactivate", ['reason' => 'سبب'])->assertStatus(422);
     }
 
-    public function test_the_database_requires_a_reason_for_an_inactive_person(): void
+    public function test_the_database_requires_when_who_and_why_for_an_inactive_person_and_nothing_for_an_active_one(): void
     {
         $person = $this->person();
+        $staff = $this->hiringStaff()->id;
 
-        $this->expectException(QueryException::class);
+        foreach ([
+            ['is_active' => false, 'deactivated_at' => now()],                                                    // no one, no reason
+            ['is_active' => false, 'deactivated_at' => now(), 'deactivation_reason' => 'سبب'],                    // no one
+            ['is_active' => false, 'deactivated_at' => now(), 'deactivated_by' => $staff, 'deactivation_reason' => ' '],
+            ['is_active' => false, 'deactivated_by' => $staff, 'deactivation_reason' => 'سبب'],                   // no date
+            ['is_active' => true, 'deactivated_by' => $staff],                                                     // active but "deactivated by"
+            ['is_active' => true, 'deactivation_reason' => 'سبب'],
+        ] as $values) {
+            try {
+                DB::transaction(fn() => DB::table('candidates')->where('id', $person->id)->update($values));
+                $this->fail('The database accepted ' . json_encode(array_keys($values)));
+            } catch (QueryException) {
+                $this->addToAssertionCount(1);
+            }
+        }
 
-        DB::table('candidates')->where('id', $person->id)->update(['is_active' => false, 'deactivated_at' => now()]);
+        DB::table('candidates')->where('id', $person->id)->update(['is_active' => false, 'deactivated_at' => now(), 'deactivated_by' => $staff, 'deactivation_reason' => 'سبب']);
+        $this->assertFalse($person->fresh()->is_active);
     }
 }

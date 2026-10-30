@@ -17,4 +17,5 @@ return [
     'password' => 'The provided password is incorrect.',
     'throttle' => 'Too many login attempts. Please try again in :seconds seconds.',
 
+    'role_beyond_own' => 'You cannot give a role with permissions you do not hold: :permissions.',
 ];

@@ -11,7 +11,6 @@ use App\Modules\Recruitment\Models\JobPosition;
 use App\Modules\Recruitment\Models\MaritalStatus;
 use App\Modules\Recruitment\Models\NominatingEntity;
 use App\Modules\Recruitment\Models\Specialization;
-use App\Support\ArabicText;
 use Illuminate\Database\Eloquent\Collection;
 use RuntimeException;
 

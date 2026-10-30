@@ -41,7 +41,13 @@ return new class extends Migration {
         DB::statement("ALTER TABLE candidates ADD CONSTRAINT candidates_full_name_format CHECK (full_name !~ '[0-9٠-٩۰-۹]' AND char_length(btrim(full_name)) >= 3)");
         DB::statement("ALTER TABLE candidates ADD CONSTRAINT candidates_mother_name_format CHECK (mother_name !~ '[0-9٠-٩۰-۹]' AND char_length(btrim(mother_name)) >= 3)");
         DB::statement("ALTER TABLE candidates ADD CONSTRAINT candidates_birth_date_range CHECK (birth_date > DATE '1950-01-01')");
-        DB::statement("ALTER TABLE candidates ADD CONSTRAINT candidates_deactivation_explained CHECK (is_active = (deactivated_at IS NULL) AND (is_active OR deactivated_by IS  NOT NULL) AND (is_active OR btrim(coalesce(deactivation_reason, '')) <> ''))");
+        // Active: no deactivation data at all. Inactive: when, who and a real reason, all three (D-049).
+        DB::statement(<<<'SQL'
+            ALTER TABLE candidates ADD CONSTRAINT candidates_deactivation_explained CHECK (
+                (is_active AND deactivated_at IS NULL AND deactivated_by IS NULL AND deactivation_reason IS NULL)
+                OR (NOT is_active AND deactivated_at IS NOT NULL AND deactivated_by IS NOT NULL AND btrim(coalesce(deactivation_reason, '')) <> '')
+            )
+            SQL);
     }
 
     public function down(): void

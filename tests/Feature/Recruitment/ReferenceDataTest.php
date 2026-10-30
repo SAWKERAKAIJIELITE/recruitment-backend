@@ -225,7 +225,8 @@ class ReferenceDataTest extends TestCase
 
         $this->asStaff($manager)->postJson($this->url('areas'), ['name_ar' => 'الجديدة', 'district_id' => $damascus->id])
             ->assertCreated()
-            ->assertJsonPath('item.district_id', ['id'=>$damascus->id,'name_ar'=>$damascus->name_ar, 'archived_at' => $damascus->deleted_at]);
+            ->assertJsonPath('item.district_id', $damascus->id)
+            ->assertJsonPath('item.district', ['id' => $damascus->id, 'name_ar' => $damascus->name_ar, 'archived' => false]);
         $this->asStaff($manager)->postJson($this->url('areas'), ['name_ar' => 'الجديدة', 'district_id' => $aleppo->id])
             ->assertCreated();
 
@@ -259,7 +260,8 @@ class ReferenceDataTest extends TestCase
         $this->asStaff($nobody)->getJson($this->url('areas'))->assertJsonCount(3, 'data');
         $this->asStaff($nobody)->getJson($this->url('areas') . "?district_id={$damascus->id}")
             ->assertJsonCount(2, 'data')
-            ->assertJsonPath('data.0.district_id', ['id'=>$damascus->id,'name_ar'=>$damascus->name_ar, 'archived_at' => $damascus->deleted_at]);
+            ->assertJsonPath('data.0.district_id', $damascus->id)
+            ->assertJsonPath('data.0.district.name_ar', $damascus->name_ar);
     }
 
     // ---- default lists ----

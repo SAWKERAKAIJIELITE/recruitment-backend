@@ -12,6 +12,21 @@ use Illuminate\Http\Resources\Json\JsonResource;
  */
 class ApplicationSummaryResource extends JsonResource
 {
+    /** Everything a row shows: load it with the page, so 25 rows cost a fixed number of queries. */
+    public const RELATIONS = [
+        'candidate.birthPlace',
+        'candidate.deactivator',
+        'nominatingEntity',
+        'jobPosition',
+        'category',
+        'academicQualification',
+        'specialization',
+        'maritalStatus',
+        'healthCondition',
+        'residenceDistrict',
+        'residenceArea',
+    ];
+
     public function toArray(Request $request): array
     {
         return [

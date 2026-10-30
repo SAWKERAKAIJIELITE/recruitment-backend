@@ -8,6 +8,7 @@ use App\Modules\Recruitment\Enums\EditableReferenceType;
 use App\Modules\Recruitment\Enums\ReferenceType;
 use App\Modules\Recruitment\Http\Requests\ReferenceItemRequest;
 use App\Modules\Recruitment\Http\Resources\ReferenceItemResource;
+use App\Modules\Recruitment\Models\Area;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -37,9 +38,11 @@ class ReferenceDataController extends Controller
 
         $query = $type->model()::query()
             ->when($request->boolean('include_archived'), fn($query) => $query->withTrashed())
+            // Areas show their district: loaded once for the whole list, not once per area.
+            ->when($type->isScopedToDistrict(), fn($query) => $query->with('district'))
             ->when(
                 $type->isScopedToDistrict() && isset($filters['district_id']),
-                fn($query) => $query->where('district_id', $filters['district_id'])->with('district'),
+                fn($query) => $query->where('district_id', $filters['district_id']),
             )
             ->orderBy('name_key');
 
@@ -63,7 +66,7 @@ class ReferenceDataController extends Controller
         );
 
         // One new entry (not a list), answered with 201 Created.
-        return ReferenceItemResource::make($item)->response()->setStatusCode(201);
+        return ReferenceItemResource::make($this->withDistrict($item))->response()->setStatusCode(201);
     }
 
     /** Rename an entry. */
@@ -71,7 +74,7 @@ class ReferenceDataController extends Controller
     {
         $list = $type->type();
 
-        return new ReferenceItemResource($manage->rename($list, $this->find($list, $id), $request->validated('name_ar')));
+        return new ReferenceItemResource($this->withDistrict($manage->rename($list, $this->find($list, $id), $request->validated('name_ar'))));
     }
 
     /** Archive an entry: it leaves the lists but stays valid for existing applications. */
@@ -79,7 +82,7 @@ class ReferenceDataController extends Controller
     {
         $list = $type->type();
 
-        return new ReferenceItemResource($manage->archive($this->find($list, $id)));
+        return new ReferenceItemResource($this->withDistrict($manage->archive($this->find($list, $id))));
     }
 
     /** Bring an archived entry back. */
@@ -87,7 +90,13 @@ class ReferenceDataController extends Controller
     {
         $list = $type->type();
 
-        return new ReferenceItemResource($manage->restore($this->find($list, $id)));
+        return new ReferenceItemResource($this->withDistrict($manage->restore($this->find($list, $id))));
+    }
+
+    /** An area is shown with its district. */
+    private function withDistrict(Model $item): Model
+    {
+        return $item instanceof Area ? $item->loadMissing('district') : $item;
     }
 
     private function find(ReferenceType $type, int $id): Model

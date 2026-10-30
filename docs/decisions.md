@@ -393,6 +393,7 @@ A living record of the design decisions made while building the backend and data
 - **Status:** Accepted (owner's answer)
 - **Context:** the template's study-years list offers "1" … "6" and "1 ومنقطع" … "6 ومنقطع" (studied N years, then stopped).
 - **Decision:** new boolean `applications.studies_discontinued` (NOT NULL, default false). CHECK: discontinued needs `studying_years`. The import reads "3 ومنقطع" (also "3 منقطع", Arabic-Indic digits) as 3 years + discontinued; the API accepts `studies_discontinued` and then requires `studying_years`.
+- **Update (owner, Step 6):** the API accepts `studies_discontinued: null` (or no key) as false, so the frontend can always send the field; opening and correcting an application both turn null into false.
 
 ### D-045 Security of uploaded workbooks
 
@@ -423,6 +424,120 @@ A living record of the design decisions made while building the backend and data
 
 ---
 
+### D-048 Marital statuses are seeded by the owner and read-only through the API
+
+- **Status:** Accepted (owner: "I don't want marital_status reference data to be added from api, I will seed it to the database")
+- **Decision:** `ReferenceType::isEditableThroughApi()` is false for `marital-statuses`. Reading works as for every list; adding, renaming, archiving and restoring answer 403 `recruitment.list_is_seeded`. `MaritalStatusesSeeder` is the only way to change the list.
+- **Why:** the list is fixed by law and small; letting staff add spellings or values only creates noise in reports.
+- **Consequences:** a new list that should also be fixed is one more case in `isEditableThroughApi()`. The import still reads the values (its lookup is unchanged).
+- **Update (owner, Step 6: "don't show marital_status in the api also"; the owner chose to keep reading):** the change endpoints bind `{type}` to `EditableReferenceType` (every list but marital statuses), so `marital-statuses` there is an unknown list (404) and is absent from the API documentation. `GET /reference/marital-statuses` stays for the application form's dropdown. The 403 message `list_is_seeded` is gone.
+
+### D-049 Correcting people and applications; deactivating a person
+
+- **Status:** Accepted (closes OD-10)
+- **Context:** staff must fix typing mistakes after an application is opened, and the owner needs a way to stop a person from being nominated again without deleting anything.
+- **Decision:**
+  - `PATCH /candidates/{id}` corrects the person (`national_number`, `full_name`, `mother_name`, `birth_date`, `birth_place_id`, `notes`); `PATCH /applications/{id}` corrects what was declared in a **live** application. Send only what changes; each field follows the same rule as when the application is opened (`StoreApplicationRequest::personRules()` / `applicationRules()`, and through them `ApplicationRules`, D-042). Combined rules are checked on the result: the area must belong to the (possibly new) district, discontinued studies need the years.
+  - Not editable there: the person of an application, its nomination number, its status (only `ApplicationLifecycle`, D-033), and anything of an ended application (422 `recruitment.application_ended`: an ended file is evidence).
+  - A national number may be corrected, but never to another person's (422 `recruitment.national_number_taken`); the change takes the advisory lock of both numbers (D-041).
+  - `POST /candidates/{id}/deactivate` (body `reason`) and `/activate`. A person with a live application cannot be deactivated (end the application first). An inactive person cannot be nominated, by the API or by an import (`candidate_inactive`). The columns `deactivated_at`, `deactivated_by`, `deactivation_reason` say when, who and why; a CHECK requires all three (with a real reason) whenever `is_active` is false and none of them when it is true (the owner added `deactivated_by`; the symmetric form followed).
+  - Every change is audited with its before and after values (`candidate.updated`, `application.updated`, `candidate.deactivated`, `candidate.activated`).
+- **Why:** correcting in place keeps one record per person (the national number stays the identity); deactivating instead of deleting keeps every past application and its history intact.
+- **Rejected:** editing an ended application (its data is what the decisions were based on); deleting people.
+- **Permissions:** reading people needs `reports.view` or `candidates.manage`; changing them needs `candidates.manage`.
+
+### D-050 Seeders: reference lists everywhere, demo data locally
+
+- **Status:** Accepted
+- **Decision:**
+  - `ReferenceDataSeeder` runs in every environment and seeds every managed list except the nominating entities, which the owner seeds (OD-13): districts, areas, marital statuses, job positions, categories, academic qualifications, specializations, health conditions. Each list is the legacy template's values (its hidden `_Lists` sheet, or the values its rows use) plus clearly separated suggestions (`FROM_TEMPLATE` / `SUGGESTED` constants). Entries are matched by normalized name, archived ones included (`SeedsReferenceList`), so running again never duplicates, never restores what staff archived and never overwrites a respelling.
+  - `RecruitmentDemoSeeder` and `ImportsDemoSeeder` run only with `APP_ENV=local`. They create invented people (national numbers starting with `09`), applications in every status with dated histories, a person nominated twice, a deactivated person, and three import batches (approved, cancelled, pending with every kind of row). They go through the real actions: the triggers accept history only that way, so the demo follows the same rules as real data. Dates are produced by moving the clock back while seeding. Each runs once.
+  - When no nominating entity exists yet, the demo adds the five names used in the template, matched by normalized name so the owner's seeder (if it also matches by name) adds nothing twice.
+- **Why:** an empty database shows nothing on screens or reports; a demo that bypassed the actions would be data the real system can never produce.
+- **Update (Step 6):** the owner added `NominatingEntitiesSeeder` to `ReferenceDataSeeder`, so every list is seeded and the demo no longer adds entities. `ExamSubjectsSeeder` and `DocumentTypesSeeder` also run in every environment; `ExamsDemoSeeder` and `DocumentsDemoSeeder` locally.
+
+### D-051 Fingerprints are checked as hexadecimal
+
+- **Status:** Accepted
+- **Decision:** `App\Rules\HexString` validates hexadecimal text, optionally grouped with spaces or dashes, with an exact number of digits (32 for the device fingerprint shown on screen). Laravel has no general hexadecimal rule (`hex_color` accepts colours only). `ApproveDevice` compares `HexString::digits()` (separators removed, uppercase) with the stored fingerprint.
+- **Why:** a mistyped letter is reported as a format error before the comparison, and stripping every non-hex character (the earlier code) could turn garbage into a valid-looking value.
+
+---
+
+### D-052 The pass rules are versioned data; the engine decides on exact fractions
+
+- **Status:** Accepted (analysis doc §04: settled rules, formula, worked examples, "the pass policy version is stored with every result"; the owner confirmed the doc's rules over the legacy sheet's, OD-15)
+- **Decision:**
+  - `exam_pass_policies` holds the rules as versions: pass mark, tolerance floor, number of tolerated subjects, the average to exceed. Version 1 (60, 58, 1, 70) is inserted by the migration, because every environment needs it. Rows are append-only (trigger); a new rule is a new version. A plan is published under the current version and keeps it; results (later) will store it too.
+  - `ExamScorer` is pure PHP (no database, no clock). Part score = achieved / max × 100; subject score = Σ(part score × weight) / Σ weight; average = Σ subject scores / number of subjects (subjects weigh equally; a subject with parts counts once). Failed when any subject is below the floor, or more subjects than tolerated are below the pass mark, or the average is not strictly above the threshold. Every reason that applies is returned, with the subjects concerned.
+  - Every value is an exact fraction (`brick/math` `BigRational`, already installed with Laravel); nothing is rounded before a comparison. 59.995 is in the tolerance band although it displays as 60.00, and an average of 70.0003 passes although it displays as 70.00. Marks are integers or decimal strings, never floats.
+  - The engine only gives the computed result. An exception is a separate administrative decision (D-037 `exception`); it never rewrites the computed result (§07).
+- **Why:** reproducible results (an old result can be recomputed under its own policy) and no rounding disagreements at the boundaries the rules care about (58, 60, 70).
+- **Rejected:** PHP floats (59.99 is not exact); bcmath/gmp (not installed here); rules as constants in code (past results would change with them).
+
+### D-053 Exam plans: one per job position, versioned, frozen when published
+
+- **Status:** Accepted (analysis doc §05 "Exam Plan Version: frozen when an attempt is scheduled or started")
+- **Decision:**
+  - Subjects (`exam_subjects`) and their parts (`exam_subject_parts`, with a default weight) are managed like the lists: integer keys, unique normalized names (parts per subject), archived instead of deleted.
+  - A plan version belongs to a job position and lists its subjects in exam order. A subject is scored as a whole (its question count) or from parts (each part: weight and question count). The version stores its own copy of every weight, so editing a part's default never changes a published plan.
+  - Life: `draft` → `published` → `retired`. At most one draft and one published version per job position (partial unique indexes). Publishing checks completeness (at least one subject, question counts, durations matching the session mode, nothing archived), then retires the previous published version in the same transaction. Every operation locks the job position row, so version numbers and the one-draft/one-published rules never race.
+  - The database refuses any change to a published or retired version and to its subjects and parts, except retiring (triggers), and only drafts can be deleted. A plan part must be a part of its plan subject's subject (composite foreign keys, like an area in its district).
+  - ~~`session_mode`~~ (Step 6): replaced by one session per plan, see D-054.
+- **Why:** bookings and results will point at a version; what a candidate was examined on must never change afterwards.
+- **Consequences:** the question-bank check at publishing ("not enough questions: refuse to publish instead of silently asking fewer", §05) comes with the question bank (Exams part 2).
+
+---
+
+### D-054 One session; parts marked by hand; easy, medium and hard questions
+
+- **Status:** Accepted (owner, Step 6: "all in one session except the تجويد, the candidate in the same day will take it oral not in Exam page, so the result of it will be entered manually"; "the exam must contain spread across all difficulties (easy, medium and hard)")
+- **Decision:**
+  - A plan has one session and one duration. `session_mode` and per-subject durations are gone.
+  - A part is assessed `exam` or `manual` (analysis doc §05: a part has "a weight inside its subject and an assessment pattern"). The part has a default (`default_assessment`; التجويد is `manual` in the seeder), and the plan stores its own copy. A manual part has no questions and has `max_score`, the scale staff mark it out of (100 by default, 40 in the demo as in the legacy sheet). The engine takes the entered mark as `Mark::of(achieved, max_score)`, so التجويد still weighs 40 inside القرآن الكريم.
+  - Every exam subject or part asks easy, medium and hard questions, each at least once (CHECKs on the plan rows; all null only in an unfinished draft or for a subject scored from parts). The counts are frozen with the version.
+  - Publishing requires at least one online question and enough active questions of each difficulty in the bank for every exam item (§05: "when the bank lacks questions, publishing is refused and the shortage shown instead of silently asking fewer"). A subject scored as a whole draws on all its questions; a part on its own.
+- **Why:** the owner's exam day: one online session, التجويد oral and recorded by staff.
+- **Consequences:** recording manual marks belongs to attempts/results (next step). The analysis doc §04 said "no oral grade inside the exam"; التجويد is outside the online exam, as the owner described.
+
+### D-055 The question bank
+
+- **Status:** Accepted (analysis doc §05 "Question", "Question Version": "the version used in an attempt is never modified")
+- **Decision:** a question belongs to a subject (optionally to one of its parts; composite key) and has a difficulty. Its prompt, 2 to 6 options and single correct option are versions, append-only in the database; a correction adds a version, same content adds none. The difficulty may be reclassified in place; the subject and part never change. Archived questions are not counted or drawn. Only `exam_bank.manage` reads the bank (it holds the answers); a candidate will never receive `correct_option`.
+- **Rejected:** editing a question in place (a session that drew it would change); options in their own table (a fixed small list read and written together: a CHECKed jsonb array is simpler).
+
+### D-056 Exam sessions (decided; built next)
+
+- **Status:** Accepted (owner, Step 6: "the questions of the exam are randomized in order only (same questions) between candidates"; "the manager can add extended time to all applicants at the time for an exam session"; options are not shuffled)
+- **Decision (to build with sessions and attempts):**
+  - An exam session is a sitting of one published plan version at a time and place, with its candidates (applications at `awaiting_exam`).
+  - The questions are drawn **once per session** from the bank by the plan's counts, and the drawn question versions are frozen for the session: every candidate of the session gets the **same questions**, each in a **different order** (a per-attempt permutation, stored). The options keep their written order.
+  - The session's end can be **extended for everyone** by a manager (`attempts.extend`, individual permission), with a reason; it moves every running attempt's server deadline and is audited (§07 "extending exam time": duration, reason, attempt). Extending one attempt stays possible too.
+  - Manual parts (التجويد) are marked by staff for each candidate of the session.
+- **Why:** fairness between candidates of a sitting, while making copying from a neighbour harder.
+
+### D-057 Documents of people and applications
+
+- **Status:** Accepted (owner, Step 6: "a section to upload required/output documents for each candidate/application along application lifecycle, for example: ID card image, certifications, resumes, official documents, contracts"; missing documents are shown, never blocking)
+- **Decision:**
+  - Document types: `scope` `candidate` (the person's: kept for every later application) or `application` (one application's: the contract); `direction` `incoming` (brought by the candidate) or `outgoing` (issued); `required_from_status` (an application status, or null: optional). The scope never changes.
+  - A document records the upload (sanitised original name, detected type, size, SHA-256, who, when, notes). It is never changed or deleted (trigger); it is archived once with a reason and stays as evidence. The application, when there is one, is the same person's (composite key); the type's scope decides whether there is one (trigger).
+  - Files go to the private disk under generated names, accepted only as PDF, JPEG, PNG or WebP (10 MB), checked by content, never by extension alone. Downloads are attachments, `nosniff`, `no-store`, audited.
+  - Requirements per application: a type is required once the application's history contains its status; present means an active document (the person's or this application's, by scope); missing ones are listed.
+  - Reading needs `reports.view`, `candidates.manage` or `contracts.manage`; uploading and archiving `candidates.manage` or `contracts.manage`; types are managed with `candidates.manage`.
+- **Rejected:** blocking status moves on missing documents (owner's choice); deleting files (evidence of the file's history).
+- **Consequences:** virus scanning and a retention period are for the deployment, as for import files (D-045).
+
+---
+
+### D-058 Adding staff users
+
+- **Status:** Accepted (the owner added `users.add` and `POST /api/v1/staff/new`)
+- **Decision:** `RegisterStaffUser` creates the account and attaches its first role in one transaction and logs `access.user_created`. Whoever holds `users.add` without `users.manage` may only give a role whose permissions they all hold: otherwise `users.add` could create a system administrator and so reach every permission. The personal number is 4 to 50 digits (`numeric` would also accept `-12`, `1.5`, `1e5`). The password must be strong and is checked against known leaks (`uncompromised()`).
+- **Consequences:** `uncompromised()` calls the Have I Been Pwned range API over the internet (only a hash prefix leaves the server). Without internet access a registration can wait up to 30 seconds (its timeout) and then the password is let through unchecked; drop it if the server has no internet access by policy. A new account still needs an approved device to log in (D-017).
+
+---
+
 ## Resolved and deferred questions
 
 | ID    | Question                                                                                            | Outcome                                                                                                                                                                                                                                                  |
@@ -436,11 +551,14 @@ A living record of the design decisions made while building the backend and data
 | OD-7  | Repeat applications: may a person apply again for a job title they already applied for, and when?   | **Resolved:** one live application per person; a new one only after the contract ended without renewal or authorised staff closed the application (D-037).                                                                                         |
 | OD-8  | Format rule for the national ID (length, check digits)                                              | **Resolved:** exactly 11 digits, stored as text (D-032). No check digit is validated.                                                                                                                                                              |
 | OD-9  | Operational: who keeps `APP_KEY` (and the optional blind-index key) safe?                         | **No longer applies to recruitment data:** nothing in it is encrypted since D-032. `APP_KEY` still signs and encrypts framework data; keep it backed up.                                                                                         |
-| OD-10 | Editing a candidate's file, and Excel import                                                        | **Import done (D-040, D-041).** Editing a person or an application through the API is still to do; it must respect D-031 (an area's district) and D-033 (status changes only through the lifecycle).                                               |
+| OD-10 | Editing a candidate's file, and Excel import | **Resolved:** import (D-040, D-041); correcting people and live applications, and deactivating people (D-049). |
 | OD-11 | The real header row of the legacy "بيانات المرشحين" sheet                             | **Resolved:** checked on the owner's anonymised template: header row 5, data from row 6, dates as serials, national numbers and phones as text, yes/no as نعم/لا, residence place free text (D-043), study years with "ومنقطع" (D-044). |
 | OD-12 | Phone numbers stored as numbers in the legacy file                                                  | **Resolved for the template:** its phone and national number columns are text-formatted, so leading zeros survive. A file that stores them as numbers still gets each row flagged.                                                                 |
-| OD-13 | Nominating entities are typed by hand in the template ("تُكتب يدويًا")                   | **Open:** spelling variants are matched (normalisation), but every new entity must be added to the list before its rows can be approved. Consider seeding the known entities.                                                                      |
-| OD-14 | The template's governorate list contains "تدمر", which is not one of the 14 seeded governorates | **Open:** add it as a district if it is meant to be one, or map it to حمص.                                                                                                                                                                      |
+| OD-13 | Nominating entities are typed by hand in the template ("تُكتب يدويًا") | **Resolved:** the owner's `NominatingEntitiesSeeder` (in `ReferenceDataSeeder`) seeds the template's five; spelling variants are matched by normalisation. |
+| OD-14 | The template's governorate list contains "تدمر", which is not one of the 14 seeded governorates | **Resolved:** the owner added تدمر to `DistrictsSeeder` (15 entries). |
+| OD-15 | The legacy exams sheet computes results differently from the analysis doc | **Resolved (owner):** the doc's rules are right (D-052): one subject from 58 tolerated, average strictly above 70. Results copied from old sheets can differ. |
+| OD-16 | One exam session for all subjects, or a session per subject? | **Resolved (owner):** one session; التجويد is oral the same day and marked by hand (D-054). |
+| OD-17 | Difficulty levels in the question distribution | **Resolved (owner):** easy, medium and hard, every exam subject or part asks all three (D-054). |
 
 ---
 

@@ -10,7 +10,7 @@ class RegisterUserRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;   // the can:users.manage route middleware decides
+        return true;   // the can:users.add route middleware decides; RegisterStaffUser limits the role
     }
 
     public function rules(): array
@@ -18,7 +18,8 @@ class RegisterUserRequest extends FormRequest
         $name = ['string', 'min:' . R::NAME_MIN, 'max:' . R::NAME_MAX, 'not_regex:' . R::NAME_FORBIDDEN];
 
         return [
-            'personal_number' => ['required', 'string', 'max_digits:50', 'min_digits:4', 'numeric', 'unique:staff_users,personal_number'],
+            // Digits only: "numeric" would also accept "-12", "1.5" and "1e5".
+            'personal_number' => ['required', 'string', 'regex:/^[0-9]{4,50}$/', 'unique:staff_users,personal_number'],
             'first_name' => ['required', ...$name],
             'last_name' => ['required', ...$name],
             'is_active' => ['required', 'boolean'],
