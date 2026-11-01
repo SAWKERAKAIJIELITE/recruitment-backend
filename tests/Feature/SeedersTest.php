@@ -11,10 +11,15 @@ use App\Modules\Exams\Database\Seeders\ExamSubjectsSeeder;
 use App\Modules\Exams\Models\ExamPlanVersion;
 use App\Modules\Exams\Models\ExamSubject;
 use App\Modules\Identity\Database\Seeders\DevUsersSeeder;
+use App\Modules\Interviews\Database\Seeders\InterviewsDemoSeeder;
+use App\Modules\Interviews\Models\Interview;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use App\Modules\Imports\Database\Seeders\ImportsDemoSeeder;
 use App\Modules\Imports\Enums\ImportRowStatus;
 use App\Modules\Imports\Models\ImportBatch;
+use App\Modules\Contracts\Database\Seeders\ContractsDemoSeeder;
+use App\Modules\Contracts\Database\Seeders\ContractTypesSeeder;
+use App\Modules\Contracts\Models\Contract;
 use App\Modules\Recruitment\Database\Seeders\AreasSeeder;
 use App\Modules\Recruitment\Database\Seeders\JobPositionsSeeder;
 use App\Modules\Recruitment\Database\Seeders\RecruitmentDemoSeeder;
@@ -37,7 +42,7 @@ class SeedersTest extends TestCase
     private function seedDemo(): void
     {
         Storage::fake(config('imports.disk'));
-        $this->seed([RolesAndPermissionsSeeder::class, ReferenceDataSeeder::class, DevUsersSeeder::class, RecruitmentDemoSeeder::class, ImportsDemoSeeder::class]);
+        $this->seed([RolesAndPermissionsSeeder::class, ReferenceDataSeeder::class, ContractTypesSeeder::class, DevUsersSeeder::class, RecruitmentDemoSeeder::class, ImportsDemoSeeder::class, ContractsDemoSeeder::class]);
     }
 
     // ---- reference data (every environment) ----
@@ -215,5 +220,38 @@ class SeedersTest extends TestCase
 
         $this->seed(DocumentsDemoSeeder::class);
         $this->assertSame($count, Document::query()->count());
+    }
+
+    // ---- interviews ----
+
+    public function test_the_interviews_demo_records_results_through_the_lifecycle(): void
+    {
+        $this->seedDemo();
+        $this->seed(InterviewsDemoSeeder::class);
+
+        $this->assertSame(['absent', 'failed', 'passed', 'passed'], Interview::query()->whereNotNull('result')->pluck('result')->map->value->sort()->values()->all());
+        $this->assertSame(3, Interview::query()->where('status', 'scheduled')->count());
+        $this->assertSame(4, DB::table('application_status_events')->whereNotNull('interview_id')->count());
+
+        $this->seed(InterviewsDemoSeeder::class);
+        $this->assertSame(7, Interview::query()->count());
+    }
+
+    // ---- contracts ----
+
+    public function test_the_contracts_demo_writes_renews_ends_and_reminds_through_the_actions(): void
+    {
+        $this->seedDemo();
+
+        $this->assertSame(7, Contract::query()->count());                                     // 6 first contracts, 1 renewal
+        $this->assertSame(1, Contract::query()->whereNotNull('renews_contract_id')->count());
+        $this->assertSame(1, Contract::query()->whereNotNull('ended_on')->count());
+        $this->assertSame(7, DB::table('application_status_events')->whereNotNull('contract_id')->count());   // 6 written, 1 ended
+        $this->assertSame(3, Application::query()->where('current_status', ApplicationStatus::AwaitingContract)->count());
+        $this->assertSame(1, Contract::query()->whereNotNull('expiry_reminded_at')->count());
+        $this->assertGreaterThan(0, DB::table('notifications')->count());
+
+        $this->seed(ContractsDemoSeeder::class);
+        $this->assertSame(7, Contract::query()->count());
     }
 }

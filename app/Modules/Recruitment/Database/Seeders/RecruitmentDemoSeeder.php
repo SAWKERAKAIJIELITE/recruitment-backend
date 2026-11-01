@@ -23,8 +23,9 @@ use Illuminate\Support\Facades\Date;
  * Everything goes through the real actions (CreateApplication, ApplicationLifecycle, ChangeCandidateActivation):
  * the database triggers accept history only that way, and the demo then follows the same rules as real data.
  * The clock is moved back while seeding, so applications are spread over the last months and every decision
- * is recorded on the day it happened (occurred_at = created_at). Exam and interview records do not exist yet,
- * so the outcomes carry no cause record.
+ * is recorded on the day it happened (occurred_at = created_at). The exam outcomes carry no cause record yet;
+ * interviews and contracts are added through their own modules (InterviewsDemoSeeder, ContractsDemoSeeder): this
+ * seeder stops at awaiting_contract, and the contracts demo writes, renews and ends the contracts.
  *
  * Needs ReferenceDataSeeder and DevUsersSeeder (users "staff" and "manager"). Runs once: it stops if the
  * first demo person already exists.
@@ -45,9 +46,8 @@ class RecruitmentDemoSeeder extends Seeder
         'interview_failed' => [2, [[S::AwaitingInterview, D::Outcome], [S::InterviewFailed, D::Outcome]]],
         'interview_absent' => [1, [[S::AwaitingInterview, D::Outcome], [S::InterviewAbsent, D::Outcome]]],
         'interview_absent_excused' => [1, [[S::AwaitingInterview, D::Outcome], [S::InterviewAbsent, D::Outcome], [S::AwaitingInterview, D::ExcuseAccepted, 'تعارض مع موعد امتحان جامعي']]],
-        'awaiting_contract' => [3, [[S::AwaitingInterview, D::Outcome], [S::AwaitingContract, D::Outcome]]],
-        'contract_written' => [4, [[S::AwaitingInterview, D::Outcome], [S::AwaitingContract, D::Outcome], [S::ContractWritten, D::Outcome]]],
-        'contract_ended' => [2, [[S::AwaitingInterview, D::Outcome], [S::AwaitingContract, D::Outcome], [S::ContractWritten, D::Outcome], [S::ContractEnded, D::Outcome]]],
+        // Contracts are written for most of them by ContractsDemoSeeder.
+        'awaiting_contract' => [9, [[S::AwaitingInterview, D::Outcome], [S::AwaitingContract, D::Outcome]]],
         'closed' => [2, [[S::Closed, D::Closure, 'انسحب المرشح بطلب خطي']]],
         'closed_after_interview' => [1, [[S::AwaitingInterview, D::Outcome], [S::InterviewFailed, D::Outcome], [S::Closed, D::Closure, 'لا مجال لإعادة المقابلة']]],
     ];

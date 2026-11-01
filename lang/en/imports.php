@@ -13,7 +13,7 @@ return [
     'number_out_of_range' => '":field" must be between 0 and :max.',
     'name_has_digits' => '":field" must not contain digits.',
     'name_length' => '":field" must be between :min and :max characters.',
-    'national_number_format' => 'The national number must have exactly 11 digits (read: ":value").',
+    'national_number_format' => 'The national number must have 11 to 20 digits (read: ":value").',
     'national_number_leading_zero' => 'The national number was stored as a number in Excel, which probably dropped its leading zero: did you mean :suggestion?',
     'phone_format' => 'The phone number ":value" is not valid (6 to 15 digits, optional leading +).',
     'phone_leading_zero' => 'The phone number was stored as a number in Excel, which probably dropped its leading zero: did you mean :suggestion?',

@@ -20,9 +20,15 @@ enum DecisionType: string
     /** Authorized staff ended the application (permission applications.close, D-037). */
     case Closure = 'closure';
 
+    /**
+     * The record behind the latest outcome was corrected (a data-entry error, analysis doc §07), so the outcome is
+     * replaced by the one the corrected record gives. Only the latest decision can be corrected (D-059).
+     */
+    case Correction = 'correction';
+
     /** Decisions made by a person must carry a reason and an actor (analysis doc §07). */
     public function needsReasonAndActor(): bool
     {
-        return in_array($this, [self::Exception, self::ExcuseAccepted, self::Closure], true);
+        return in_array($this, [self::Exception, self::ExcuseAccepted, self::Closure, self::Correction], true);
     }
 }

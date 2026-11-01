@@ -6,7 +6,10 @@ use App\Support\ArabicText;
 
 final class NationalNumber
 {
-    public const LENGTH = 11;
+    /** A national number has 11 to 20 digits (the database checks the same). */
+    public const MIN_LENGTH = 11;
+
+    public const MAX_LENGTH = 20;
 
     /** ASCII digits only: "٠١٢-345 6" becomes "0123456". Anything that is not a digit is dropped. */
     public static function normalize(string $value): string

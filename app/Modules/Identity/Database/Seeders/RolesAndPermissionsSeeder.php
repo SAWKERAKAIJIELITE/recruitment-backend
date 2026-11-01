@@ -25,11 +25,13 @@ class RolesAndPermissionsSeeder extends Seeder
         'imports.approve' => 'اعتماد دفعات الاستيراد',
         'candidates.manage' => 'تحرير بيانات المرشحين',
         'exam_bank.manage' => 'بنك الأسئلة وخطط الاختبار',
+        'pass_policies.manage' => 'إضافة إصدار جديد من قواعد النجاح',
         'exams.take' => 'تقديم الاختبار',
         'attempts.extend' => 'تعديل مدة محاولة نشطة',
         'exceptions.approve' => 'استثناء الرسوب / قبول العذر',
         'applications.close' => 'إغلاق طلب الترشيح وإنهاؤه',
         'interviews.manage' => 'إدخال المقابلات',
+        'interviews.correct' => 'تصحيح نتيجة مقابلة مسجلة',
         'contracts.manage' => 'إدخال العقود',
         'users.manage' => 'إدارة المستخدمين والأدوار',
         'users.add' => 'إضافة المستخدمين',
@@ -39,7 +41,7 @@ class RolesAndPermissionsSeeder extends Seeder
     ];
 
     /** The ✓* cells: may be granted to individual users, never attached to a role. */
-    private const INDIVIDUAL_ONLY = ['attempts.extend', 'exceptions.approve', 'applications.close', 'imports.approve'];
+    private const INDIVIDUAL_ONLY = ['attempts.extend', 'exceptions.approve', 'applications.close', 'imports.approve', 'interviews.correct', 'pass_policies.manage'];
 
     private const ROLES = [
         'general_manager' => [

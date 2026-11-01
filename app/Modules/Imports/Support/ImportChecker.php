@@ -114,7 +114,7 @@ class ImportChecker
 
         $nationalNumber = $present('candidate.national_number') ? (string) $data['candidate.national_number'] : null;
 
-        if ($nationalNumber !== null && preg_match('/^\d{' . NationalNumber::LENGTH . '}$/', $nationalNumber) !== 1) {
+        if ($nationalNumber !== null && preg_match('/^\d{' . NationalNumber::MIN_LENGTH . ',' . NationalNumber::MAX_LENGTH . '}$/', $nationalNumber) !== 1) {
             $error('candidate.national_number', 'national_number_format', ['value' => $nationalNumber]);
             $nationalNumber = null;
         }

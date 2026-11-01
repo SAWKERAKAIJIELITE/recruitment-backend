@@ -29,7 +29,8 @@ Staff and candidates are separate actors with separate tables, login pipelines a
 | Imports                                                        | Done    | Legacy Excel template: upload, column detection, row checks, corrections and review, atomic approval, report (section 9)                                                                               |
 | Exams                                                          | Started | Subjects and parts, versioned exam plans (one session, parts marked by hand, easy/medium/hard), question bank, pass policy as data, exact scoring engine (section 10). Next: sessions and attempts (D-056) |
 | Documents                                                      | Done    | Document types, uploads checked by content, download, archive, missing documents per application (section 11)                                                                                       |
-| Interviews, Contracts, Reports                                 | Planned |                                                                                                                                                                                                        |
+| Interviews                                                     | Done    | Committee sittings and one-off appointments, results entered by the committee moving the application, reschedules, cancellations, corrections, absence excuses (section 12)                          |
+| Contracts, Reports                                             | Planned |                                                                                                                                                                                                        |
 | Audit                                                          | Started | `AuditTrail` seam only; events go to the application log until the table exists                                                                                                                      |
 | Integration                                                    | Planned | Outbox for the future "Mawarid" integration                                                                                                                                                            |
 
@@ -199,6 +200,7 @@ Source: analysis doc §02. `✓` = given by the role by default. `✓*` = `indiv
 | `exam_bank.manage`   |       —       |  — (grantable)  |      ✓      |
 | `attempts.extend`    |       ✓*       |        ✓*        |     ✓*     |
 | `exceptions.approve` |       ✓*       |        ✓*        |     ✓*     |
+| `interviews.correct` |       ✓*       |        ✓*        |     ✓*     |
 | `applications.close` |       ✓*       |        ✓*        |     ✓*     |
 | `imports.approve`    |       ✓*       |        ✓*        |     ✓*     |
 | `interviews.manage`  |       —       |        ✓        |      ✓      |
@@ -424,7 +426,7 @@ awaiting_exam ──outcome──► awaiting_interview ──outcome──► a
 Every status before contract_written ──closure (reason + actor, applications.close)──► closed
 ```
 
-Terminal statuses: `contract_ended`, `closed`; everything else is live. `ApplicationLifecycle::move($application, $to, $type, actor:, reason:, cause:, occurredAt:)` locks the application row, reads its status from the database, refuses any move not in `ApplicationStatus::transitions()`, any wrong decision type, a person-made decision without reason and actor, and a date in the future or before the previous decision (`IllegalStatusTransition`). It then appends the event after the latest one and reloads the caller's model (the database has changed `current_status`). `open()` writes the first event inside the transaction that creates the application, without a savepoint of its own. `Application::history()` returns the events in chain order with each event's previous event attached, so `fromStatus()` costs no extra query.
+Terminal statuses: `contract_ended`, `closed`; everything else is live. `ApplicationLifecycle::move($application, $to, $type, actor:, reason:, cause:, occurredAt:)` locks the application row, reads its status from the database, refuses any move not in `ApplicationStatus::transitions()`, any wrong decision type, a person-made decision without reason and actor, and a date in the future or before the previous decision (`IllegalStatusTransition`). It then appends the event after the latest one and reloads the caller's model (the database has changed `current_status`). `open()` writes the first event inside the transaction that creates the application, without a savepoint of its own. `correct($application, $to, $cause, $actor, $reason)` replaces the latest outcome after its record was corrected (D-060): a new `correction` event, only while the outcome caused by `$cause` is still the latest decision, and only towards another outcome the same step could give (from the status before that outcome). `Application::history()` returns the events in chain order with each event's previous event attached, so `fromStatus()` costs no extra query.
 
 ### 8.5 Causes of a status change (D-038)
 
@@ -446,6 +448,8 @@ $lifecycle->move($application, ApplicationStatus::ExamFailed, DecisionType::Outc
 ```
 
 Every `add`/`remove` rebuilds the CHECK `application_status_events_at_most_one_cause` over all cause columns. The helper accepts only safe identifiers.
+
+Cause columns in place: `interview_id` (Interviews, D-059).
 
 ### 8.6 Nomination number
 
@@ -876,9 +880,71 @@ All under `/api/v1/staff`. Types: read by any staff user, changed with `candidat
 
 `DocumentTypesSeeder` (every environment): the owner's examples (صورة البطاقة الشخصية and الشهادات العلمية required from the nomination, السيرة الذاتية, وثائق رسمية, العقد required from `contract_written`) plus suggestions (صورة شخصية, كتاب الترشيح, قرار الاستثناء). `DocumentsDemoSeeder` (local): placeholder PDFs for half of the demo applications and half of the written contracts.
 
-## 12. Testing
+## 12. Interviews module
 
-`php artisan test` (PostgreSQL database `recruitment_test`, `RefreshDatabase`): 552 tests. The suite needs no OpenSSL configuration: tests use fixed keys from `tests/Support/TestDeviceKeys.php` (D-023). Shared helpers are in `tests/Support/StaffTestHelpers.php` (devices get a unique MAC and an `os_info`), `tests/Support/RecruitmentTestHelpers.php` (one entry of every list, a valid application payload, granting an individual permission, closing an application) and `tests/Support/LegacyWorkbook.php` (synthetic workbooks in the real template's layout: three title rows, headers on row 5 with its exact texts, navigation column A, other sheets, text/number/date/formula cells; no real data, §24).
+### 12.1 What it does (D-059)
+
+The interview step (analysis doc §07, §08; legacy sheet المقابلات). An interview is booked into a **committee sitting** (one committee, one place, many candidates, each with a time) or is a **one-off appointment** with its own committee (owner's choice: both). Members are a name and a capacity (الصفة), optionally linked to a staff account. The **committee enters the result** (ناجح / راسب / غائب) with three grades on the template's scale; nothing computes it. Recording the result moves the application, with the interview as the cause of that history event. Absence excuses bring the application back (a new round); corrections keep every version.
+
+```
+app/Modules/Interviews/
+├── Actions/       ManageSittings, ManageInterviews (schedule, reschedule, cancel, record, correct, acceptExcuse), Committee
+├── Database/      Migrations (1), Seeders (InterviewsDemoSeeder)
+├── Enums/         InterviewStatus, InterviewResult, InterviewGrade
+├── Http/          Controllers (InterviewSitting, Interview), Requests (AppointmentRules shared), Resources
+├── Models/        InterviewSitting, Interview (StatusChangeCause), InterviewMember, InterviewReschedule, InterviewResultRevision
+└── routes.php
+```
+
+### 12.2 Database schema
+
+| Table | Notes |
+| ----- | ----- |
+| `interview_sittings` | uuid; `starts_at`, `location` (place or medium), `committee_name`, `notes`, `created_by` |
+| `interviews` | uuid; `application_id`, `round` (unique per application), `sitting_id` (null: one-off), `scheduled_at`, `location`, `committee_name`, `status` (`scheduled`, `recorded`, `cancelled`), current result: `result` (`passed`, `failed`, `absent`), `held_at`, `scientific_grade`, `general_grade`, `overall_grade` (`excellent` … `weak`), `committee_summary`, `notes`, `recorded_by/at`; `cancelled_at/by`, `cancel_reason`; `created_by` |
+| `interview_members` | `sitting_id` or `interview_id` (exactly one), `position`, `name`, `capacity`, `staff_user_id` |
+| `interview_reschedules` | from/to sitting, time and location, `reason`, `rescheduled_by`, `created_at`; append-only |
+| `interview_result_revisions` | `revision` (1 as recorded, then corrections; a reason exactly for corrections), the result fields, `entered_by`, `created_at`; append-only |
+
+CHECKs on `interviews`: a result exactly when recorded, with `held_at`, who and when; an attended result has the three grades, an absence none; a cancellation has who and a reason; grades and results from their lists. One `scheduled` interview per application (partial unique index). Interviews are never deleted (trigger). `application_status_events.interview_id` is the cause column.
+
+### 12.3 Rules
+
+- **Schedule:** the application is `awaiting_interview` (passed the exams, or by exception) and has no waiting interview. A sitting gives its time (the candidate's own time may be sent), place, committee name and committee; a one-off appointment needs time, place and members. Round = previous rounds + 1.
+- **Reschedule / cancel:** a waiting interview only, with a reason (reschedules are kept). A sitting's committee can change until a result is recorded in it; moving a sitting does not move the interviews booked in it.
+- **Record:** the application is still `awaiting_interview`. `held_at` defaults to the appointment and cannot be in the future or before the previous decision. passed → `awaiting_contract`, failed → `interview_failed`, absent → `interview_absent` (outcome event, cause = the interview, dated `held_at`). Revision 1 is written.
+- **Correct** (individual `interviews.correct`, reason): any result field; a new revision. A changed result appends a `correction` event (D-060), only while the interview's outcome is the application's latest decision; otherwise only grades and notes can be corrected.
+- **Absence excuse** (individual `exceptions.approve`, reason, optional date): `interview_absent` → `awaiting_interview` (`excuse_accepted`, cause = the absent interview). The absent result stays; with `appointment`, the next round is booked in the same transaction. "Excused" in reports = an `excuse_accepted` event caused by that interview.
+
+### 12.4 API reference
+
+All under `/api/v1/staff`. Reading: `interviews.manage`, `candidates.manage` or `reports.view`. Changing: `interviews.manage`, except correcting (`interviews.correct`) and excuses (`exceptions.approve`).
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET | `/interview-sittings` | `from`, `to`; soonest first; with members and `interviews_count` |
+| GET | `/interview-sittings/{id}` | A sitting with its committee and interviews |
+| POST | `/interview-sittings` | `starts_at`, `location`, `committee_name`, `members` [`name`, `capacity`, `staff_user_id`], `notes` |
+| PATCH | `/interview-sittings/{id}` | Fields that change; `members` replaces the committee (422 once a result is recorded) |
+| GET | `/interviews` | `status`, `result`, `excused` (with `result=absent`), `sitting_id`, `committee_name`, `job_position_id`, `nominating_entity_id`, `from`, `to` |
+| GET | `/interviews/{id}` | With reschedules and every result revision |
+| GET | `/applications/{id}/interviews` | Every round of an application |
+| POST | `/applications/{id}/interviews` | Schedule: `sitting_id` (+ optional `scheduled_at`), or `scheduled_at`, `location`, `committee_name`, `members` |
+| POST | `/interviews/{id}/reschedule` | New appointment + `reason` |
+| POST | `/interviews/{id}/cancel` | `reason` |
+| POST | `/interviews/{id}/result` | `result`, grades (attended), `held_at`, `committee_summary`, `notes` |
+| POST | `/interviews/{id}/correct` | Fields that change + `reason` (`interviews.correct`) |
+| POST | `/applications/{id}/interview-excuse` | `reason`, `occurred_at`, optional `appointment` (201 with the new interview, or 204) (`exceptions.approve`) |
+
+Grades: `excellent` (ممتاز), `very_good` (جيد جداً), `good` (جيد), `acceptable` (مقبول), `average` (وسط), `weak` (ضعيف); returned as `{value, label}`.
+
+### 12.5 Seeding
+
+`InterviewsDemoSeeder` (local): a sitting three days ago with four recorded results (passed, passed, failed, absent), a sitting in five days with two bookings, a one-off appointment in two days.
+
+## 13. Testing
+
+`php artisan test` (PostgreSQL database `recruitment_test`, `RefreshDatabase`): 573 tests. The suite needs no OpenSSL configuration: tests use fixed keys from `tests/Support/TestDeviceKeys.php` (D-023). Shared helpers are in `tests/Support/StaffTestHelpers.php` (devices get a unique MAC and an `os_info`), `tests/Support/RecruitmentTestHelpers.php` (one entry of every list, a valid application payload, granting an individual permission, closing an application) and `tests/Support/LegacyWorkbook.php` (synthetic workbooks in the real template's layout: three title rows, headers on row 5 with its exact texts, navigation column A, other sheets, text/number/date/formula cells; no real data, §24).
 
 Tests never commit, so the deferred `applications_have_history` check is tested with `SET CONSTRAINTS applications_have_history IMMEDIATE`.
 
@@ -902,13 +968,14 @@ Tests never commit, so the deferred `applications_have_history` check is tested 
 | `Feature/Recruitment/ApplicationApiTest`       | Opening applications, nomination numbers, national number as text, digit normalisation, person matching, one live application per person (any position; what frees a person), nothing left behind on failure, closing (permission, reason, dates, refusals), area in district (API and database), permissions, validation, database CHECKs, archived entries, search, filters, date range, history                                                                                                                          |
 | `Feature/Recruitment/CandidateApiTest`         | People list and filters, search in any spelling or digits, one person's applications, corrections (audit, search key, national number conflict, same rules), deactivation (live application refused, reason, once, blocks nomination until reactivated), database CHECK, permissions |
 | `Feature/Recruitment/ApplicationUpdateTest`    | Partial corrections and their audit, fields that never change here, ended application refused, district and area combinations, discontinued studies against stored values, same rules as create, permission |
-| `Feature/SeedersTest`                          | Document types (once) and demo documents (some missing, runs once); Exam subjects (template's six, Quran parts, re-run safe) and demo plans in every state; reference lists (no nominating entities, re-run safe, archived and respelled entries kept, areas per governorate); demo: every status, dates in the past, accountable decisions, nominated twice, deactivated, three import batches with every row kind, runs once, uses the owner's nominating entities |
+| `Feature/SeedersTest`                          | Interviews demo through the lifecycle (runs once); Document types (once) and demo documents (some missing, runs once); Exam subjects (template's six, Quran parts, re-run safe) and demo plans in every state; reference lists (no nominating entities, re-run safe, archived and respelled entries kept, areas per governorate); demo: every status, dates in the past, accountable decisions, nominated twice, deactivated, three import batches with every row kind, runs once, uses the owner's nominating entities |
 | `Unit/Exams/ExamScorerTest`                    | The doc's five worked examples, reasons with subjects, tolerated subject, Quran from weighted parts (482/600), relative weights, exact values at 58/60/70 boundaries, thirds, policy versions, mismatched or impossible marks |
 | `Feature/Exams/ExamSubjectApiTest`             | Subjects with parts, names unique in any spelling (parts per subject), archive/restore, part changes, weight format, permissions, audit |
 | `Feature/Exams/ExamPlanApiTest`                | Drafts (empty, copied, from an older version of the same position only), whole replacement in exam order, questions per difficulty (each ≥ 1), parts assessed in the exam or by hand (defaults and overrides, scale), content checks, one draft per position, archived job position, delete, publish (freeze, audit, every problem listed, no online question, bank shortages per difficulty, archived questions not counted, whole subject draws on all its questions, archived subjects/parts), readiness, retiring the previous version, part defaults never reach a published plan, manual mark in the engine, list filters, permissions, version numbers |
 | `Feature/Exams/ExamDatabaseTest`               | Policy 1 present and append-only; published content frozen; published → retired only; retiring changes nothing else; draft not retired directly; publication CHECKs; one published and one draft per position; part in its subject; every difficulty or none (NULL cannot slip through); manual part has a scale and no questions, exam part the reverse; part defaults checked; draft deletion cascades; question versions append-only and well formed; question part in its subject |
 | `Feature/Exams/ExamQuestionApiTest`            | Version 1, part questions, well-formed questions, corrections as versions (none for same content or difficulty only), answer kept among the options, no moving questions, archive and stats, filters (part `none`, search with wildcards escaped), only `exam_bank.manage` |
 | `Feature/Documents/DocumentApiTest`            | Person documents stored on the person from any screen, application documents on their application, kept for a new application, requirements by status and missing list, content checks (fake PDF, PDF named .png, docx, size), download (headers, content, audit), archive (reason, once, file kept), archived type, permissions, types management; database: never changed except archived once, right person and scope |
+| `Feature/Interviews/InterviewApiTest`          | Sitting bookings (time, place, committee), one-off appointments, one waiting interview per awaiting application, reschedule and cancel with reasons, frozen committee, results moving the application with the interview as cause, grades by result, dates, application moved on, corrections (revisions, correction events, twice, only while latest, permission, reason), excuses (back to awaiting, next round, round 1 stays absent, excused filter, permission), lists and filters, rounds, permissions; database: result consistency, grades, cancellation, no delete, one waiting, member owner, append-only revisions |
 | `Unit/HeaderMatcherTest`                       | Header normalisation, exact before contained, similar headers, unknown headers                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `Feature/Imports/ImportUploadTest`             | Real template layout by header names, a row without national number refuses the file, security (unsafe parts, zip bomb, unsafe formulas injected in the sheet XML, content vs extension, filename, cell bounds, nosniff, rate limit), moved/renamed headers, sheet among others, empty rows, missing columns, no header, no rows, not a workbook, extensions, row limit, same file twice and after cancel (AC-10), batch metadata and default entity, permission, list, original download                                   |
 | `Feature/Imports/ImportRowsTest`               | Values and raw cells, optional area (place kept as details), study years with "ومنقطع", dates (serial, 1904, text, Arabic digits, AC-17), leading zeros (AC-16), digits, yes/no, list spellings, unknown/archived values, health and residence details, area per district, missing values, shared rules, in-file duplicates, live application, person mismatch and confirmation, corrections (audit, re-check, duplicates elsewhere, malformed), revalidation, exclude/include, filters, scoped rows, cancelled batch |
@@ -916,10 +983,11 @@ Tests never commit, so the deferred `applications_have_history` check is tested 
 
 API documentation check: `php artisan scramble:analyze` must report no warnings.
 
-## 13. Known limitations and pending work
+## 14. Known limitations and pending work
 
 - The legacy exams sheet decides results differently from the analysis doc (no 58 tolerance; exactly 70% passes); the system follows the doc, as the owner confirmed (OD-15). Results copied from old sheets can differ.
-- Exam sessions, candidate accounts and attempts are not built yet; their rules are decided (D-056). Archiving questions after a plan is published can leave the bank short: the session draw will refuse and say what is missing.
+- The interview grade scale is the template's six levels, fixed in code (`InterviewGrade`); the committee's evaluation form from management may add items (§22).
+- Exam sessions, candidate accounts and attempts are not built yet (paused by the owner); their rules are decided (D-056). Archiving questions after a plan is published can leave the bank short: the session draw will refuse and say what is missing.
 - Documents are not scanned for viruses; scanning and a retention period belong to the deployment, like import files (D-045, D-057).
 - Nominating entities are typed by hand in the template: an entity not in the list (seeded or added through the API) keeps its rows from being approved (OD-13).
 - Antivirus scanning of stored originals and a retention period for files with personal data belong to the deployment (D-045).
@@ -938,7 +1006,7 @@ API documentation check: `php artisan scramble:analyze` must report no warnings.
 - Production needs trusted-proxy configuration for IP-based throttling.
 - Arabic translations exist for login, recruitment and import messages; framework validation messages do not have an Arabic file yet.
 
-## 14. Changelog
+## 15. Changelog
 
 | Step          | Summary                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -950,6 +1018,7 @@ API documentation check: `php artisan scramble:analyze` must report no warnings.
 | 3 (completed) | Owner's schema redesign finished: nine lists with integer keys, areas inside districts with a composite key (D-031, D-034); person vs application data (D-031); plain national number, sensitive permission removed (D-032); chained history with database-maintained status (D-033); Latin-only usernames (D-035); one-day staff tokens (D-036); recruitment tests restored and extended                         |
 | 4             | One live application per person, `contract_ended` and `closed`, closure with `applications.close` (D-037); cause columns instead of `related_type/id` (D-038); `occurred_at` as the real decision date (D-039); Excel import of the legacy template: header detection, cell reading, checks, review, locked all-or-nothing approval, report (D-040, D-041); shared field limits (D-042); PhpSpreadsheet |
 | 4 (follow-up) | Real legacy template: its headers, one sheet loaded, 30 MB uploads; residence area optional (D-043); `studies_discontinued` (D-044); upload security (D-045); a row without national number refuses the file (D-046); `imports.approve` with four eyes (D-047); reference API: enum `{type}`, `include_archived=true`, documented `district_id`; Arabic validation messages                             |
+| 7 (Interviews) | On the owner's commit 8f789d8. Interviews module: sittings and one-off appointments, committee results moving the application, reschedules, cancellations, revisions and corrections, absence excuses (D-059); correction events in the lifecycle (D-060); `interviews.correct` |
 | 6 (follow-up) | On the owner's commit d247aa4. Complete application search (`ApplicationSearch`, sorting, page size); list rows load all their relations; areas with their district without a query each; deactivation CHECK requires all or nothing (D-049); adding staff users through `RegisterStaffUser` with a role-escalation guard (D-058); route files merge `api` and `auth` middleware where every route is authenticated |
 | 6 | On the owner's commit 77f2408. Null `studies_discontinued` means false (D-044); marital statuses unknown to the change endpoints (D-048); nominating entities seeded by the owner (OD-13); the doc's pass rules confirmed (OD-15); plans: one session, parts marked by hand, easy/medium/hard (D-054); question bank (D-055); sessions decided (D-056); documents (D-057) |
 | 5 (Exams part 1) | Subjects and parts; exam plans per job position, versioned and frozen when published (D-053); pass policy as append-only data and the exact scoring engine (D-052); open questions OD-15 to OD-17 |

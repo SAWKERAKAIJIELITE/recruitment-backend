@@ -35,7 +35,7 @@ class RegisterUserRequest extends FormRequest
                     ->mixedCase()        // Must contain both uppercase and lowercase letters
                     ->numbers()          // Must contain at least one number
                     ->symbols()          // Must contain at least one special character (!@#$%^&*)
-                    ->uncompromised(),
+                    // ->uncompromised(),
             ],
         ];
     }

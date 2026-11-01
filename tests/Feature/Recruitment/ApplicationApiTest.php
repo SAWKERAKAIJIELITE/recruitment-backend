@@ -83,6 +83,16 @@ class ApplicationApiTest extends TestCase
         $this->assertSame('01234567890', DB::table('candidates')->value('national_number'));
     }
 
+    public function test_a_national_number_has_11_to_20_digits(): void
+    {
+        $staff = $this->hiringStaff();
+
+        foreach (['01234567890', '12345678901234567890'] as $number) {
+            $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload(['candidate' => ['national_number' => $number]] + ['phone_number' => '09' . substr($number, -8)]))
+                ->assertCreated()->assertJsonPath('data.candidate.national_number', $number);
+        }
+    }
+
     public function test_arabic_indic_digits_and_separators_are_normalised(): void
     {
         $this->asStaff($this->hiringStaff())->postJson(self::URL, $this->applicationPayload([
@@ -403,7 +413,7 @@ class ApplicationApiTest extends TestCase
             'name too short' => [['candidate' => ['full_name' => 'ab']], 'candidate.full_name'],
             'mother name missing' => [['candidate' => ['mother_name' => null]], 'candidate.mother_name'],
             'national number too short' => [['candidate' => ['national_number' => '1234567890']], 'candidate.national_number'],
-            'national number too long' => [['candidate' => ['national_number' => '123456789012']], 'candidate.national_number'],
+            'national number too long' => [['candidate' => ['national_number' => '123456789012345678901']], 'candidate.national_number'],   // 21 digits
             'national number missing' => [['candidate' => ['national_number' => null]], 'candidate.national_number'],
             'birth date in the future' => [['candidate' => ['birth_date' => '2999-01-01']], 'candidate.birth_date'],
             'birth date not a date' => [['candidate' => ['birth_date' => '01/03/1998']], 'candidate.birth_date'],
@@ -458,6 +468,7 @@ class ApplicationApiTest extends TestCase
             'phone with letters' => ['applications', ['phone_number' => '09ab45678']],
             'national number with 10 digits' => ['candidates', ['national_number' => '1234567890']],
             'national number with letters' => ['candidates', ['national_number' => '1234567890a']],
+            'national number with 21 digits' => ['candidates', ['national_number' => '123456789012345678901']],
             'name with digits' => ['candidates', ['full_name' => 'احمد 1']],
             'name with arabic-indic digits' => ['candidates', ['full_name' => 'احمد ١']],
         ];

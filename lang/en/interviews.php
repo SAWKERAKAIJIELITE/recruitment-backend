@@ -1,0 +1,26 @@
+<?php
+
+return [
+    'already_scheduled' => 'This application already has an interview waiting for its result: reschedule or cancel it.',
+    'wrong_application_status' => 'This cannot be done on an application whose status is ":status".',
+    'not_scheduled' => 'This interview is :status; only a scheduled interview can change.',
+    'not_recorded' => 'No result was recorded for this interview yet.',
+    'appointment_incomplete' => 'Set the interview time and place (or a committee sitting).',
+    'grades_required' => 'An attended interview needs the scientific grade, the general grade and the overall grade.',
+    'held_in_future' => 'An interview result cannot be dated after today.',
+    'held_before_previous_decision' => 'The interview date is before the previous decision of the application.',
+    'result_not_latest' => 'The application moved on after this result: the result can be corrected only while it is the latest decision.',
+    'excuse_date' => 'The excuse date is not valid: neither in the future nor before the absence.',
+    'committee_frozen' => 'Results were recorded in this sitting: its committee stays as it interviewed the candidates.',
+    'nothing_to_correct' => 'No field to correct was sent.',
+    'one_off_fields_with_sitting' => 'A committee sitting brings its place and committee: do not send a place, committee or members with it.',
+    'one_chair' => 'A committee has at most one chair.',
+    'not_a_committee_sitting' => 'This is a one-off appointment of one candidate, not a committee sitting: no one else can be booked into it.',
+    'before_sitting_start' => 'The candidate’s time is before the sitting starts (:start).',
+    'held_before_sitting' => 'The interview date is before the sitting starts (:start).',
+    'sitting_after_bookings' => 'The sitting cannot start after an interview booked or held in it (:time): reschedule it first.',
+    'one_off_not_editable' => 'A one-off appointment is not changed directly: reschedule its interview so the previous appointment is kept.',
+    'same_appointment' => 'Nothing changes in the appointment: send another sitting, time or place.',
+    'priority_needs_ids' => 'The priority rule ":rule" needs the ids to put first, in order, like :rule:5,2.',
+    'priority_unknown' => 'Unknown priority rule: ":rule".',
+];

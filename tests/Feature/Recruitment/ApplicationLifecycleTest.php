@@ -351,7 +351,8 @@ class ApplicationLifecycleTest extends TestCase
     {
         $this->createCauseTable('trial_attempts');
         $this->createCauseTable('trial_interviews');
-        $this->assertSame(['trial_attempt_id', 'trial_interview_id'], StatusEventCauseColumns::columns());
+        // interview_id and contract_id are the real cause columns (D-059, D-064); the trial ones are added after them.
+        $this->assertSame(['interview_id', 'contract_id', 'trial_attempt_id', 'trial_interview_id'], StatusEventCauseColumns::columns());
 
         $application = $this->openApplication();
         $attempt = $this->causeOf('trial_attempts');
@@ -372,7 +373,7 @@ class ApplicationLifecycleTest extends TestCase
 
         StatusEventCauseColumns::remove('trial_interview_id');
 
-        $this->assertSame(['trial_attempt_id'], StatusEventCauseColumns::columns());
+        $this->assertSame(['interview_id', 'contract_id', 'trial_attempt_id'], StatusEventCauseColumns::columns());
     }
 
     public function test_unsafe_cause_column_names_are_refused(): void

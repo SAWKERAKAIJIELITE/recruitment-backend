@@ -3,6 +3,7 @@
 use App\Modules\Exams\Http\Controllers\ExamPlanController;
 use App\Modules\Exams\Http\Controllers\ExamQuestionController;
 use App\Modules\Exams\Http\Controllers\ExamSubjectController;
+use App\Modules\Exams\Http\Controllers\PassPolicyController;
 use App\Modules\Identity\Http\Middleware\EnsureStaffIsActive;
 use App\Modules\Identity\Http\Middleware\RequireAnyPermission;
 use Illuminate\Support\Facades\Route;
@@ -14,7 +15,11 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
         Route::get('exam-subjects', [ExamSubjectController::class, 'index']);
         Route::get('exam-plans', [ExamPlanController::class, 'index']);
         Route::get('exam-plans/{plan}', [ExamPlanController::class, 'show'])->whereUuid('plan');
+        Route::get('exam-pass-policies', [PassPolicyController::class, 'index']);
     });
+
+    // Individual permission (never given by a role).
+    Route::post('exam-pass-policies', [PassPolicyController::class, 'store'])->middleware('can:pass_policies.manage');
 
     Route::middleware('can:exam_bank.manage')->group(function () {
         Route::post('exam-subjects', [ExamSubjectController::class, 'store']);

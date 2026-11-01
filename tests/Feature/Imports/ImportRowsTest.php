@@ -329,6 +329,7 @@ class ImportRowsTest extends TestCase
             'too many study years' => [['Q' => 16], 'number_out_of_range'],
             'phone with letters' => [['V' => '09ab345678'], 'phone_format'],
             'national number too short' => [['J' => '0123456789'], 'national_number_format'],
+            'national number too long' => [['J' => '123456789012345678901'], 'national_number_format'],
             'born in the future' => [['I' => '01/01/2999'], 'date_out_of_range'],
             'born before 1950' => [['I' => '01/01/1940'], 'date_out_of_range'],
         ];

@@ -10,12 +10,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Collection;
 use Laravel\Sanctum\HasApiTokens;
 
 class StaffUser extends Authenticatable
 {
-    use HasApiTokens, HasFactory, HasUuids;
+    use HasApiTokens, HasFactory, HasUuids, Notifiable;
 
     // public const TYPE_STAFF = 'staff';
     // public const TYPE_CANDIDATE = 'candidate';

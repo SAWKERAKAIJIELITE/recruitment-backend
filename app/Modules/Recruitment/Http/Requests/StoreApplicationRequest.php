@@ -84,7 +84,7 @@ class StoreApplicationRequest extends FormRequest
         $name = ['string', 'min:' . R::NAME_MIN, 'max:' . R::NAME_MAX, 'not_regex:' . R::NAME_FORBIDDEN];
 
         return [
-            'national_number' => ['required', 'string', 'digits:' . NationalNumber::LENGTH],
+            'national_number' => ['required', 'string', 'digits_between:' . NationalNumber::MIN_LENGTH . ',' . NationalNumber::MAX_LENGTH],
             'full_name' => ['required', ...$name],
             'mother_name' => ['required', ...$name],
             'birth_date' => ['required', 'date_format:Y-m-d', 'after:' . R::BIRTH_DATE_AFTER, 'before:today'],

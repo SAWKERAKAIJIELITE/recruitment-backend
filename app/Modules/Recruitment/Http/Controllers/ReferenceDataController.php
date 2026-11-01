@@ -17,7 +17,7 @@ use Illuminate\Validation\Rule;
 
 /**
  * The managed lists. {type} is a ReferenceType value (an unknown one is 404): districts, areas, nominating-entities, job-positions,
- * application-categories, academic-qualifications, specializations, marital-statuses, health-conditions.
+ * application-categories, academic-qualifications, specializations, marital-statuses, health-conditions, contract-types.
  * Any signed-in staff user can read them; changing them needs candidates.manage. Marital statuses are
  * seeded and only read here: the change endpoints do not know them (404, D-048).
  */

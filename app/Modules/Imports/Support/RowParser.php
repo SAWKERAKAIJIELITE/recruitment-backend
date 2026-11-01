@@ -183,9 +183,9 @@ final class RowParser
         }
 
         // Excel kept it as a number: a leading zero is gone and cannot be recovered with certainty.
-        if ($cell->isNumeric() && strlen($digits) < NationalNumber::LENGTH) {
+        if ($cell->isNumeric() && strlen($digits) < NationalNumber::MIN_LENGTH) {
             return [null, self::issue('national_number_leading_zero', [
-                'suggestion' => str_pad($digits, NationalNumber::LENGTH, '0', STR_PAD_LEFT),
+                'suggestion' => str_pad($digits, NationalNumber::MIN_LENGTH, '0', STR_PAD_LEFT),
             ])];
         }
 

@@ -3,7 +3,6 @@
 namespace App\Modules\Recruitment\Queries;
 
 use App\Modules\Recruitment\Enums\ApplicationStatus;
-use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Support\NationalNumber;
 use App\Modules\Recruitment\Support\PhoneNumber;
 use App\Support\ArabicText;
@@ -97,8 +96,14 @@ final class ApplicationSearch
         return $rules;
     }
 
-    /** @param array<string, mixed> $filters validated with rules() */
+    /** Filters and sorts. @param array<string, mixed> $filters validated with rules() */
     public static function apply(Builder $query, array $filters): Builder
+    {
+        return self::sort(self::filter($query, $filters), $filters);
+    }
+
+    /** The filters only (for lists with their own order, like the interview queue). @param array<string, mixed> $filters */
+    public static function filter(Builder $query, array $filters): Builder
     {
         $has = fn(string $key) => isset($filters[$key]) && $filters[$key] !== '';
         $flag = fn(string $key) => filter_var($filters[$key], FILTER_VALIDATE_BOOLEAN);
@@ -201,6 +206,12 @@ final class ApplicationSearch
             $query->where('applications.created_at', '<', Carbon::parse($filters['to'])->addDay()->toDateString());
         }
 
+        return $query;
+    }
+
+    /** @param array<string, mixed> $filters */
+    private static function sort(Builder $query, array $filters): Builder
+    {
         $sort = $filters['sort'] ?? 'created_at';
         $direction = $filters['direction'] ?? ($sort === 'created_at' ? 'desc' : 'asc');
 

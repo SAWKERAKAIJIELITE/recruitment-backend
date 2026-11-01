@@ -538,6 +538,28 @@ A living record of the design decisions made while building the backend and data
 
 ---
 
+### D-059 Interviews
+
+- **Status:** Accepted (analysis doc §07, §08; owner, Step 7: sittings or one-off appointments, "both"; the committee enters the result; members are names and capacity; corrections need an individual permission)
+- **Decision:**
+  - An interview is booked into a committee sitting (one committee, place and day, many candidates with their own times) or is a one-off appointment with its own committee. A member is a name and a capacity (الصفة), optionally a staff account. A sitting's committee is frozen once a result is recorded in it: it is the evidence of who interviewed.
+  - Only an application at `awaiting_interview` (passed the exams, or by exception, §08) is scheduled, one waiting interview at a time (partial unique index). Rescheduling and cancelling need a reason; reschedules are kept.
+  - The committee enters the result (ناجح / راسب / غائب) and three grades on the template's scale (التقييم العلمي، التقييم العام، التقدير: ممتاز … ضعيف); nothing computes the result (§08: no arithmetic average until management approves a scale). An absence has no grades; its reason goes in `notes`.
+  - Recording moves the application (passed → awaiting_contract, failed → interview_failed, absent → interview_absent), with the interview as the cause of the event (`interview_id`, D-038), dated when the interview was held.
+  - Every version of a result is kept (`interview_result_revisions`); correcting needs the individual permission `interviews.correct` and a reason (§07: "previous and new value and a clear reason → correction version and audit log").
+  - An accepted absence excuse (individual `exceptions.approve`, §07) brings the application back to `awaiting_interview` with the absent interview as cause; the absent result is never rewritten (§08), the next appointment is a new round.
+- **Rejected:** a computed result from the grades (the sample's passes are all جيد or better, but the doc and the owner keep it the committee's decision); deleting interviews.
+
+### D-060 Correction events
+
+- **Status:** Accepted
+- **Context:** a result entered wrongly (an interview recorded as passed instead of failed) has already moved the application. The history is append-only (D-033) and the legal moves do not include, for example, awaiting_contract → interview_failed.
+- **Decision:** new decision type `correction` (reason and actor required, like the other person-made decisions). `ApplicationLifecycle::correct()` appends an event from the wrong status to the right one, allowed only while the outcome being replaced is the application's latest decision and was caused by the corrected record, and only towards another outcome the same step could give (computed from the status before that outcome, so a second correction works too). Once something else happened (the contract was written), the result can no longer change; grades and notes still can.
+- **Why:** the history shows the original outcome, the correction, who made it and why; reports read the latest status as usual.
+- **Consequences:** the exam results (next) will use the same mechanism.
+
+---
+
 ## Resolved and deferred questions
 
 | ID    | Question                                                                                            | Outcome                                                                                                                                                                                                                                                  |

@@ -2,6 +2,7 @@
 
 namespace App\Modules\Recruitment\Enums;
 
+use App\Modules\Contracts\Models\ContractType;
 use App\Modules\Recruitment\Models\AcademicQualification;
 use App\Modules\Recruitment\Models\ApplicationCategory;
 use App\Modules\Recruitment\Models\Area;
@@ -24,6 +25,7 @@ enum ReferenceType: string
     case Specializations = 'specializations';
     case MaritalStatuses = 'marital-statuses';
     case HealthConditions = 'health-conditions';
+    case ContractTypes = 'contract-types';
 
     /** @return class-string<\Illuminate\Database\Eloquent\Model> */
     public function model(): string
@@ -38,6 +40,7 @@ enum ReferenceType: string
             self::Specializations => Specialization::class,
             self::MaritalStatuses => MaritalStatus::class,
             self::HealthConditions => HealthCondition::class,
+            self::ContractTypes => ContractType::class,
         };
     }
 

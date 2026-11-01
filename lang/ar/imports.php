@@ -14,7 +14,7 @@ return [
     'number_out_of_range' => 'قيمة «:field» يجب أن تكون بين 0 و:max.',
     'name_has_digits' => '«:field» يجب ألا يحتوي أرقاماً.',
     'name_length' => '«:field» يجب أن يكون بين :min و:max حرفاً.',
-    'national_number_format' => 'الرقم الوطني يجب أن يتكون من 11 رقماً بالضبط (المقروء: «:value»).',
+    'national_number_format' => 'الرقم الوطني يجب أن يتكون من 11 إلى 20 رقماً (المقروء: «:value»).',
     'national_number_leading_zero' => 'الرقم الوطني مخزّن في Excel كعدد فحُذف صفره البادئ على الأغلب: هل المقصود :suggestion؟',
     'phone_format' => 'رقم الهاتف «:value» غير صالح (من 6 إلى 15 رقماً، ويُسمح بـ + في البداية).',
     'phone_leading_zero' => 'رقم الهاتف مخزّن في Excel كعدد فحُذف صفره البادئ على الأغلب: هل المقصود :suggestion؟',

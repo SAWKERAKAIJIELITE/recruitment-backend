@@ -17,6 +17,7 @@ enum EditableReferenceType: string
     case AcademicQualifications = 'academic-qualifications';
     case Specializations = 'specializations';
     case HealthConditions = 'health-conditions';
+    case ContractTypes = 'contract-types';
 
     public function type(): ReferenceType
     {

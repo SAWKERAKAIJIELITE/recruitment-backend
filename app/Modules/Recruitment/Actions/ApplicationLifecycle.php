@@ -86,6 +86,65 @@ class ApplicationLifecycle
         });
     }
 
+    /**
+     * Replaces the latest outcome after the record that caused it was corrected (D-059): a new event of type
+     * correction, from the wrong status to the right one. Allowed only while that outcome is still the latest
+     * decision and was caused by $cause, and only towards another outcome the same step could have given (an
+     * interview result: awaiting_contract, interview_failed or interview_absent). History is never rewritten.
+     *
+     * @throws IllegalStatusTransition
+     */
+    public function correct(
+        Application $application,
+        ApplicationStatus $to,
+        StatusChangeCause $cause,
+        StaffUser $actor,
+        string $reason,
+    ): ApplicationStatusEvent {
+        return DB::transaction(function () use ($application, $to, $cause, $actor, $reason) {
+            $locked = Application::query()->whereKey($application->getKey())->lockForUpdate()->firstOrFail();
+            $latest = $this->latestEvent($locked);
+            $column = $cause::statusEventColumn();
+
+            if ($latest->getAttribute($column) !== $cause->getKey() || ! in_array($latest->decision_type, [DecisionType::Outcome, DecisionType::Correction], true)) {
+                throw new IllegalStatusTransition('Only the latest decision can be corrected, and only from the record that caused it.');
+            }
+
+            $before = $this->statusBefore($latest);
+
+            if ($to === $locked->current_status || $before?->decisionRequiredFor($to) !== DecisionType::Outcome) {
+                throw new IllegalStatusTransition("A correction cannot move from {$locked->current_status->value} to {$to->value}.");
+            }
+
+            $reason = trim($reason);
+
+            if ($reason === '') {
+                throw new IllegalStatusTransition('A correction needs a reason.');
+            }
+
+            $event = $this->append($locked, $latest->id, $to, DecisionType::Correction, $actor, $reason, $cause, Date::now());
+
+            $this->reload($application);
+
+            return $event;
+        });
+    }
+
+    /**
+     * The status the decision started from. For a correction, that of the outcome it replaced: after
+     * awaiting_interview -> awaiting_contract (outcome) -> interview_failed (correction), it is awaiting_interview.
+     */
+    private function statusBefore(ApplicationStatusEvent $event): ?ApplicationStatus
+    {
+        $previous = $event->previous_event_id === null ? null : ApplicationStatusEvent::query()->find($event->previous_event_id);
+
+        if ($previous === null) {
+            return null;
+        }
+
+        return $event->decision_type === DecisionType::Correction ? $this->statusBefore($previous) : $previous->to_status;
+    }
+
     /** The event nothing follows yet. The database guarantees there is exactly one. */
     private function latestEvent(Application $application): ApplicationStatusEvent
     {

@@ -57,6 +57,7 @@ return new class extends Migration {
                 ->references(['id', 'candidate_id'])->on('applications')->restrictOnDelete();
             $table->index(['candidate_id', 'document_type_id']);
             $table->index('application_id');
+            $table->unique(['id', 'application_id']);   // target of composite keys: a contract's file is its application's
         });
 
         DB::statement("ALTER TABLE documents ADD CONSTRAINT documents_archive_explained CHECK ((archived_at IS NULL AND archived_by IS NULL AND archive_reason IS NULL) OR (archived_at IS NOT NULL AND archived_by IS NOT NULL AND btrim(coalesce(archive_reason, '')) <> ''))");

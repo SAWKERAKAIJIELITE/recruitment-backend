@@ -28,7 +28,7 @@ return new class extends Migration {
         'closed',
     ];
 
-    private const DECISION_TYPES = ['created', 'outcome', 'exception', 'excuse_accepted', 'closure'];
+    private const DECISION_TYPES = ['created', 'outcome', 'exception', 'excuse_accepted', 'closure', 'correction'];
 
     public function up(): void
     {
@@ -118,7 +118,7 @@ return new class extends Migration {
         DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_first_is_created CHECK ((previous_event_id IS NULL) = (decision_type = 'created'))");
         DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_created_awaits_exam CHECK (decision_type <> 'created' OR to_status = 'awaiting_exam')");
         // Person-made decisions need a real reason and the staff user who made them.
-        DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_decisions_are_accountable CHECK (decision_type NOT IN ('exception', 'excuse_accepted', 'closure') OR (btrim(coalesce(reason, '')) <> '' AND actor_id IS NOT NULL))");
+        DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_decisions_are_accountable CHECK (decision_type NOT IN ('exception', 'excuse_accepted', 'closure', 'correction') OR (btrim(coalesce(reason, '')) <> '' AND actor_id IS NOT NULL))");
         // A decision cannot be dated after it was recorded (D-039).
         DB::statement('ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_not_recorded_before_it_happened CHECK (occurred_at <= created_at)');
 
