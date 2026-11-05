@@ -11,8 +11,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * Where, when and before whom interviews happen (D-059, D-061): a committee sitting (many candidates, each with their
- * own time from its start) or a one-off appointment (a sitting of one). It always has at least one member.
+ * Where, when and before whom interviews happen (D-059, D-061, D-067): a committee sitting, or a one-off sitting (a
+ * single interviewer, exactly one member). Both hold many candidates, each with their own time from its start. It
+ * always has at least one member, and no other sitting has the same start, place and members.
  *
  * @property string $id
  * @property SittingKind $kind

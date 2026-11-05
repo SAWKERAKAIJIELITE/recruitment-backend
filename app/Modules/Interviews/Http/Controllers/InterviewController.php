@@ -46,8 +46,9 @@ class InterviewController extends Controller
             'excused' => ['nullable', Rule::in(['0', '1', 'true', 'false'])],
             'sitting_id' => ['nullable', 'uuid'],
             'committee_name' => ['nullable', 'string', 'max:150'],
-            'job_position_id' => ['nullable', 'integer'],
-            'nominating_entity_id' => ['nullable', 'integer'],
+            'location' => ['nullable', 'string', 'max:150'],
+            'job_position_id' => ['nullable', 'integer', Rule::exists('job_positions', 'id')],
+            'nominating_entity_id' => ['nullable', 'integer', Rule::exists('nominating_entities', 'id')],
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
         ]);
@@ -63,6 +64,7 @@ class InterviewController extends Controller
             ->when(isset($filters['excused']), fn($query) => $request->boolean('excused') ? $query->whereExists($excuse) : $query->whereNotExists($excuse))
             ->when($filters['sitting_id'] ?? null, fn($query, $value) => $query->where('sitting_id', $value))
             ->when($filters['committee_name'] ?? null, fn($query, $value) => $query->whereHas('sitting', fn($sitting) => $sitting->where('committee_name', 'ilike', '%' . addcslashes($value, '\\%_') . '%')))
+            ->when($filters['location'] ?? null, fn($query, $value) => $query->whereHas('sitting', fn($sitting) => $sitting->where('location', 'ilike', '%' . addcslashes($value, '\\%_') . '%')))
             ->when($filters['job_position_id'] ?? null, fn($query, $value) => $query->whereHas('application', fn($application) => $application->where('job_position_id', $value)))
             ->when($filters['nominating_entity_id'] ?? null, fn($query, $value) => $query->whereHas('application', fn($application) => $application->where('nominating_entity_id', $value)))
             ->when($filters['from'] ?? null, fn($query, $date) => $query->where('scheduled_at', '>=', $date))
@@ -93,9 +95,8 @@ class InterviewController extends Controller
      * Schedule an interview
      *
      * Only for an application awaiting its interview (passed the exams, or by exception), and one waiting interview at
-     * a time. Book it into a committee sitting (`sitting_id`, optional `scheduled_at`), or give a one-off appointment
-     * (`scheduled_at`, `location`, `committee_name`, `members`), which becomes a sitting of one. 422 on
-     * `scheduled_at` before the sitting starts.
+     * a time. Book it into a sitting (`sitting_id`: a committee, or a one-off sitting's single interviewer), at the
+     * candidate's time `scheduled_at` (default: the sitting's start). 422 on `scheduled_at` before the sitting starts.
      */
     public function store(ScheduleInterviewRequest $request, Application $application, ManageInterviews $interviews): JsonResponse
     {
@@ -107,9 +108,8 @@ class InterviewController extends Controller
     /**
      * Reschedule an interview
      *
-     * With a `reason` (kept in its reschedules). Another committee sitting (`sitting_id`, optional `scheduled_at`), a new
-     * time alone (`scheduled_at`), or one-off fields (`location`, `committee_name`, `members`) for a new one-off
-     * appointment; what is not sent is kept from the current appointment.
+     * With a `reason` (kept in its reschedules). Another sitting (`sitting_id`; the time defaults to its start), a new
+     * time (`scheduled_at`; alone, in the same sitting), or both. 422 `same_appointment` when nothing changes.
      */
     public function reschedule(RescheduleInterviewRequest $request, Interview $interview, ManageInterviews $interviews): InterviewResource
     {

@@ -7,10 +7,14 @@ use App\Modules\Identity\Models\Role;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Identity\Support\AccessInvariants;
 use App\Modules\Identity\Support\AccessLog;
+use App\Modules\Identity\Support\AutomaticRoles;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
-/** Add or remove permissions of a ROLE (everyone holding the role is affected). */
+/**
+ * Add or remove permissions of a ROLE (everyone holding the role is affected). Automatic roles are checked again for
+ * everyone (D-070): a user whose direct grants no longer cover the role loses it, one whose grants now do gains it.
+ */
 class ManageRolePermissions
 {
     /** @param  list<string>  $permissionSlugs */
@@ -27,7 +31,11 @@ class ManageRolePermissions
             ]);
         }
 
-        $role->permissions()->syncWithoutDetaching($permissions->pluck('id')->all());
+        DB::transaction(function () use ($role, $permissions, $actor) {
+            $role->permissions()->syncWithoutDetaching($permissions->pluck('id')->all());
+            AutomaticRoles::syncEveryone($actor);
+            AccessInvariants::ensureSomeoneCanManageUsers();
+        });
 
         AccessLog::record('role_permissions_added', $actor, ['role' => $role->slug, 'permissions' => $permissionSlugs]);
 
@@ -36,8 +44,9 @@ class ManageRolePermissions
 
     public function remove(Role $role, Permission $permission, StaffUser $actor): Role
     {
-        DB::transaction(function () use ($role, $permission) {
+        DB::transaction(function () use ($role, $permission, $actor) {
             $role->permissions()->detach($permission->id);
+            AutomaticRoles::syncEveryone($actor);
 
             AccessInvariants::ensureSomeoneCanManageUsers();
         });

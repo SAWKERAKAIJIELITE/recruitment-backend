@@ -2,7 +2,7 @@
 
 namespace App\Modules\Interviews\Enums;
 
-/** A committee sitting (many candidates, each with a time) or a one-off appointment (a sitting of one; D-061). */
+/** A committee sitting, or a one-off sitting: a single interviewer who sees the candidates one by one (D-067). */
 enum SittingKind: string
 {
     case Committee = 'committee';

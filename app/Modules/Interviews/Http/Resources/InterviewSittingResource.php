@@ -13,7 +13,7 @@ class InterviewSittingResource extends JsonResource
     {
         return [
             'id' => $this->id,
-            /** committee (many candidates) or one_off (an appointment of one). */
+            /** committee, or one_off: a single interviewer who sees the candidates one by one. */
             'kind' => $this->kind->value,
             'starts_at' => $this->starts_at->toIso8601String(),
             'location' => $this->location,

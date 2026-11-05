@@ -181,9 +181,8 @@ return [
     */
 
     'custom' => [
-        'attribute-name' => [
-            'rule-name' => 'custom-message',
-        ],
+        'members.*.name' => ['required_without' => 'Give the member\'s name, or choose their account.'],
+        'members.*.staff_user_id' => ['prohibits' => 'A member with an account has the account\'s name: send no name with it.'],
     ],
 
     /*

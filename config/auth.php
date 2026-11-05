@@ -45,6 +45,11 @@ return [
             'driver' => 'sanctum',
             'provider' => 'staff_users',
         ],
+        // Candidates sitting an exam (D-072): a token per exam booking.
+        'candidate' => [
+            'driver' => 'sanctum',
+            'provider' => 'candidates',
+        ],
     ],
 
     /*
@@ -72,6 +77,10 @@ return [
         'staff_users' => [
             'driver' => 'eloquent',
             'model' => App\Modules\Identity\Models\StaffUser::class,
+        ],
+        'candidates' => [
+            'driver' => 'eloquent',
+            'model' => App\Modules\Recruitment\Models\Candidate::class,
         ],
 
         // 'users' => [

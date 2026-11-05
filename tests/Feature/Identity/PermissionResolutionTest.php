@@ -34,12 +34,12 @@ class PermissionResolutionTest extends TestCase
         $admin = StaffUserFactory::new()->withRole('system_admin')->create();
 
         $this->assertEqualsCanonicalizing(
-            ['reports.view', 'imports.manage', 'candidates.manage', 'interviews.manage', 'contracts.manage', 'audit.view_related'],
+            ['reports.view', 'imports.manage', 'candidates.manage', 'exams.manage', 'interviews.manage', 'contracts.manage', 'audit.view_related'],
             $staff->permissionSlugs()->all()
         );
         $this->assertEqualsCanonicalizing(['reports.view', 'audit.view'], $manager->permissionSlugs()->all());
         $this->assertEqualsCanonicalizing(
-            ['devices.approve' ,'reports.view', 'imports.manage', 'candidates.manage', 'exam_bank.manage', 'interviews.manage', 'contracts.manage', 'users.manage', 'users.add', 'audit.view'],
+            ['devices.approve' ,'reports.view', 'imports.manage', 'candidates.manage', 'exam_bank.manage', 'exams.manage', 'interviews.manage', 'contracts.manage', 'users.manage', 'users.add', 'audit.view'],
             $admin->permissionSlugs()->all()
         );
     }
@@ -51,6 +51,7 @@ class PermissionResolutionTest extends TestCase
 
             $this->assertFalse($user->can('attempts.extend'), "$role must not get attempts.extend implicitly");
             $this->assertFalse($user->can('exceptions.approve'), "$role must not get exceptions.approve implicitly");
+            $this->assertFalse($user->can('exam_results.correct'), "$role must not get exam_results.correct implicitly");
         }
     }
 

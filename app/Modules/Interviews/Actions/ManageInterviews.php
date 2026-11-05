@@ -6,7 +6,6 @@ use App\Modules\Audit\Support\AuditTrail;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Interviews\Enums\InterviewResult;
 use App\Modules\Interviews\Enums\InterviewStatus;
-use App\Modules\Interviews\Enums\SittingKind;
 use App\Modules\Interviews\Models\Interview;
 use App\Modules\Interviews\Models\InterviewSitting;
 use App\Modules\Recruitment\Actions\ApplicationLifecycle;
@@ -22,7 +21,7 @@ use Illuminate\Validation\ValidationException;
 /**
  * The life of an interview (analysis doc §07, §08; D-059, D-061):
  *  - schedule: only for an application awaiting its interview (passed the exams, or by exception), one at a time;
- *    one by one, or several applications into one committee sitting at successive times;
+ *    one by one, or several applications into one sitting at successive times;
  *  - reschedule or cancel a waiting interview, with a reason (kept);
  *  - record the committee's result, which moves the application (the interview is the cause of that event);
  *  - correct a recorded result (individual permission): a new revision, and a correction event when the result
@@ -30,32 +29,28 @@ use Illuminate\Validation\ValidationException;
  *  - accept an absence excuse (individual permission): back to awaiting_interview, optionally with the next
  *    appointment. The absent result stays: the new appointment is a new round.
  *
- * An appointment is either ['sitting_id' => ..., 'scheduled_at' => ?] (a committee sitting; the time defaults to its
- * start) or a one-off ['scheduled_at' => ..., 'location' => ..., 'committee_name' => ?, 'members' => [...]], which
- * becomes a sitting of one. When rescheduling, what is not sent stays as it was.
+ * An appointment is ['sitting_id' => ..., 'scheduled_at' => ?]: a sitting (a committee, or a one-off sitting's single
+ * interviewer; D-067) and the candidate's time in it, by default its start. When rescheduling, what is not sent
+ * stays as it was.
  */
 class ManageInterviews
 {
     private const RESULT_FIELDS = ['result', 'held_at', 'scientific_grade', 'general_grade', 'overall_grade', 'committee_summary', 'notes'];
 
-    private const ONE_OFF_FIELDS = ['location', 'committee_name', 'members'];
-
-    public function __construct(private readonly ApplicationLifecycle $lifecycle, private readonly ManageSittings $sittings)
-    {
-    }
+    public function __construct(private readonly ApplicationLifecycle $lifecycle) {}
 
     public function schedule(Application $application, array $appointment, StaffUser $actor): Interview
     {
         return DB::transaction(function () use ($application, $appointment, $actor) {
             $application = $this->lockBookable($application, 'application');
-            [$sitting, $time] = $this->resolve($appointment, null, $actor);
+            [$sitting, $time] = $this->resolve($appointment, null);
 
             return $this->book($application, $sitting, $time, $actor);
         });
     }
 
     /**
-     * Books several applications into one committee sitting, in the order given (the priority order the staff chose),
+     * Books several applications into one sitting, in the order given (the priority order the staff chose),
      * from `$firstAt` (default: the sitting's start) every `$minutesBetween` minutes. All or nothing.
      *
      * @param  list<string>  $applicationIds
@@ -64,7 +59,7 @@ class ManageInterviews
     public function bookMany(InterviewSitting $sitting, array $applicationIds, ?CarbonInterface $firstAt, int $minutesBetween, StaffUser $actor): array
     {
         return DB::transaction(function () use ($sitting, $applicationIds, $firstAt, $minutesBetween, $actor) {
-            $sitting = $this->committeeSitting($sitting->id, 'sitting');
+            $sitting = InterviewSitting::query()->whereKey($sitting->id)->sharedLock()->firstOrFail();
             $time = Date::parse($firstAt ?? $sitting->starts_at);
             $this->assertWithinSitting($sitting, $time, 'first_at');
             $booked = [];
@@ -84,7 +79,7 @@ class ManageInterviews
         return DB::transaction(function () use ($interview, $appointment, $reason, $actor) {
             $interview = $this->lockScheduled($interview);
             $from = ['sitting_id' => $interview->sitting_id, 'scheduled_at' => $interview->scheduled_at];
-            [$sitting, $time] = $this->resolve($appointment, $interview, $actor);
+            [$sitting, $time] = $this->resolve($appointment, $interview);
 
             if ($sitting->id === $from['sitting_id'] && $time->equalTo($from['scheduled_at'])) {
                 $this->fail('scheduled_at', 'interviews.same_appointment');
@@ -134,7 +129,7 @@ class ManageInterviews
             $interview = $this->lockScheduled($interview);
             $this->assertStatus($application, ApplicationStatus::AwaitingInterview);
 
-            $values = $this->resultValues($data + ['held_at' => $interview->scheduled_at], $interview);
+            $values = $this->resultValues($data + [$data['held_at'] ?? 'held_at' => $interview->scheduled_at], $interview);
             $now = Date::now();
 
             $interview->forceFill($values + ['status' => InterviewStatus::Recorded, 'recorded_by' => $actor->id, 'recorded_at' => $now])->save();
@@ -211,7 +206,7 @@ class ManageInterviews
                 return null;
             }
 
-            [$sitting, $time] = $this->resolve($appointment, null, $actor);
+            [$sitting, $time] = $this->resolve($appointment, null);
 
             return $this->book($application, $sitting, $time, $actor);
         });
@@ -235,64 +230,25 @@ class ManageInterviews
     }
 
     /**
-     * The sitting and the time an appointment leads to. A committee sitting is used as it is; one-off fields make a
-     * new one-off sitting, taking what is not sent from the interview being rescheduled (its place, committee name and
-     * members). A new time alone keeps a committee booking in its sitting; a one-off appointment gets a new sitting, so
-     * the old one keeps where and when it was.
+     * The sitting and the time an appointment leads to. When rescheduling, a new time alone keeps the sitting, and a
+     * new sitting alone takes its start.
      *
      * @return array{InterviewSitting, CarbonInterface}
      */
-    private function resolve(array $appointment, ?Interview $current, StaffUser $actor): array
+    private function resolve(array $appointment, ?Interview $current): array
     {
         $time = isset($appointment['scheduled_at']) ? Date::parse($appointment['scheduled_at']) : null;
+        $sittingId = $appointment['sitting_id'] ?? $current?->sitting_id;
 
-        if (isset($appointment['sitting_id'])) {
-            $sitting = $this->committeeSitting($appointment['sitting_id'], 'sitting_id');
-            $time ??= $current?->sitting_id === $sitting->id ? $current->scheduled_at : $sitting->starts_at;
-            $this->assertWithinSitting($sitting, $time, 'scheduled_at');
-
-            return [$sitting, Date::parse($time)];
+        if ($sittingId === null) {
+            $this->fail('sitting_id', 'interviews.sitting_required');
         }
 
-        $currentSitting = $current?->sitting;
-        $oneOff = array_intersect_key($appointment, array_flip(self::ONE_OFF_FIELDS)) !== [] || $currentSitting?->isOneOff() === true;
-
-        if ($current !== null && ! $oneOff) {
-            if ($time === null) {
-                $this->fail('scheduled_at', 'interviews.same_appointment');
-            }
-
-            $this->assertWithinSitting($currentSitting, $time, 'scheduled_at');
-
-            return [$currentSitting, $time];
-        }
-
-        $time ??= $current?->scheduled_at;
-        $location = $appointment['location'] ?? $currentSitting?->location;
-        $members = $appointment['members'] ?? ($currentSitting === null ? [] : Committee::of($currentSitting->members()));
-
-        if ($time === null || $location === null || $members === []) {
-            $this->fail('scheduled_at', 'interviews.appointment_incomplete');
-        }
-
-        $sitting = $this->sittings->create([
-            'starts_at' => $time,
-            'location' => $location,
-            'committee_name' => array_key_exists('committee_name', $appointment) ? $appointment['committee_name'] : $currentSitting?->committee_name,
-        ], $members, $actor, SittingKind::OneOff);
+        $sitting = InterviewSitting::query()->whereKey($sittingId)->sharedLock()->firstOrFail();
+        $time ??= $current?->sitting_id === $sitting->id ? $current->scheduled_at : $sitting->starts_at;
+        $this->assertWithinSitting($sitting, Date::parse($time), 'scheduled_at');
 
         return [$sitting, Date::parse($time)];
-    }
-
-    private function committeeSitting(string $id, string $field): InterviewSitting
-    {
-        $sitting = InterviewSitting::query()->whereKey($id)->sharedLock()->firstOrFail();
-
-        if ($sitting->isOneOff()) {
-            $this->fail($field, 'interviews.not_a_committee_sitting');
-        }
-
-        return $sitting;
     }
 
     private function assertWithinSitting(InterviewSitting $sitting, CarbonInterface $time, string $field): void

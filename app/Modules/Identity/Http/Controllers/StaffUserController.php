@@ -5,8 +5,10 @@ namespace App\Modules\Identity\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Modules\Identity\Actions\ManageStaffAccess;
 use App\Modules\Identity\Actions\RegisterStaffUser;
+use App\Modules\Identity\Actions\ResetStaffPassword;
 use App\Modules\Identity\Http\Requests\AddUserRoleRequest;
 use App\Modules\Identity\Http\Requests\RegisterUserRequest;
+use App\Modules\Identity\Http\Requests\ResetUserPasswordRequest;
 use App\Modules\Identity\Http\Requests\SetUserPermissionRequest;
 use App\Modules\Identity\Http\Resources\StaffUserAccessResource;
 use App\Modules\Identity\Http\Resources\StaffUserSummaryResource;
@@ -33,7 +35,24 @@ class StaffUserController extends Controller
         return new StaffUserAccessResource($user->load('roles', 'permissions'));
     }
 
-    /** Give a staff user a role. */
+    /**
+     * Set a new password
+     *
+     * For a forgotten password: the administrator sets a new one and tells the user. Every session of the user ends
+     * (their tokens are deleted); the device stays approved. Same strength rules as a new account
+     * (`password_confirmation` too).
+     */
+    public function resetPassword(ResetUserPasswordRequest $request, StaffUser $user, ResetStaffPassword $reset): StaffUserAccessResource
+    {
+        return new StaffUserAccessResource($reset->execute($user, $request->validated('password'), $request->user()));
+    }
+
+    /**
+     * Give a staff user a role
+     *
+     * Its permissions then come from the role: the user's own grants and denials of those permissions are cleared.
+     * A role the system had added (all its permissions granted directly) becomes a role given by hand.
+     */
     public function addRole(AddUserRoleRequest $request, StaffUser $user, ManageStaffAccess $manage): StaffUserAccessResource
     {
         $role = Role::where('slug', $request->validated('role'))->firstOrFail();
@@ -55,7 +74,12 @@ class StaffUserController extends Controller
         return StaffUserAccessResource::make($user)->response()->setStatusCode(201);
     }
 
-    /** Take a role away from a staff user. A role the user does not hold gives 404. */
+    /**
+     * Take a role away from a staff user
+     *
+     * A role the user does not hold gives 404. Taking away a role the system added also takes away the direct
+     * grants it stood for (otherwise it would come straight back).
+     */
     public function removeRole(Request $request, StaffUser $user, Role $role, ManageStaffAccess $manage): StaffUserAccessResource
     {
         return new StaffUserAccessResource($manage->removeRole($user, $role, $request->user()));
@@ -64,7 +88,9 @@ class StaffUserController extends Controller
     /**
      * Grant or deny one permission to one staff user
      *
-     * `grant` adds it whatever the roles say; `deny` removes it even if a role gives it.
+     * `grant` adds it whatever the roles say; `deny` removes it even if a role gives it. When the user's direct
+     * grants now hold every permission of a role they do not have, that role is added (automatic, with a note); when
+     * their denials cover every permission of a role they hold, that role is removed (the denials get a note).
      */
     public function setPermission(SetUserPermissionRequest $request, StaffUser $user, ManageStaffAccess $manage): StaffUserAccessResource
     {

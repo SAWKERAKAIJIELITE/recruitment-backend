@@ -27,6 +27,8 @@ class RolesAndPermissionsSeeder extends Seeder
         'exam_bank.manage' => 'بنك الأسئلة وخطط الاختبار',
         'pass_policies.manage' => 'إضافة إصدار جديد من قواعد النجاح',
         'exams.take' => 'تقديم الاختبار',
+        'exams.manage' => 'جدولة جلسات الاختبار وإدخال العلامات اليدوية',
+        'exam_results.correct' => 'تصحيح علامة يدوية بعد صدور نتيجة الاختبار',
         'attempts.extend' => 'تعديل مدة محاولة نشطة',
         'exceptions.approve' => 'استثناء الرسوب / قبول العذر',
         'applications.close' => 'إغلاق طلب الترشيح وإنهاؤه',
@@ -41,7 +43,7 @@ class RolesAndPermissionsSeeder extends Seeder
     ];
 
     /** The ✓* cells: may be granted to individual users, never attached to a role. */
-    private const INDIVIDUAL_ONLY = ['attempts.extend', 'exceptions.approve', 'applications.close', 'imports.approve', 'interviews.correct', 'pass_policies.manage'];
+    private const INDIVIDUAL_ONLY = ['attempts.extend', 'exceptions.approve', 'applications.close', 'imports.approve', 'interviews.correct', 'pass_policies.manage', 'exam_results.correct'];
 
     private const ROLES = [
         'general_manager' => [
@@ -57,6 +59,7 @@ class RolesAndPermissionsSeeder extends Seeder
                 'reports.view',
                 'imports.manage',
                 'candidates.manage',
+                'exams.manage',
                 'interviews.manage',
                 'contracts.manage',
                 'audit.view_related',
@@ -75,6 +78,7 @@ class RolesAndPermissionsSeeder extends Seeder
                 'imports.manage',
                 'candidates.manage',
                 'exam_bank.manage',
+                'exams.manage',
                 'interviews.manage',
                 'contracts.manage',
                 'users.manage',

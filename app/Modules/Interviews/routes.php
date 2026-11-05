@@ -21,6 +21,7 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
     Route::middleware('can:interviews.manage')->group(function () {
         Route::post('interview-sittings', [InterviewSittingController::class, 'store']);
         Route::patch('interview-sittings/{sitting}', [InterviewSittingController::class, 'update'])->whereUuid('sitting');
+        Route::delete('interview-sittings/{sitting}', [InterviewSittingController::class, 'destroy'])->whereUuid('sitting');
         Route::post('interview-sittings/{sitting}/bookings', [InterviewSittingController::class, 'book'])->whereUuid('sitting');
         Route::post('applications/{application}/interviews', [InterviewController::class, 'store'])->whereUuid('application');
         Route::post('interviews/{interview}/reschedule', [InterviewController::class, 'reschedule'])->whereUuid('interview');

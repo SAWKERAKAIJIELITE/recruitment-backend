@@ -74,10 +74,13 @@ return [
     'present' => 'يجب أن يكون :attribute موجوداً.',
     'prohibited' => 'الحقل :attribute غير مسموح به.',
     'prohibited_if' => 'الحقل :attribute غير مسموح به هنا.',
+    'prohibits' => 'لا يُرسل :other مع :attribute.',
     'regex' => 'صيغة :attribute غير صالحة.',
     'required' => 'الحقل :attribute مطلوب.',
     'required_if' => 'الحقل :attribute مطلوب عندما يكون :other هو :value.',
+    'required_unless' => 'الحقل :attribute مطلوب ما لم يكن :other من :values.',
     'required_with' => 'الحقل :attribute مطلوب عند وجود :values.',
+    'required_without' => 'الحقل :attribute مطلوب عند غياب :values.',
     'same' => 'يجب أن يتطابق :attribute مع :other.',
     'size' => [
         'array' => 'يجب أن يحتوي :attribute على :size عنصراً.',
@@ -92,7 +95,10 @@ return [
     'url' => 'صيغة الرابط :attribute غير صالحة.',
     'uuid' => 'يجب أن يكون :attribute معرّفاً (UUID) صحيحاً.',
 
-    'custom' => [],
+    'custom' => [
+        'members.*.name' => ['required_without' => 'اكتب اسم العضو، أو اختر حسابه.'],
+        'members.*.staff_user_id' => ['prohibits' => 'عضو له حساب اسمه اسم حسابه: لا يُرسل معه اسم.'],
+    ],
 
     // Names shown instead of the raw keys.
     'attributes' => [

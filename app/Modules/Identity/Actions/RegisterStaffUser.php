@@ -27,9 +27,9 @@ class RegisterStaffUser
             }
         }
 
-        $user = DB::transaction(function () use ($data, $role) {
+        $user = DB::transaction(function () use ($data, $role, $actor) {
             $user = StaffUser::create($data);
-            $user->roles()->attach($role->id);
+            $user->roles()->attach($role->id, ['assigned_by' => $actor->id, 'created_at' => now()]);
 
             return $user;
         });

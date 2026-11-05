@@ -5,6 +5,7 @@ namespace App\Modules\Interviews\Database\Seeders;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Interviews\Actions\ManageInterviews;
 use App\Modules\Interviews\Actions\ManageSittings;
+use App\Modules\Interviews\Enums\SittingKind;
 use App\Modules\Interviews\Models\Interview;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Models\Application;
@@ -14,7 +15,7 @@ use Illuminate\Database\Seeder;
 /**
  * LOCAL DEVELOPMENT ONLY. Interviews through the real actions, for the demo applications awaiting their interview:
  * a sitting three days ago with recorded results (passed, passed, failed, absent), a sitting in five days with two
- * bookings, and a one-off appointment. Needs RecruitmentDemoSeeder and DevUsersSeeder ("staff" holds
+ * bookings, and a one-off sitting (one interviewer) with two candidates. Needs RecruitmentDemoSeeder and DevUsersSeeder ("staff" holds
  * interviews.manage). Runs once.
  */
 class InterviewsDemoSeeder extends Seeder
@@ -60,15 +61,17 @@ class InterviewsDemoSeeder extends Seeder
             $this->interviews->schedule($application, ['sitting_id' => $next->id, 'scheduled_at' => $next->starts_at->addMinutes(45 * $index)], $staff);
         }
 
-        if (($oneOff = $waiting->get(count($results) + 2)) !== null) {
-            $this->interviews->schedule($oneOff, [
-                'scheduled_at' => $today->addDays(2)->setTime(11, 0),
-                'location' => 'اتصال مرئي',
-                'committee_name' => 'لجنة خاصة',
-                'members' => [['name' => 'محمد السالم', 'capacity' => 'chair', 'staff_user_id' => $staff->id]],
-            ], $staff);
+        $single = $this->sittings->create(
+            ['starts_at' => $today->addDays(2)->setTime(11, 0), 'location' => 'اتصال مرئي'],
+            [['capacity' => 'chair', 'staff_user_id' => $staff->id]],
+            $staff,
+            SittingKind::OneOff,
+        );
+
+        foreach ($waiting->slice(count($results) + 2, 2)->values() as $index => $application) {
+            $this->interviews->schedule($application, ['sitting_id' => $single->id, 'scheduled_at' => $single->starts_at->addMinutes(40 * $index)], $staff);
         }
 
-        $this->command?->info('Interviews demo: ' . Interview::query()->count() . ' interviews in 2 sittings and a one-off appointment.');
+        $this->command?->info('Interviews demo: ' . Interview::query()->count() . ' interviews in 2 committee sittings and a one-off sitting.');
     }
 }

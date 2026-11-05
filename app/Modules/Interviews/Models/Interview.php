@@ -64,12 +64,6 @@ class Interview extends Model implements StatusChangeCause
         return $this->belongsTo(InterviewSitting::class, 'sitting_id');
     }
 
-    // /** The members of a one-off interview's own committee (a booked interview uses its sitting's). */
-    // public function ownMembers(): HasMany
-    // {
-    //     return $this->hasMany(InterviewMember::class, 'interview_id')->orderBy('position');
-    // }
-
     public function reschedules(): HasMany
     {
         return $this->hasMany(InterviewReschedule::class)->orderBy('id');
@@ -90,11 +84,10 @@ class Interview extends Model implements StatusChangeCause
         return $this->belongsTo(StaffUser::class, 'cancelled_by');
     }
 
-    // /** @return Collection<int, InterviewMember> the committee that interviews (or interviewed) the candidate */
-    // public function committee(): Collection
-    // {
-    //     return $this->sitting_id === null ? $this->ownMembers : $this->sitting->members;
-    // }
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(StaffUser::class, 'created_by');
+    }
 
     public function isScheduled(): bool
     {

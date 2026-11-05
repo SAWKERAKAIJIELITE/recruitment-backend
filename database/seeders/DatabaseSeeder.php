@@ -6,6 +6,7 @@ use App\Modules\Contracts\Database\Seeders\ContractsDemoSeeder;
 use App\Modules\Contracts\Database\Seeders\ContractTypesSeeder;
 use App\Modules\Documents\Database\Seeders\DocumentsDemoSeeder;
 use App\Modules\Documents\Database\Seeders\DocumentTypesSeeder;
+use App\Modules\Exams\Database\Seeders\ExamSessionsDemoSeeder;
 use App\Modules\Exams\Database\Seeders\ExamsDemoSeeder;
 use App\Modules\Exams\Database\Seeders\ExamSubjectsSeeder;
 use App\Modules\Identity\Database\Seeders\DevUsersSeeder;
@@ -43,6 +44,7 @@ class DatabaseSeeder extends Seeder
             $this->call(ContractsDemoSeeder::class);
             $this->call(DocumentsDemoSeeder::class);
             $this->call(InterviewsDemoSeeder::class);
+            $this->call(ExamSessionsDemoSeeder::class);   // last: it moves applications on yesterday
         }
     }
 }

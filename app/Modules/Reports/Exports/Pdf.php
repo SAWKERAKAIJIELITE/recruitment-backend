@@ -5,18 +5,18 @@ namespace App\Modules\Reports\Exports;
 use Illuminate\Support\Facades\File;
 use Mpdf\Mpdf;
 
-/** Renders a Blade view to a right-to-left Arabic PDF (mPDF), with the page number in the footer. */
+/** Renders a Blade view to a right-to-left Arabic PDF (mPDF), with the page number in the footer; A3 when wide. */
 final class Pdf
 {
     /** @param array<string, mixed> $data */
-    public static function render(string $view, array $data, ReportHeader $header, bool $landscape = false): string
+    public static function render(string $view, array $data, ReportHeader $header, bool $landscape = false, bool $wide = false): string
     {
         $tempDir = storage_path('framework/cache/mpdf');
         File::ensureDirectoryExists($tempDir);
 
         $pdf = new Mpdf([
             'mode' => 'utf-8',
-            'format' => $landscape ? 'A4-L' : 'A4',
+            'format' => ($wide ? 'A3' : 'A4') . ($landscape ? '-L' : ''),
             'default_font' => 'xbriyaz',
             'directionality' => 'rtl',
             'autoScriptToLang' => true,

@@ -19,7 +19,7 @@ use Tests\Support\RecruitmentTestHelpers;
 use Tests\Support\StaffTestHelpers;
 use Tests\TestCase;
 
-/** Interviews: sittings, appointments, results, corrections, excuses (D-059). */
+/** Interviews: sittings, appointments, results, corrections, excuses (D-059, D-061, D-067). */
 class InterviewApiTest extends TestCase
 {
     use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
@@ -27,6 +27,9 @@ class InterviewApiTest extends TestCase
     private const GRADES = ['scientific_grade' => 'very_good', 'general_grade' => 'good', 'overall_grade' => 'very_good'];
 
     private StaffUser $staff;
+
+    /** Sittings made by sitting(), so each gets its own room unless one is given (the same one twice is a duplicate). */
+    private int $sittings = 0;
 
     protected function setUp(): void
     {
@@ -56,7 +59,15 @@ class InterviewApiTest extends TestCase
     private function sitting(array $overrides = []): string
     {
         return $this->asStaff($this->staff)->postJson('/api/v1/staff/interview-sittings', $overrides + [
-            'starts_at' => '2026-10-30T08:00:00Z', 'location' => 'مبنى الإدارة - القاعة 2', 'committee_name' => 'لجنة دمشق الأولى', 'members' => $this->members(),
+            'starts_at' => '2026-10-30T08:00:00Z', 'location' => 'مبنى الإدارة - القاعة ' . (2 + $this->sittings++), 'committee_name' => 'لجنة دمشق الأولى', 'members' => $this->members(),
+        ])->assertCreated()->json('data.id');
+    }
+
+    /** A one-off sitting: one interviewer. */
+    private function oneOffSitting(array $overrides = []): string
+    {
+        return $this->asStaff($this->staff)->postJson('/api/v1/staff/interview-sittings', $overrides + [
+            'kind' => 'one_off', 'starts_at' => '2026-11-02T10:00:00Z', 'location' => 'اتصال مرئي', 'members' => [['capacity' => 'chair', 'staff_user_id' => $this->staff->id]],
         ])->assertCreated()->json('data.id');
     }
 
@@ -78,11 +89,6 @@ class InterviewApiTest extends TestCase
     private function reschedule(string $interview, array $body): \Illuminate\Testing\TestResponse
     {
         return $this->asStaff($this->staff)->postJson("/api/v1/staff/interviews/{$interview}/reschedule", $body + ['reason' => 'طلب المرشح']);
-    }
-
-    private function oneOff(array $overrides = []): array
-    {
-        return $overrides + ['scheduled_at' => '2026-11-02T10:00:00Z', 'location' => 'اتصال مرئي', 'committee_name' => 'لجنة خاصة', 'members' => [['name' => 'سامر', 'capacity' => 'chair', 'staff_user_id' => $this->staff->id]]];
     }
 
     // ---- sittings and appointments ----
@@ -115,27 +121,161 @@ class InterviewApiTest extends TestCase
             ->assertStatus(422)->assertJsonPath('errors.scheduled_at.0', __('interviews.before_sitting_start', ['start' => '2026-10-30T08:00:00+00:00']));
     }
 
-    public function test_a_one_off_appointment_is_a_sitting_of_one(): void
+    public function test_a_one_off_sitting_is_one_interviewer_who_sees_many_candidates(): void
     {
-        $application = $this->awaitingInterview();
+        $url = '/api/v1/staff/interview-sittings';
+        $members = [['name' => 'سامر', 'capacity' => 'chair'], ['name' => 'خالد', 'capacity' => 'member']];
 
-        $this->schedule($application, ['scheduled_at' => '2026-11-02T10:00:00Z'])->assertStatus(422)->assertJsonValidationErrors(['location', 'members']);
-        $this->schedule($application, ['sitting_id' => $this->sitting(), 'members' => $this->members()])->assertStatus(422)->assertJsonPath('errors.members.0', __('interviews.one_off_fields_with_sitting'));
+        $this->asStaff($this->staff)->postJson($url, ['kind' => 'one_off', 'starts_at' => '2026-11-02T10:00:00Z', 'location' => 'اتصال مرئي', 'members' => $members])
+            ->assertStatus(422)->assertJsonValidationErrors('members');
+        $sitting = $this->oneOffSitting();
 
-        $response = $this->schedule($application, $this->oneOff())
+        $this->schedule($this->awaitingInterview('11111111111'), ['sitting_id' => $sitting])
             ->assertCreated()
             ->assertJsonPath('data.sitting.kind', 'one_off')
-            ->assertJsonPath('data.sitting.starts_at', '2026-11-02T10:00:00+00:00')
             ->assertJsonPath('data.location', 'اتصال مرئي')
-            ->assertJsonPath('data.members.0.staff_user_id', $this->staff->id);
+            ->assertJsonPath('data.committee_name', null)
+            ->assertJsonCount(1, 'data.members')
+            ->assertJsonPath('data.members.0.staff_user_id', $this->staff->id)
+            ->assertJsonPath('data.members.0.name', $this->staff->full_name);
+        $this->schedule($this->awaitingInterview('22222222222'), ['sitting_id' => $sitting, 'scheduled_at' => '2026-11-02T10:40:00Z'])->assertCreated();
 
-        // Nobody else can be booked into it, and it is not listed with the committee sittings.
-        $this->schedule($this->awaitingInterview('22222222222'), ['sitting_id' => $response->json('data.sitting.id')])
-            ->assertStatus(422)->assertJsonPath('errors.sitting_id.0', __('interviews.not_a_committee_sitting'));
-        $this->asStaff($this->staff)->getJson('/api/v1/staff/interview-sittings?from=2026-11-01')->assertJsonCount(0, 'data');
-        $this->asStaff($this->staff)->getJson('/api/v1/staff/interview-sittings?kind=one_off')->assertJsonCount(1, 'data');
-        $this->asStaff($this->staff)->patchJson('/api/v1/staff/interview-sittings/' . $response->json('data.sitting.id'), ['location' => 'مكان آخر'])
-            ->assertStatus(422)->assertJsonValidationErrors('sitting');
+        $this->asStaff($this->staff)->getJson("{$url}/{$sitting}")->assertOk()->assertJsonCount(2, 'data.interviews');
+        $this->sitting();
+        $this->asStaff($this->staff)->getJson($url)->assertJsonCount(2, 'data');
+        $this->asStaff($this->staff)->getJson("{$url}?kind=one_off")->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $sitting);
+        $this->asStaff($this->staff)->getJson("{$url}?kind=committee")->assertJsonCount(1, 'data');
+
+        // Edited like any sitting, but it keeps one member and its kind.
+        $this->asStaff($this->staff)->patchJson("{$url}/{$sitting}", ['location' => 'مكتب المدير'])->assertOk()->assertJsonPath('data.location', 'مكتب المدير');
+        $this->asStaff($this->staff)->patchJson("{$url}/{$sitting}", ['members' => $members])
+            ->assertStatus(422)->assertJsonPath('errors.members.0', __('interviews.one_off_one_member'));
+        $this->asStaff($this->staff)->patchJson("{$url}/{$sitting}", ['members' => [['name' => 'محمد', 'capacity' => 'member']]])->assertOk()->assertJsonPath('data.members.0.name', 'محمد');
+        $this->asStaff($this->staff)->patchJson("{$url}/{$sitting}", ['kind' => 'committee'])->assertStatus(422)->assertJsonValidationErrors('kind');
+    }
+
+    public function test_the_same_sitting_cannot_be_entered_twice(): void
+    {
+        $url = '/api/v1/staff/interview-sittings';
+        $first = $this->sitting(['location' => 'مبنى الإدارة - القاعة 2']);
+        $same = [
+            'starts_at' => '2026-10-30T08:00:00Z',
+            'location' => '  مبنى  الادارة - القاعه 2 ',                                                            // spaces, ا for إ, ه for ة
+            'committee_name' => 'اسم آخر',                                                                            // the name does not make it another sitting
+            'members' => [['name' => 'خالد العمر', 'capacity' => 'chair'], ['name' => 'محمد  السالم', 'capacity' => 'secretary']],   // order and capacity neither
+        ];
+
+        $this->asStaff($this->staff)->postJson($url, $same)
+            ->assertStatus(422)->assertJsonPath('errors.starts_at.0', __('interviews.duplicate_sitting', ['id' => $first]));
+        $this->asStaff($this->staff)->postJson($url, ['members' => [['name' => 'خالد العمر', 'capacity' => 'chair']]] + $same)->assertCreated();   // other members
+        $this->asStaff($this->staff)->postJson($url, ['location' => 'القاعة 5'] + $same)->assertCreated();                                     // another place
+        $later = $this->asStaff($this->staff)->postJson($url, ['starts_at' => '2026-10-30T10:00:00Z'] + $same)->assertCreated()->json('data.id');   // another time
+
+        // Nor made the same afterwards.
+        $this->asStaff($this->staff)->patchJson("{$url}/{$later}", ['starts_at' => '2026-10-30T08:00:00Z'])
+            ->assertStatus(422)->assertJsonPath('errors.starts_at.0', __('interviews.duplicate_sitting', ['id' => $first]));
+        $this->assertSame('2026-10-30 10:00:00+00', DB::table('interview_sittings')->where('id', $later)->value('starts_at'));
+    }
+
+    public function test_a_member_with_an_account_carries_the_accounts_name(): void
+    {
+        $url = '/api/v1/staff/interview-sittings';
+        $base = ['starts_at' => '2026-11-01T08:00:00Z', 'location' => 'القاعة 7', 'committee_name' => 'لجنة'];
+        $colleague = StaffUserFactory::new()->create(['first_name' => 'rami', 'last_name' => 'haddad']);
+
+        $errors = $this->asStaff($this->staff)->postJson($url, $base + ['members' => [['name' => 'اسم آخر', 'capacity' => 'chair', 'staff_user_id' => $colleague->id]]])->assertStatus(422)->json('errors');
+        $this->assertSame(['عضو له حساب اسمه اسم حسابه: لا يُرسل معه اسم.'], $errors['members.0.staff_user_id']);
+        $errors = $this->asStaff($this->staff)->postJson($url, $base + ['members' => [['capacity' => 'chair']]])->assertStatus(422)->json('errors');
+        $this->assertSame(['اكتب اسم العضو، أو اختر حسابه.'], $errors['members.0.name']);
+
+        $sitting = $this->asStaff($this->staff)->postJson($url, $base + ['members' => [['capacity' => 'chair', 'staff_user_id' => $colleague->id], ['name' => 'خالد العمر', 'capacity' => 'member']]])
+            ->assertCreated()
+            ->assertJsonPath('data.members.0', ['name' => 'Rami Haddad', 'capacity' => ['value' => 'chair', 'label' => 'رئيس اللجنة'], 'staff_user_id' => $colleague->id])
+            ->assertJsonPath('data.members.1.name', 'خالد العمر')
+            ->json('data.id');
+
+        // The database sets it on every write, whatever is sent.
+        DB::table('interview_members')->where('sitting_id', $sitting)->where('position', 1)->update(['name' => 'منتحل']);
+        $this->assertSame('Rami Haddad', DB::table('interview_members')->where('sitting_id', $sitting)->where('position', 1)->value('name'));
+
+        // A renamed account renames its seats on sittings without a result; a sitting with a result keeps its names.
+        $held = $this->asStaff($this->staff)->postJson($url, ['location' => 'القاعة 8', 'starts_at' => '2026-10-30T08:00:00Z'] + $base + ['members' => [['capacity' => 'chair', 'staff_user_id' => $colleague->id]]])->assertCreated()->json('data.id');
+        $interview = $this->scheduled($this->awaitingInterview(), $held);
+        $this->record($interview, ['result' => 'passed', 'held_at' => '2026-10-30T08:30:00Z'] + self::GRADES)->assertOk();
+        $colleague->update(['last_name' => 'haddadin']);
+
+        $this->assertSame('Rami Haddadin', DB::table('interview_members')->where('sitting_id', $sitting)->where('position', 1)->value('name'));
+        $this->assertSame('Rami Haddad', DB::table('interview_members')->where('sitting_id', $held)->value('name'));
+
+        // An inactive account does not sit on a new committee.
+        $colleague->update(['is_active' => false]);
+        $this->asStaff($this->staff)->postJson($url, ['location' => 'القاعة 9'] + $base + ['members' => [['capacity' => 'chair', 'staff_user_id' => $colleague->id]]])
+            ->assertStatus(422)->assertJsonValidationErrors('members.0.staff_user_id');
+    }
+
+    public function test_a_staff_user_and_the_sittings_they_sit_on(): void
+    {
+        $sitting = $this->oneOffSitting();
+        $this->sitting();
+
+        $this->asStaff($this->staff)->getJson("/api/v1/staff/interview-sittings?member={$this->staff->id}")->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $sitting);
+        $this->assertSame([$sitting], $this->staff->interviewSittings()->pluck('interview_sittings.id')->all());
+        $this->assertSame('chair', $this->staff->interviewSittings()->first()->pivot->capacity);
+        $this->assertCount(1, $this->staff->interviewMemberships);
+        $this->assertCount(2, $this->staff->createdInterviewSittings);
+
+        $interview = $this->scheduled($this->awaitingInterview(), $sitting);
+        $this->assertSame([$interview], $this->staff->scheduledInterviews()->pluck('id')->all());
+    }
+
+    public function test_one_sitting_lists_its_interviews_without_repeating_itself(): void
+    {
+        $sitting = $this->sitting();
+        $this->scheduled($this->awaitingInterview(), $sitting);
+
+        $interview = $this->asStaff($this->staff)->getJson("/api/v1/staff/interview-sittings/{$sitting}")
+            ->assertOk()
+            ->assertJsonPath('data.location', 'مبنى الإدارة - القاعة 2')
+            ->assertJsonCount(2, 'data.members')
+            ->json('data.interviews.0');
+
+        $this->assertSame($sitting, $interview['sitting_id']);
+        foreach (['sitting', 'location', 'committee_name', 'members'] as $field) {
+            $this->assertArrayNotHasKey($field, $interview);
+        }
+        $this->assertSame('01234567890', $interview['application']['candidate']['national_number']);
+    }
+
+    public function test_a_sitting_without_bookings_can_be_deleted(): void
+    {
+        $url = '/api/v1/staff/interview-sittings';
+        $empty = $this->sitting();
+        $this->asStaff($this->staff)->deleteJson("{$url}/{$empty}")->assertNoContent();
+        $this->assertFalse(DB::table('interview_sittings')->where('id', $empty)->exists());
+        $this->assertFalse(DB::table('interview_members')->where('sitting_id', $empty)->exists());
+
+        // Not with an interview in it, even cancelled, nor once an interview was moved out of it.
+        $booked = $this->sitting();
+        $interview = $this->scheduled($this->awaitingInterview(), $booked);
+        $this->asStaff($this->staff)->postJson("/api/v1/staff/interviews/{$interview}/cancel", ['reason' => 'خطأ'])->assertOk();
+        $this->asStaff($this->staff)->deleteJson("{$url}/{$booked}")->assertStatus(422)->assertJsonPath('errors.sitting.0', __('interviews.sitting_in_use'));
+
+        $left = $this->sitting();
+        $moved = $this->scheduled($this->awaitingInterview('22222222222'), $left);
+        $this->reschedule($moved, ['sitting_id' => $this->sitting()])->assertOk();
+        $this->asStaff($this->staff)->deleteJson("{$url}/{$left}")->assertStatus(422);
+
+        $this->asStaff($this->allow(StaffUserFactory::new()->create(), 'reports.view'))->deleteJson("{$url}/{$left}")->assertForbidden();
+    }
+
+    public function test_a_committee_sitting_keeps_its_name(): void
+    {
+        $url = '/api/v1/staff/interview-sittings';
+        $this->asStaff($this->staff)->postJson($url, ['starts_at' => '2026-11-01T08:00:00Z', 'location' => 'القاعة 7', 'members' => $this->members()])
+            ->assertStatus(422)->assertJsonValidationErrors('committee_name');
+        $this->asStaff($this->staff)->patchJson("{$url}/" . $this->sitting(), ['committee_name' => null])
+            ->assertStatus(422)->assertJsonPath('errors.committee_name.0', __('interviews.committee_name_required'));
+        $this->asStaff($this->staff)->patchJson("{$url}/" . $this->oneOffSitting(), ['committee_name' => null])->assertOk();
     }
 
     public function test_a_committee_has_at_most_one_chair_and_known_capacities(): void
@@ -146,7 +286,7 @@ class InterviewApiTest extends TestCase
             ->assertStatus(422)->assertJsonPath('errors.members.0', __('interviews.one_chair'));
         $this->asStaff($this->staff)->postJson('/api/v1/staff/interview-sittings', ['starts_at' => '2026-11-01T08:00:00Z', 'location' => 'x x', 'committee_name' => 'لجنة', 'members' => [['name' => 'أ ب', 'capacity' => 'رئيس اللجنة']]])
             ->assertStatus(422)->assertJsonValidationErrors('members.0.capacity');
-        $this->schedule($this->awaitingInterview(), $this->oneOff(['members' => $two]))->assertStatus(422)->assertJsonValidationErrors('members');
+        $this->asStaff($this->staff)->patchJson('/api/v1/staff/interview-sittings/' . $this->sitting(), ['members' => $two])->assertStatus(422)->assertJsonPath('errors.members.0', __('interviews.one_chair'));
     }
 
     public function test_only_an_application_awaiting_its_interview_and_one_at_a_time(): void
@@ -189,27 +329,21 @@ class InterviewApiTest extends TestCase
         $this->schedule($application, ['sitting_id' => $other])->assertCreated()->assertJsonPath('data.round', 2);   // a new booking after a cancellation
     }
 
-    public function test_rescheduling_a_one_off_appointment_gives_it_a_new_sitting_and_keeps_the_old_one(): void
+    public function test_rescheduling_between_a_committee_and_a_one_off_sitting(): void
     {
-        $response = $this->schedule($this->awaitingInterview(), $this->oneOff())->assertCreated();
-        $interview = $response->json('data.id');
-        $old = $response->json('data.sitting.id');
+        $committee = $this->sitting();
+        $interview = $this->scheduled($this->awaitingInterview(), $committee);
+        $single = $this->oneOffSitting();
 
-        $moved = $this->reschedule($interview, ['scheduled_at' => '2026-11-03T12:00:00Z'])
+        $this->reschedule($interview, [])->assertStatus(422)->assertJsonValidationErrors('sitting_id');
+        $this->reschedule($interview, ['sitting_id' => $single])
             ->assertOk()
             ->assertJsonPath('data.sitting.kind', 'one_off')
-            ->assertJsonPath('data.location', 'اتصال مرئي')                 // copied
-            ->assertJsonPath('data.members.0.name', 'سامر')
-            ->assertJsonPath('data.reschedules.0.from.sitting.id', $old);
-        $this->assertNotSame($old, $moved->json('data.sitting.id'));
-        $this->assertSame('2026-11-02 10:00:00+00', DB::table('interview_sittings')->where('id', $old)->value('starts_at'));
-
-        // From a one-off appointment into a committee sitting, and from a committee sitting to a one-off place.
-        $sitting = $this->sitting(['starts_at' => '2026-11-04T08:00:00Z']);
-        $this->reschedule($interview, ['sitting_id' => $sitting])->assertOk()->assertJsonPath('data.sitting.kind', 'committee');
-        $this->reschedule($interview, ['location' => 'مديرية حماة'])
-            ->assertOk()->assertJsonPath('data.sitting.kind', 'one_off')->assertJsonPath('data.location', 'مديرية حماة')
-            ->assertJsonPath('data.committee_name', 'لجنة دمشق الأولى')->assertJsonCount(2, 'data.members');   // the committee it had
+            ->assertJsonPath('data.scheduled_at', '2026-11-02T10:00:00+00:00')
+            ->assertJsonPath('data.reschedules.0.from.sitting.id', $committee)
+            ->assertJsonPath('data.reschedules.0.to.sitting.kind', 'one_off');
+        $this->reschedule($interview, ['sitting_id' => $committee, 'scheduled_at' => '2026-10-30T11:00:00Z'])
+            ->assertOk()->assertJsonPath('data.sitting.kind', 'committee')->assertJsonPath('data.scheduled_at', '2026-10-30T11:00:00+00:00');
     }
 
     public function test_a_sittings_committee_is_frozen_once_a_result_is_recorded(): void
@@ -546,12 +680,12 @@ class InterviewApiTest extends TestCase
         $refused(fn() => DB::table('interview_sittings')->where('id', $sitting)->update(['starts_at' => '2026-10-30 09:00:00']));          // after a booking
         $refused(fn() => DB::table('interview_sittings')->where('id', $sitting)->update(['kind' => 'one_off']));
         $refused(fn() => DB::table('interview_members')->insert(['position' => 1, 'name' => 'x', 'capacity' => 'member']));                 // no sitting
-        $refused(fn() => DB::table('interview_members')->insert(['sitting_id' => $sitting, 'position' => 9, 'name' => 'x', 'capacity' => 'رئيس']));
-        $refused(fn() => DB::table('interview_members')->insert(['sitting_id' => $sitting, 'position' => 9, 'name' => 'x', 'capacity' => 'chair']));   // a second chair
+        $refused(fn() => DB::table('interview_members')->insert(['sitting_id' => $sitting, 'sitting_kind' => 'committee', 'position' => 9, 'name' => 'x', 'capacity' => 'رئيس']));
+        $refused(fn() => DB::table('interview_members')->insert(['sitting_id' => $sitting, 'sitting_kind' => 'committee', 'position' => 9, 'name' => 'x', 'capacity' => 'chair']));   // a second chair
 
         $this->record($interview, ['result' => 'passed'] + self::GRADES)->assertOk();
         $refused(fn() => DB::table('interview_members')->where('sitting_id', $sitting)->update(['name' => 'غيره']));                          // frozen
-        $refused(fn() => DB::table('interview_members')->insert(['sitting_id' => $sitting, 'position' => 9, 'name' => 'x', 'capacity' => 'member']));
+        $refused(fn() => DB::table('interview_members')->insert(['sitting_id' => $sitting, 'sitting_kind' => 'committee', 'position' => 9, 'name' => 'x', 'capacity' => 'member']));
         $refused(fn() => DB::table('interview_result_revisions')->update(['result' => 'failed']));
         $refused(fn() => DB::table('interview_result_revisions')->delete());
         $refused(fn() => DB::table('interview_reschedules')->insert(['interview_id' => $interview, 'from_sitting_id' => $sitting, 'to_sitting_id' => $sitting, 'from_scheduled_at' => now(), 'to_scheduled_at' => now(), 'reason' => 'x', 'rescheduled_by' => $this->staff->id, 'created_at' => now()]));   // nothing changed
@@ -582,19 +716,56 @@ class InterviewApiTest extends TestCase
         // A committee replaced inside one transaction is fine.
         DB::transaction(function () use ($sitting) {
             DB::table('interview_members')->where('sitting_id', $sitting)->delete();
-            DB::table('interview_members')->insert(['sitting_id' => $sitting, 'position' => 1, 'name' => 'عضو', 'capacity' => 'member']);
+            DB::table('interview_members')->insert(['sitting_id' => $sitting, 'sitting_kind' => 'committee', 'position' => 1, 'name' => 'عضو', 'capacity' => 'member']);
             DB::statement('SET CONSTRAINTS interview_sittings_have_members, interview_members_keep_one IMMEDIATE');
         });
         DB::statement('SET CONSTRAINTS ALL DEFERRED');
         $this->assertSame(1, DB::table('interview_members')->where('sitting_id', $sitting)->count());
     }
 
-    public function test_a_one_off_sitting_holds_one_interview_in_the_database(): void
+    public function test_a_one_off_sitting_has_one_member_in_the_database(): void
     {
-        $sitting = $this->schedule($this->awaitingInterview('11111111111'), $this->oneOff())->assertCreated()->json('data.sitting.id');
-        $other = $this->awaitingInterview('22222222222');
+        $sitting = $this->oneOffSitting();
+        $committee = $this->sitting();
+        $insert = fn(array $row) => DB::table('interview_members')->insert($row + ['position' => 9, 'name' => 'عضو ثان', 'capacity' => 'member']);
 
-        $this->expectException(QueryException::class);
-        DB::table('interviews')->insert(['id' => (string) \Illuminate\Support\Str::uuid7(), 'application_id' => $other->id, 'round' => 1, 'sitting_id' => $sitting, 'scheduled_at' => '2026-11-02 10:00:00', 'status' => 'scheduled', 'created_by' => $this->staff->id]);
+        foreach ([
+            'a second member' => ['sitting_id' => $sitting, 'sitting_kind' => 'one_off', 'message' => 'interview_members_one_off_single'],
+            'its kind given wrong' => ['sitting_id' => $sitting, 'sitting_kind' => 'committee', 'message' => 'foreign key'],
+            'a committee member said one-off' => ['sitting_id' => $committee, 'sitting_kind' => 'one_off', 'message' => 'foreign key'],
+        ] as $case => $row) {
+            try {
+                DB::transaction(fn() => $insert(array_diff_key($row, ['message' => true])));
+                $this->fail("The database accepted {$case}.");
+            } catch (QueryException $e) {
+                $this->assertStringContainsString($row['message'], $e->getMessage(), $case);
+            }
+        }
+    }
+
+    /** The committee key is computed at commit (deferred), which tests never reach: SET CONSTRAINTS runs it now. */
+    public function test_the_database_refuses_the_same_sitting_twice_at_commit(): void
+    {
+        $first = $this->sitting(['location' => 'القاعة 2']);
+        DB::statement('SET CONSTRAINTS interview_members_key_sitting IMMEDIATE');
+        DB::statement('SET CONSTRAINTS ALL DEFERRED');
+        $this->assertSame(32, strlen((string) DB::table('interview_sittings')->where('id', $first)->value('committee_key')));
+        $copy = (string) \Illuminate\Support\Str::uuid7();
+
+        try {
+            DB::transaction(function () use ($copy) {
+                DB::table('interview_sittings')->insert(['id' => $copy, 'kind' => 'committee', 'starts_at' => '2026-10-30 08:00:00', 'location' => 'القاعه  2', 'created_by' => $this->staff->id]);
+                foreach (array_reverse($this->members()) as $index => $member) {
+                    DB::table('interview_members')->insert(['sitting_id' => $copy, 'sitting_kind' => 'committee', 'position' => $index + 1] + $member);
+                }
+                DB::statement('SET CONSTRAINTS interview_members_key_sitting IMMEDIATE');
+            });
+            $this->fail('The database accepted the same sitting twice.');
+        } catch (QueryException $e) {
+            $this->assertStringContainsString('interview_sittings_no_duplicate', $e->getMessage());
+        }
+
+        DB::statement('SET CONSTRAINTS ALL DEFERRED');
+        $this->assertFalse(DB::table('interview_sittings')->where('id', $copy)->exists());
     }
 }

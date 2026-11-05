@@ -7,6 +7,9 @@ use Illuminate\Support\Facades\Schedule;
 
 Schedule::command('model:prune', ['--model' => [DeviceLoginChallenge::class]])->daily();
 
+// Exams: absences when the late window closes, attempts closed at their deadline (D-073).
+Schedule::command('exams:sweep')->everyMinute()->withoutOverlapping();
+
 // Contracts ending within two weeks: one in-system notification each (D-065).
 Schedule::command('contracts:remind-expiring')->dailyAt('06:00');
 

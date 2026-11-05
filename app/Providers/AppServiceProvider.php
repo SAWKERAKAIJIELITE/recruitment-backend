@@ -55,6 +55,12 @@ class AppServiceProvider extends ServiceProvider
         });
         Sanctum::usePersonalAccessTokenModel(AccessToken::class);
 
+        // Candidates log in on the exam day, often from one hall's address: generous per address, strict per person.
+        RateLimiter::for('candidate-login', fn(Request $request) => [
+            Limit::perMinute(120)->by('ip:' . $request->ip()),
+            Limit::perMinute(5)->by('candidate:' . preg_replace('/\D/', '', (string) $request->input('national_number')) . '|' . $request->ip()),
+        ]);
+
         RateLimiter::for('device-register', fn(Request $request) => Limit::perHour(20)->by($request->ip()));
 
         RateLimiter::for('device-status', fn(Request $request) => Limit::perMinute(30)->by($request->ip()));

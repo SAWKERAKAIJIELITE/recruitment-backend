@@ -3,12 +3,11 @@
 namespace App\Modules\Interviews\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Validator;
 
 /**
  * Accept an absence excuse (analysis doc §07: reason, decision and new appointment): `reason`, optional
- * `occurred_at` (the decision's real date, default now) and optional `appointment` (as when scheduling) to book the
- * next round in the same step.
+ * `occurred_at` (the decision's real date, default now) and optional `appointment` (`sitting_id`, `scheduled_at`, as
+ * when scheduling) to book the next round in the same step.
  */
 class InterviewExcuseRequest extends FormRequest
 {
@@ -25,10 +24,5 @@ class InterviewExcuseRequest extends FormRequest
             'appointment' => ['nullable', 'array'],
             ...AppointmentRules::rules('appointment.'),
         ];
-    }
-
-    public function after(): array
-    {
-        return [fn(Validator $validator) => AppointmentRules::after($validator, (array) $this->input('appointment', []), 'appointment.')];
     }
 }

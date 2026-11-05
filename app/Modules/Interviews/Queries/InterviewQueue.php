@@ -30,8 +30,13 @@ final class InterviewQueue
     public const MAX_RULES = 10;
 
     private const PREFERENCES = [
-        'specialization_id', 'job_position_id', 'nominating_entity_id', 'application_category_id',
-        'academic_qualification_id', 'residence_district_id', 'residence_area_id',
+        'specialization_id',
+        'job_position_id',
+        'nominating_entity_id',
+        'application_category_id',
+        'academic_qualification_id',
+        'residence_district_id',
+        'residence_area_id',
     ];
 
     /** Value rules: name => [SQL expression, default direction]. */
@@ -89,7 +94,17 @@ final class InterviewQueue
         [$name, $argument] = array_pad(explode(':', trim($rule), 2), 2, null);
 
         if (in_array($name, self::PREFERENCES, true)) {
-            $ids = array_values(array_unique(array_filter(array_map('trim', explode(',', (string) $argument)), fn($id) => $id !== '')));
+            $ids = array_values(
+                array_unique(
+                    array_filter(
+                        array_map(
+                            'trim',
+                            explode(',', (string) $argument)
+                        ),
+                        fn($id) => $id !== ''
+                    )
+                )
+            );
 
             if ($ids === [] || count($ids) > 50 || array_filter($ids, fn($id) => ! ctype_digit($id)) !== []) {
                 self::fail($field, 'interviews.priority_needs_ids', ['rule' => $name]);

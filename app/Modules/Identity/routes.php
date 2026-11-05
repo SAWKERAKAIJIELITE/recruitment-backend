@@ -53,6 +53,7 @@ Route::middleware('api')->prefix('api/v1')->group(function () {
 
             Route::get('users', [StaffUserController::class, 'index']);
             Route::get('users/{user}', [StaffUserController::class, 'show'])->whereUuid('user');
+            Route::put('users/{user}/password', [StaffUserController::class, 'resetPassword'])->whereUuid('user');
             Route::post('users/{user}/roles', [StaffUserController::class, 'addRole'])->whereUuid('user');
             Route::delete('users/{user}/roles/{role:slug}', [StaffUserController::class, 'removeRole'])
                 ->whereUuid('user')->scopeBindings();
