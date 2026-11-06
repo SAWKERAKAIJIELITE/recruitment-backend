@@ -5,6 +5,7 @@ namespace App\Modules\Recruitment\Models;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Support\PhoneNumber;
+use App\Support\ArabicText;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Collection;
@@ -64,7 +65,13 @@ class Application extends Model
 
     protected function phoneNumber(): Attribute
     {
-        return Attribute::make(set: fn(string $value) => PhoneNumber::normalize($value));
+        return Attribute::make(set: fn (string $value) => PhoneNumber::normalize($value));
+    }
+
+    /** Stored with ASCII digits ("١٢٣٤" is 1234), so the search, which normalizes what it looks for, finds it. */
+    protected function existingEmployeeNumber(): Attribute
+    {
+        return Attribute::make(set: fn (?string $value) => $value === null ? null : trim(ArabicText::digitsToAscii($value)));
     }
 
     /** Applications that have not ended yet: a person can have only one (D-037). */
@@ -144,8 +151,8 @@ class Application extends Model
     {
         $events = $this->relationLoaded('statusEvents') ? $this->statusEvents : $this->statusEvents()->get();
 
-        $byPrevious = $events->keyBy(fn(ApplicationStatusEvent $event) => $event->previous_event_id ?? '');
-        $ordered = new Collection();
+        $byPrevious = $events->keyBy(fn (ApplicationStatusEvent $event) => $event->previous_event_id ?? '');
+        $ordered = new Collection;
         $previous = null;
 
         // The database guarantees one first event and no forks, so this walks every event exactly once.

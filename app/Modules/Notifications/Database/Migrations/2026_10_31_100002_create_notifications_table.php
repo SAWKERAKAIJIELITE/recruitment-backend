@@ -8,7 +8,8 @@ use Illuminate\Support\Facades\Schema;
  * In-system notifications for staff (Laravel database notifications, D-065), keyed by the staff user's UUID.
  * The first kind: a contract ends soon (Contracts).
  */
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('notifications', function (Blueprint $table) {

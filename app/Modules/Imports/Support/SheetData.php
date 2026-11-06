@@ -20,6 +20,5 @@ final class SheetData
         public readonly array $ignored,
         public readonly array $rows,
         public readonly string $calendar,
-    ) {
-    }
+    ) {}
 }

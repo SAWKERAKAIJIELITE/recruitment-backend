@@ -3,8 +3,8 @@
 namespace App\Modules\Exams\Actions;
 
 use App\Modules\Audit\Support\AuditTrail;
-use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Exams\Models\PassPolicy;
+use App\Modules\Identity\Models\StaffUser;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -20,7 +20,7 @@ class AddPassPolicy
         return DB::transaction(function () use ($data, $actor) {
             DB::select("SELECT pg_advisory_xact_lock(hashtext('exam_pass_policies.version'))");
 
-            $policy = new PassPolicy();
+            $policy = new PassPolicy;
             $policy->forceFill([
                 'version' => (int) PassPolicy::query()->max('version') + 1,
                 'subject_pass_mark' => $data['subject_pass_mark'],

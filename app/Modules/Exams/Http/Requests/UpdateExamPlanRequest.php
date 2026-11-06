@@ -77,6 +77,7 @@ class UpdateExamPlanRequest extends FormRequest
 
                     if (! $known->has($part['part_id'])) {
                         $validator->errors()->add("{$key}.part_id", __('exams.part_not_in_subject'));
+
                         continue;
                     }
 

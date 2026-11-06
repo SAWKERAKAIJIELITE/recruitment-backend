@@ -30,9 +30,7 @@ class ExamsDemoSeeder extends Seeder
 {
     public const QUESTIONS_PER_DIFFICULTY = 12;
 
-    public function __construct(private readonly ManageExamPlans $plans, private readonly ManageQuestions $questions)
-    {
-    }
+    public function __construct(private readonly ManageExamPlans $plans, private readonly ManageQuestions $questions) {}
 
     public function run(): void
     {
@@ -89,7 +87,7 @@ class ExamsDemoSeeder extends Seeder
                             $partId,
                             $difficulty,
                             "سؤال تجريبي {$n} ({$difficulty->labelAr()}) في {$name}",
-                            ["الخيار الأول", "الخيار الثاني", "الخيار الثالث", "الخيار الرابع"],
+                            ['الخيار الأول', 'الخيار الثاني', 'الخيار الثالث', 'الخيار الرابع'],
                             ($n + strlen($difficulty->value)) % 4,
                             $admin,
                         );

@@ -42,7 +42,7 @@ final class ReportWorkbook
      */
     public static function write(array $sheets, ReportHeader $header): string
     {
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
         $spreadsheet->getDefaultStyle()->getFont()->setName('Arial')->setSize(10);
         $spreadsheet->getProperties()->setTitle($header->title)->setCreator($header->issuer->full_name);
         $spreadsheet->removeSheetByIndex(0);
@@ -95,7 +95,7 @@ final class ReportWorkbook
         ]);
 
         if (($logo = $header->logo()) !== null) {
-            $drawing = new Drawing();
+            $drawing = new Drawing;
             $drawing->setPath($logo);
             $drawing->setHeight(64);
             $drawing->setCoordinates('A1');

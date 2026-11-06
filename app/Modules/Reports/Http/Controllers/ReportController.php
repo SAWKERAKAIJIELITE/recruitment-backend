@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Modules\Audit\Support\AuditTrail;
 use App\Modules\Interviews\Models\Interview;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
+use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Queries\ApplicationSearch;
 use App\Modules\Reports\Exports\ConscriptionList;
@@ -17,10 +18,12 @@ use App\Modules\Reports\Support\ReportFilters;
 use App\Modules\Reports\Support\ReportPeriod;
 use App\Modules\Reports\Support\ReportTable;
 use App\Modules\Reports\Tables\RecruitmentTables;
+use Illuminate\Contracts\Database\Query\Expression;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -81,6 +84,7 @@ class ReportController extends Controller
         abort_unless(isset(self::REPORTS[$report]), 404);
         $filters = ReportFilters::validate($request, ['format' => ['nullable', Rule::in(['xlsx', 'pdf'])], 'sitting_id' => ['nullable', 'uuid']]);
         $format = $filters['format'] ?? 'xlsx';
+        $this->assertCountFits($report, $filters, $format);
         $tables = $this->tables($report, $filters);
 
         foreach ($tables as $table) {
@@ -89,7 +93,7 @@ class ReportController extends Controller
 
         $title = $report === 'dashboard' ? __('reports.tables.dashboard', [], 'ar') : $tables[0]->title;
         $header = $this->header($title, $request, $filters);
-        AuditTrail::record('report.exported', $request->user(), ['report' => $report, 'format' => $format, 'rows' => array_sum(array_map(fn(ReportTable $table) => $table->count(), $tables)), 'filters' => $filters]);
+        AuditTrail::record('report.exported', $request->user(), ['report' => $report, 'format' => $format, 'rows' => array_sum(array_map(fn (ReportTable $table) => $table->count(), $tables)), 'filters' => $filters]);
 
         return $this->send($tables, $header, $format, $title);
     }
@@ -104,6 +108,10 @@ class ReportController extends Controller
     {
         $filters = ReportFilters::validate($request);
         $sheets = [];
+
+        foreach (['applications', 'exams', 'interviews'] as $report) {
+            $this->assertCountFits($report, $filters, 'xlsx');
+        }
 
         foreach (['dashboard', ...array_diff(array_keys(self::REPORTS), ['dashboard'])] as $report) {
             $tables = $this->tables($report, $filters);
@@ -138,8 +146,8 @@ class ReportController extends Controller
         $filters['status'] ??= [ApplicationStatus::AwaitingContract->value];
         $filters['sort'] ??= 'full_name';
 
+        $this->assertFits(new ReportTable('', [], []), 'xlsx', ApplicationSearch::filter(Application::query(), ReportFilters::applicationFilters($filters))->count());
         $applications = ApplicationSearch::apply(Application::query()->with(ConscriptionList::RELATIONS), ReportFilters::applicationFilters($filters))->get();
-        $this->assertFits(new ReportTable('', [], array_fill(0, $applications->count(), [])), 'xlsx');
 
         $title = __('reports.conscription_title', [], 'ar');
         $header = $this->header($title, $request, $filters);
@@ -173,21 +181,70 @@ class ReportController extends Controller
     private function interviews(array $filters, ?string $sitting): Collection
     {
         $applications = ApplicationSearch::filter(Application::query(), array_diff_key($filters, ['sort' => true, 'direction' => true]))->select('applications.id');
-        $relations = array_map(fn(string $relation) => "application.{$relation}", RecruitmentTables::RELATIONS);
+        $relations = array_map(fn (string $relation) => "application.{$relation}", RecruitmentTables::RELATIONS);
 
         return Interview::query()
             ->with(['sitting.members', ...$relations])
             ->whereIn('application_id', $applications)
-            ->when($sitting, fn($query, $id) => $query->where('sitting_id', $id))
+            ->when($sitting, fn ($query, $id) => $query->where('sitting_id', $id))
             ->get();
     }
 
-    private function assertFits(ReportTable $table, string $format): void
+    /**
+     * Counted before anything is loaded: an export too large for its format is refused at once, not after the whole
+     * set is in memory. The count is that of the report's own rows: applications nominated in the period, exam
+     * decisions in the period, interviews dated in the period. The tables are checked again once built.
+     */
+    private function assertCountFits(string $report, array $filters, string $format): void
+    {
+        [$kind, $view] = self::REPORTS[$report];
+
+        if ($kind === 'dashboard') {
+            return;
+        }
+
+        // The outcomes a view's decisions have (passed: also failures later admitted by an exception); a decision that
+        // was corrected is counted too, whatever it says (it may have become one of them).
+        $examStatuses = match ($view) {
+            'passed' => [ApplicationStatus::AwaitingInterview, ApplicationStatus::ExamFailed],
+            'failed' => [ApplicationStatus::ExamFailed],
+            'absent' => [ApplicationStatus::ExamAbsent],
+            default => [ApplicationStatus::AwaitingInterview, ApplicationStatus::ExamFailed, ApplicationStatus::ExamAbsent],
+        };
+
+        $period = ReportPeriod::from($filters);
+        $applications = ApplicationSearch::filter(Application::query(), ReportFilters::applicationFilters($filters))->select('applications.id');
+        $within = fn ($query, string|Expression $column) => $query
+            ->when($period->start, fn ($q, $start) => $q->where($column, '>=', $start))
+            ->when($period->end, fn ($q, $end) => $q->where($column, '<', $end));
+
+        $count = match ($kind) {
+            'applications' => $within(ApplicationSearch::filter(Application::query(), ReportFilters::applicationFilters($filters)), 'applications.created_at')->count(),
+            // Each exam decision is an outcome from awaiting_exam (corrections replace one, they add none).
+            'exams' => $within(DB::table('application_status_events as e')
+                ->join('application_status_events as p', 'p.id', '=', 'e.previous_event_id')
+                ->whereIn('e.application_id', $applications)
+                ->where('p.to_status', ApplicationStatus::AwaitingExam->value)
+                ->where('e.decision_type', DecisionType::Outcome->value)
+                ->where(fn ($query) => $query
+                    ->whereIn('e.to_status', array_map(fn (ApplicationStatus $status) => $status->value, $examStatuses))
+                    ->orWhereExists(fn ($correction) => $correction->from('application_status_events as c')->whereColumn('c.previous_event_id', 'e.id')->where('c.decision_type', DecisionType::Correction->value))), 'e.occurred_at')->count(),
+            'interviews' => $within(Interview::query()
+                ->whereIn('application_id', $applications)
+                ->when($view !== 'all', fn ($query) => $query->where('result', $view))
+                ->when($filters['sitting_id'] ?? null, fn ($query, $id) => $query->where('sitting_id', $id)), DB::raw('coalesce(held_at, scheduled_at)'))->count(),
+        };
+
+        $this->assertFits(new ReportTable('', [], []), $format, $count);
+    }
+
+    private function assertFits(ReportTable $table, string $format, ?int $count = null): void
     {
         $max = (int) config("reports.max_rows.{$format}");
+        $count ??= $table->count();
 
-        if ($table->count() > $max) {
-            throw ValidationException::withMessages(['format' => [__('reports.too_many_rows', ['count' => $table->count(), 'max' => $max])]]);
+        if ($count > $max) {
+            throw ValidationException::withMessages(['format' => [__('reports.too_many_rows', ['count' => $count, 'max' => $max])]]);
         }
     }
 
@@ -202,12 +259,12 @@ class ReportController extends Controller
         $name = "{$title} {$header->generatedAt->toDateString()}";
 
         if ($format === 'pdf') {
-            $wide = collect($tables)->contains(fn(ReportTable $table) => $table->wide);
+            $wide = collect($tables)->contains(fn (ReportTable $table) => $table->wide);
             $content = Pdf::render('reports.tables', ['tables' => $tables, 'fontSize' => $wide ? '7.5pt' : '8.5pt'], $header, landscape: true, wide: $wide);
 
             return response($content, 200, [
                 'Content-Type' => 'application/pdf',
-                'Content-Disposition' => 'attachment; filename="report.pdf"; filename*=UTF-8\'\'' . rawurlencode("{$name}.pdf"),
+                'Content-Disposition' => 'attachment; filename="report.pdf"; filename*=UTF-8\'\''.rawurlencode("{$name}.pdf"),
                 'X-Content-Type-Options' => 'nosniff',
             ]);
         }

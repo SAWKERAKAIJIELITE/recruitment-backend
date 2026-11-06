@@ -6,13 +6,13 @@ use App\Http\Controllers\Controller;
 use App\Modules\Imports\Actions\ApproveImportBatch;
 use App\Modules\Imports\Actions\BuildImportReport;
 use App\Modules\Imports\Actions\CancelImportBatch;
+use App\Modules\Imports\Actions\ReviewImportRows;
 use App\Modules\Imports\Actions\UploadImportBatch;
 use App\Modules\Imports\Enums\ImportBatchStatus;
 use App\Modules\Imports\Http\Requests\ReasonRequest;
 use App\Modules\Imports\Http\Requests\UploadImportRequest;
 use App\Modules\Imports\Http\Resources\ImportBatchResource;
 use App\Modules\Imports\Models\ImportBatch;
-use App\Modules\Imports\Actions\ReviewImportRows;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -32,7 +32,7 @@ class ImportBatchController extends Controller
         $batches = ImportBatch::query()
             ->with(ImportBatchResource::RELATIONS)
             ->withRowCounts()
-            ->when($filters['status'] ?? null, fn($query, string $status) => $query->where('status', $status))
+            ->when($filters['status'] ?? null, fn ($query, string $status) => $query->where('status', $status))
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->paginate(25);
@@ -84,11 +84,16 @@ class ImportBatchController extends Controller
      * Checks the rows again, then turns every valid row into an application with a new nomination number.
      * 422 when rows still need review (confirm or exclude them first), or when a row that was valid is no
      * longer valid (for example, the person got an application meanwhile): look at those rows, then approve
-     * again. Invalid and excluded rows are not imported and keep their reasons. All or nothing.
+     * again. Invalid and excluded rows are not imported and keep their reasons. All or nothing. Send the batch's
+     * `revision` you reviewed: any change to its rows since gives 422 (D-082). Whoever changed its rows cannot approve
+     * it either (403): another person reviews those changes.
      */
     public function approve(Request $request, ImportBatch $batch, ApproveImportBatch $approve): ImportBatchResource
     {
-        return new ImportBatchResource($this->fresh($approve->execute($batch, $request->user())));
+        /** The batch's `revision` the approver reviewed (from GET): 422 `batch_changed` when rows changed since. */
+        $revision = (int) $request->validate(['revision' => ['required', 'integer', 'min:0']])['revision'];
+
+        return new ImportBatchResource($this->fresh($approve->execute($batch, $request->user(), $revision)));
     }
 
     /** Cancel the batch before approval. Nothing is imported; the same file can then be uploaded again. */
@@ -114,7 +119,7 @@ class ImportBatchController extends Controller
     /** Download the accepted / rejected report of the batch (.xlsx). */
     public function report(ImportBatch $batch, BuildImportReport $report): BinaryFileResponse
     {
-        $name = pathinfo($batch->original_filename, PATHINFO_FILENAME) . ' - ' . __('imports.report.title') . '.xlsx';
+        $name = pathinfo($batch->original_filename, PATHINFO_FILENAME).' - '.__('imports.report.title').'.xlsx';
 
         return response()
             ->download($report->execute($batch), $name, [

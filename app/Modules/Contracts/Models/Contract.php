@@ -7,6 +7,7 @@ use App\Modules\Documents\Models\Document;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Contracts\StatusChangeCause;
 use App\Modules\Recruitment\Models\Application;
+use App\Support\BusinessDay;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -102,9 +103,9 @@ class Contract extends Model implements StatusChangeCause
     /** Contracts in a state today (the same rules as state()). */
     public function scopeInState(Builder $query, ContractState $state): Builder
     {
-        $today = Date::today()->toDateString();
-        $soon = Date::today()->addDays(self::reminderDays())->toDateString();
-        $renewed = fn($renewal) => $renewal->from('contracts as renewal')->whereColumn('renewal.renews_contract_id', 'contracts.id');
+        $today = BusinessDay::today();
+        $soon = BusinessDay::todayDate()->addDays(self::reminderDays())->toDateString();
+        $renewed = fn ($renewal) => $renewal->from('contracts as renewal')->whereColumn('renewal.renews_contract_id', 'contracts.id');
 
         return match ($state) {
             ContractState::Ended => $query->whereNotNull('contracts.ended_on'),
@@ -119,7 +120,7 @@ class Contract extends Model implements StatusChangeCause
     /** Needs the renewal relation (loaded, or loaded here). */
     public function state(): ContractState
     {
-        $today = Date::today();
+        $today = BusinessDay::todayDate();
 
         return match (true) {
             $this->ended_on !== null => ContractState::Ended,
@@ -135,6 +136,6 @@ class Contract extends Model implements StatusChangeCause
     /** Days left until the end date (0 on the last day, negative once passed); null without an end date. */
     public function daysLeft(): ?int
     {
-        return $this->ends_on === null ? null : (int) Date::today()->diffInDays($this->ends_on, false);
+        return $this->ends_on === null ? null : (int) BusinessDay::todayDate()->diffInDays($this->ends_on, false);
     }
 }

@@ -24,7 +24,7 @@ use Tests\TestCase;
 /** Contracts: the first contract, renewals, corrections, the end without renewal (D-064). */
 class ContractApiTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private StaffUser $staff;
 
@@ -189,6 +189,21 @@ class ContractApiTest extends TestCase
         $this->asStaff($this->staff)->patchJson("/api/v1/staff/contracts/{$second}", ['starts_on' => '2027-10-01', 'reason' => 'سبب'])->assertStatus(422)->assertJsonValidationErrors('starts_on');
         $this->asStaff($this->staff)->patchJson("/api/v1/staff/contracts/{$first}", ['reference_number' => 'ع/مصحح', 'reason' => 'سبب'])->assertStatus(422)->assertJsonValidationErrors('reason');   // nothing changes
         $this->asStaff($this->staff)->patchJson("/api/v1/staff/contracts/{$first}", ['notes' => 'x'])->assertStatus(422)->assertJsonValidationErrors('reason');
+    }
+
+    public function test_days_are_damascus_days_and_corrected_writing_days_stay_consistent(): void
+    {
+        $application = $this->awaitingContract();   // passed its interview on 2026-10-01
+
+        // 22:30 UTC on 31 October is already 1 November in Damascus: that is "today".
+        $this->travelTo('2026-10-31 22:30:00');
+        $contract = $this->write($application, ['written_on' => '2026-11-01', 'starts_on' => '2026-11-01', 'ends_on' => '2027-10-31'])->assertCreated()->json('data.id');
+        $this->write($this->awaitingContract('22222222222'), ['written_on' => '2026-11-02'])->assertStatus(422)->assertJsonValidationErrors('written_on');
+
+        // Not written before the interview was passed.
+        $this->asStaff($this->staff)->patchJson("/api/v1/staff/contracts/{$contract}", ['written_on' => '2026-09-30', 'reason' => 'خطأ في التاريخ'])
+            ->assertStatus(422)->assertJsonPath('errors.written_on.0', __('contracts.written_before_decision', ['date' => '2026-10-01']));
+        $this->asStaff($this->staff)->patchJson("/api/v1/staff/contracts/{$contract}", ['written_on' => '2026-10-02', 'reason' => 'خطأ في التاريخ'])->assertOk();
     }
 
     public function test_a_new_end_date_makes_the_reminder_due_again(): void

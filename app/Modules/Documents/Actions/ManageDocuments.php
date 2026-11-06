@@ -44,7 +44,7 @@ class ManageDocuments
 
         try {
             return DB::transaction(function () use ($id, $file, $type, $candidate, $application, $notes, $actor, $mime, $path) {
-                $document = new Document();
+                $document = new Document;
                 $document->forceFill([
                     'id' => $id,
                     'document_type_id' => $type->id,

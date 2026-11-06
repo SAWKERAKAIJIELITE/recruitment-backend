@@ -2,6 +2,10 @@
 
 // Exam sessions (D-073 to D-075).
 return [
+    // Candidates reach the exam only from these networks: addresses or CIDR ranges, comma-separated (the venue's
+    // halls). None: refused everywhere except in the local and testing environments (D-077).
+    'candidate_networks' => array_values(array_filter(array_map('trim', explode(',', (string) env('EXAMS_CANDIDATE_NETWORKS', ''))))),
+
     // A candidate may start from the session's start until this many minutes later; then absent (owner: 15).
     'late_minutes' => (int) env('EXAMS_LATE_MINUTES', 15),
 

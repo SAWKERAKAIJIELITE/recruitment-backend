@@ -43,7 +43,8 @@ class ExamQuestionRequest extends FormRequest
             'prompt' => [$required, 'string', 'min:2', 'max:5000'],
             'options' => [$required, 'array', 'list', 'min:2', 'max:6'],
             'options.*' => ['required', 'string', 'max:1000', 'distinct:ignore_case'],
-            'correct_option' => [$creating ? 'required' : 'sometimes', 'integer', 'min:0', 'max:5'],
+            // New options come with their answer: the old index could point at another option now.
+            'correct_option' => [$creating ? 'required' : 'required_with:options', 'integer', 'min:0', 'max:5'],
         ];
     }
 

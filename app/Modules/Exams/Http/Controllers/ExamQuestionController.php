@@ -37,12 +37,12 @@ class ExamQuestionController extends Controller
 
         $questions = ExamQuestion::query()
             ->with(ExamQuestionResource::RELATIONS)
-            ->when($request->boolean('include_archived'), fn($query) => $query->withTrashed())
-            ->when(isset($filters['subject_id']), fn($query) => $query->where('subject_id', $filters['subject_id']))
-            ->when(($filters['part_id'] ?? null) === 'none', fn($query) => $query->whereNull('part_id'))
-            ->when(ctype_digit((string) ($filters['part_id'] ?? '')), fn($query) => $query->where('part_id', $filters['part_id']))
-            ->when(isset($filters['difficulty']), fn($query) => $query->where('difficulty', $filters['difficulty']))
-            ->when(isset($filters['q']), fn($query) => $query->whereHas('currentVersion', fn($version) => $version->where('prompt', 'ilike', '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], trim($filters['q'])) . '%')))
+            ->when($request->boolean('include_archived'), fn ($query) => $query->withTrashed())
+            ->when(isset($filters['subject_id']), fn ($query) => $query->where('subject_id', $filters['subject_id']))
+            ->when(($filters['part_id'] ?? null) === 'none', fn ($query) => $query->whereNull('part_id'))
+            ->when(ctype_digit((string) ($filters['part_id'] ?? '')), fn ($query) => $query->where('part_id', $filters['part_id']))
+            ->when(isset($filters['difficulty']), fn ($query) => $query->where('difficulty', $filters['difficulty']))
+            ->when(isset($filters['q']), fn ($query) => $query->whereHas('currentVersion', fn ($version) => $version->where('prompt', 'ilike', '%'.str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], trim($filters['q'])).'%')))
             ->orderByDesc('id')
             ->paginate(50);
 

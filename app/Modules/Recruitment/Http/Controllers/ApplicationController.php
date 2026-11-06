@@ -6,16 +6,17 @@ use App\Http\Controllers\Controller;
 use App\Modules\Recruitment\Actions\ApplicationLifecycle;
 use App\Modules\Recruitment\Actions\CreateApplication;
 use App\Modules\Recruitment\Actions\UpdateApplication;
+use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Exceptions\IllegalStatusTransition;
 use App\Modules\Recruitment\Http\Requests\CloseApplicationRequest;
-use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Http\Requests\StoreApplicationRequest;
 use App\Modules\Recruitment\Http\Requests\UpdateApplicationRequest;
 use App\Modules\Recruitment\Http\Resources\ApplicationResource;
 use App\Modules\Recruitment\Http\Resources\ApplicationSummaryResource;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Queries\ApplicationSearch;
+use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -119,7 +120,7 @@ class ApplicationController extends Controller
      * A date without a time means "that day": its end, but never later than now (so closing "today" an
      * application opened today is accepted, and an earlier day still sorts after that day's events).
      */
-    private function decisionDate(?string $value): ?\Carbon\CarbonInterface
+    private function decisionDate(?string $value): ?CarbonInterface
     {
         if ($value === null) {
             return null;

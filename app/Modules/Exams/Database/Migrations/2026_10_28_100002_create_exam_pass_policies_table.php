@@ -13,7 +13,8 @@ use Illuminate\Support\Facades\Schema;
  * part of the schema (every environment needs it): pass mark 60, one subject tolerated from 58 up to 60, and an
  * average strictly above 70.
  */
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('exam_pass_policies', function (Blueprint $table) {

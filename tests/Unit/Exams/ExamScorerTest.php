@@ -8,6 +8,8 @@ use App\Modules\Exams\Scoring\Mark;
 use App\Modules\Exams\Scoring\PassRules;
 use App\Modules\Exams\Scoring\ScoringPlan;
 use App\Modules\Exams\Scoring\SubjectResult;
+use Brick\Math\BigRational;
+use Brick\Math\RoundingMode;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -29,7 +31,7 @@ class ExamScorerTest extends TestCase
             $marks[$i + 1] = Mark::of($value);
         }
 
-        return (new ExamScorer())->score($plan, $marks, $this->rules());
+        return (new ExamScorer)->score($plan, $marks, $this->rules());
     }
 
     /** The doc's table: subjects, average, decision, reasons. */
@@ -77,10 +79,10 @@ class ExamScorerTest extends TestCase
         $plan = new ScoringPlan([1 => null, 2 => null, 3 => null, 4 => null, 5 => null, 6 => [61 => '60', 62 => '40']]);
         $marks = [1 => Mark::of(80), 2 => Mark::of(74), 3 => Mark::of(82), 4 => Mark::of(90), 5 => Mark::of(71), 6 => [61 => Mark::of(47, 60), 62 => Mark::of(38, 40)]];
 
-        $outcome = (new ExamScorer())->score($plan, $marks, $this->rules());
+        $outcome = (new ExamScorer)->score($plan, $marks, $this->rules());
 
         $this->assertSame('85.00', $outcome->subjects[6]->display());
-        $this->assertSame('78.33', (string) $outcome->subjects[6]->parts[61]->toScale(2, \Brick\Math\RoundingMode::HalfUp));
+        $this->assertSame('78.33', (string) $outcome->subjects[6]->parts[61]->toScale(2, RoundingMode::HalfUp));
         $this->assertSame('80.33', $outcome->averageDisplay());   // 482 / 600, as in the sheet
         $this->assertCount(6, $outcome->subjects);                 // counted once in the average
         $this->assertTrue($outcome->passed);
@@ -89,7 +91,7 @@ class ExamScorerTest extends TestCase
     public function test_weights_need_not_add_up_to_100(): void
     {
         $plan = new ScoringPlan([1 => [10 => '3', 11 => '2']]);
-        $outcome = (new ExamScorer())->score($plan, [1 => [10 => Mark::of(100), 11 => Mark::of(50)]], $this->rules());
+        $outcome = (new ExamScorer)->score($plan, [1 => [10 => Mark::of(100), 11 => Mark::of(50)]], $this->rules());
 
         $this->assertSame('80.00', $outcome->subjects[1]->display());   // (100×3 + 50×2) / 5
     }
@@ -104,19 +106,19 @@ class ExamScorerTest extends TestCase
         // An average of exactly 70 + 1/3000: above 70 although it displays as 70.00.
         $plan = new ScoringPlan([1 => null, 2 => null, 3 => null]);
         $marks = [1 => Mark::of('70.001'), 2 => Mark::of(70), 3 => Mark::of(70)];
-        $exact = (new ExamScorer())->score($plan, $marks, $this->rules());
+        $exact = (new ExamScorer)->score($plan, $marks, $this->rules());
         $this->assertSame('70.00', $exact->averageDisplay());
         $this->assertTrue($exact->passed);
 
         // Thirds: 1/3 point of 1 per part never accumulates rounding errors.
-        $thirds = (new ExamScorer())->score(new ScoringPlan([1 => [1 => '1', 2 => '1', 3 => '1']]), [1 => [1 => Mark::of(2, 3), 2 => Mark::of(2, 3), 3 => Mark::of(2, 3)]], $this->rules());
-        $this->assertTrue($thirds->subjects[1]->score->isEqualTo(\Brick\Math\BigRational::of('200/3')));
+        $thirds = (new ExamScorer)->score(new ScoringPlan([1 => [1 => '1', 2 => '1', 3 => '1']]), [1 => [1 => Mark::of(2, 3), 2 => Mark::of(2, 3), 3 => Mark::of(2, 3)]], $this->rules());
+        $this->assertTrue($thirds->subjects[1]->score->isEqualTo(BigRational::of('200/3')));
     }
 
     public function test_the_rules_come_from_the_policy_version(): void
     {
         $strict = new PassRules(2, '65', '65', 0, '75');
-        $outcome = (new ExamScorer())->score(new ScoringPlan([1 => null, 2 => null]), [1 => Mark::of(64), 2 => Mark::of(95)], $strict);
+        $outcome = (new ExamScorer)->score(new ScoringPlan([1 => null, 2 => null]), [1 => Mark::of(64), 2 => Mark::of(95)], $strict);
 
         $this->assertFalse($outcome->passed);
         $this->assertSame(2, $outcome->policyVersion);
@@ -132,12 +134,12 @@ class ExamScorerTest extends TestCase
     public static function badMarks(): array
     {
         return [
-            'missing subject' => [[1 => null, 2 => null], fn() => [1 => Mark::of(70)]],
-            'extra subject' => [[1 => null], fn() => [1 => Mark::of(70), 2 => Mark::of(70)]],
-            'parts for a whole subject' => [[1 => null], fn() => [1 => [5 => Mark::of(70)]]],
-            'whole mark for a subject with parts' => [[1 => [5 => '1', 6 => '1']], fn() => [1 => Mark::of(70)]],
-            'missing part' => [[1 => [5 => '1', 6 => '1']], fn() => [1 => [5 => Mark::of(70)]]],
-            'not a mark' => [[1 => [5 => '1']], fn() => [1 => [5 => 70]]],
+            'missing subject' => [[1 => null, 2 => null], fn () => [1 => Mark::of(70)]],
+            'extra subject' => [[1 => null], fn () => [1 => Mark::of(70), 2 => Mark::of(70)]],
+            'parts for a whole subject' => [[1 => null], fn () => [1 => [5 => Mark::of(70)]]],
+            'whole mark for a subject with parts' => [[1 => [5 => '1', 6 => '1']], fn () => [1 => Mark::of(70)]],
+            'missing part' => [[1 => [5 => '1', 6 => '1']], fn () => [1 => [5 => Mark::of(70)]]],
+            'not a mark' => [[1 => [5 => '1']], fn () => [1 => [5 => 70]]],
         ];
     }
 
@@ -146,12 +148,12 @@ class ExamScorerTest extends TestCase
     {
         $this->expectException(\InvalidArgumentException::class);
 
-        (new ExamScorer())->score(new ScoringPlan($plan), $marks(), $this->rules());
+        (new ExamScorer)->score(new ScoringPlan($plan), $marks(), $this->rules());
     }
 
     public function test_impossible_marks_and_plans_are_refused(): void
     {
-        foreach ([fn() => Mark::of(101), fn() => Mark::of(-1), fn() => Mark::of(1, 0), fn() => new ScoringPlan([]), fn() => new ScoringPlan([1 => []]), fn() => new ScoringPlan([1 => [2 => '0']]), fn() => new PassRules(1, '60', '61', 1, '70')] as $make) {
+        foreach ([fn () => Mark::of(101), fn () => Mark::of(-1), fn () => Mark::of(1, 0), fn () => new ScoringPlan([]), fn () => new ScoringPlan([1 => []]), fn () => new ScoringPlan([1 => [2 => '0']]), fn () => new PassRules(1, '60', '61', 1, '70')] as $make) {
             try {
                 $make();
                 $this->fail('Expected a refusal.');

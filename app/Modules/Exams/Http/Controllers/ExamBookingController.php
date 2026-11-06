@@ -10,6 +10,7 @@ use App\Modules\Exams\Actions\SweepExamSessions;
 use App\Modules\Exams\Http\Requests\ExamReasonRequest;
 use App\Modules\Exams\Http\Requests\ExtendExamRequest;
 use App\Modules\Exams\Http\Requests\ManualMarksRequest;
+use App\Modules\Exams\Http\Resources\AnswerSheetItemResource;
 use App\Modules\Exams\Http\Resources\ExamBookingResource;
 use App\Modules\Exams\Models\ExamAttempt;
 use App\Modules\Exams\Models\ExamBooking;
@@ -81,6 +82,17 @@ class ExamBookingController extends Controller
         $results->enterMarks($attempt, $request->marks(), $request->validated('reason'), $request->user());
 
         return new ExamBookingResource($booking->fresh(ExamBookingResource::relations()));
+    }
+
+    /**
+     * A candidate's answer sheet
+     *
+     * Every question in the order the candidate saw it, the answer saved last, whether it is right (once closed) and
+     * every save with its time and address. Holds the answer key: exam_bank.manage only.
+     */
+    public function answers(ExamAttempt $attempt): AnonymousResourceCollection
+    {
+        return AnswerSheetItemResource::collection($attempt->items()->with(AnswerSheetItemResource::RELATIONS)->get());
     }
 
     /**

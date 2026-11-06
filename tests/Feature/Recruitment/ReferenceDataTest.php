@@ -18,7 +18,7 @@ use Tests\TestCase;
 
 class ReferenceDataTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     protected function setUp(): void
     {
@@ -30,15 +30,15 @@ class ReferenceDataTest extends TestCase
     public static function flatTypes(): array
     {
         return collect(ReferenceType::cases())
-            ->reject(fn(ReferenceType $type) => $type->isScopedToDistrict())
-            ->mapWithKeys(fn(ReferenceType $type) => [$type->value => [$type->value]])
+            ->reject(fn (ReferenceType $type) => $type->isScopedToDistrict())
+            ->mapWithKeys(fn (ReferenceType $type) => [$type->value => [$type->value]])
             ->all();
     }
 
     /** Flat lists staff may change through the API (marital statuses are seeded only, D-048). */
     public static function editableTypes(): array
     {
-        return array_filter(self::flatTypes(), fn(array $case) => ReferenceType::from($case[0])->isEditableThroughApi());
+        return array_filter(self::flatTypes(), fn (array $case) => ReferenceType::from($case[0])->isEditableThroughApi());
     }
 
     private function url(string $type, string $suffix = ''): string
@@ -122,7 +122,7 @@ class ReferenceDataTest extends TestCase
 
         $this->asStaff($manager)->deleteJson($this->url($type, "/{$id}"))->assertOk();
         $this->asStaff($manager)->getJson($this->url($type))->assertJsonCount(0, 'data');
-        $this->asStaff($manager)->getJson($this->url($type) . '?include_archived=1')
+        $this->asStaff($manager)->getJson($this->url($type).'?include_archived=1')
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.id', $id);
 
@@ -154,8 +154,8 @@ class ReferenceDataTest extends TestCase
         $id = $this->asStaff($manager)->postJson($this->url('job-positions'), ['name_ar' => 'مؤقت'])->json('item.id');
         $this->asStaff($manager)->deleteJson($this->url('job-positions', "/{$id}"))->assertOk();
 
-        $this->asStaff($manager)->getJson($this->url('job-positions') . "?include_archived={$flag}")->assertOk()->assertJsonCount($expected, 'data');
-        $this->asStaff($manager)->getJson($this->url('job-positions') . '?include_archived=maybe')->assertStatus(422);
+        $this->asStaff($manager)->getJson($this->url('job-positions')."?include_archived={$flag}")->assertOk()->assertJsonCount($expected, 'data');
+        $this->asStaff($manager)->getJson($this->url('job-positions').'?include_archived=maybe')->assertStatus(422);
     }
 
     public function test_district_id_is_refused_for_lists_other_than_areas(): void
@@ -182,8 +182,8 @@ class ReferenceDataTest extends TestCase
     public function test_the_editable_lists_are_every_list_but_the_seeded_ones(): void
     {
         $this->assertSame(
-            array_values(array_map(fn(ReferenceType $type) => $type->value, array_filter(ReferenceType::cases(), fn(ReferenceType $type) => $type->isEditableThroughApi()))),
-            array_map(fn(EditableReferenceType $type) => $type->value, EditableReferenceType::cases()),
+            array_values(array_map(fn (ReferenceType $type) => $type->value, array_filter(ReferenceType::cases(), fn (ReferenceType $type) => $type->isEditableThroughApi()))),
+            array_map(fn (EditableReferenceType $type) => $type->value, EditableReferenceType::cases()),
         );
     }
 
@@ -258,7 +258,7 @@ class ReferenceDataTest extends TestCase
 
         $nobody = StaffUserFactory::new()->create();
         $this->asStaff($nobody)->getJson($this->url('areas'))->assertJsonCount(3, 'data');
-        $this->asStaff($nobody)->getJson($this->url('areas') . "?district_id={$damascus->id}")
+        $this->asStaff($nobody)->getJson($this->url('areas')."?district_id={$damascus->id}")
             ->assertJsonCount(2, 'data')
             ->assertJsonPath('data.0.district_id', $damascus->id)
             ->assertJsonPath('data.0.district.name_ar', $damascus->name_ar);

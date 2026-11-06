@@ -13,7 +13,8 @@ use Illuminate\Support\Facades\Schema;
  * is a copy of the last event's status that only the database writes (trigger), so it cannot disagree
  * with the history and filtering by status stays a plain indexed column.
  */
-return new class extends Migration {
+return new class extends Migration
+{
     /** Same values as App\Modules\Recruitment\Enums\ApplicationStatus (written out: migrations must not change with the code). */
     private const STATUSES = [
         'awaiting_exam',
@@ -80,9 +81,9 @@ return new class extends Migration {
                 ->references(['district_id', 'id'])->on('areas')->restrictOnDelete();
         });
 
-        DB::statement('ALTER TABLE applications ADD CONSTRAINT applications_studying_years_range CHECK (studying_years IS NULL OR studying_years <= 15)');
+        DB::statement('ALTER TABLE applications ADD CONSTRAINT applications_studying_years_range CHECK (studying_years IS NULL OR studying_years BETWEEN 0 AND 15)');
         DB::statement('ALTER TABLE applications ADD CONSTRAINT applications_discontinued_has_years CHECK (NOT studies_discontinued OR studying_years IS NOT NULL)');
-        DB::statement('ALTER TABLE applications ADD CONSTRAINT applications_quran_parts_range CHECK (quran_parts_memorized IS NULL OR quran_parts_memorized <= 30)');
+        DB::statement('ALTER TABLE applications ADD CONSTRAINT applications_quran_parts_range CHECK (quran_parts_memorized IS NULL OR quran_parts_memorized BETWEEN 0 AND 30)');
         DB::statement("ALTER TABLE applications ADD CONSTRAINT applications_phone_number_format CHECK (phone_number ~ '^\\+?[0-9]{6,15}$')");
         // DB::statement("ALTER TABLE applications ADD CONSTRAINT applications_phone_number_format CHECK (phone_number !~ '[a-zA-Z]')");
 

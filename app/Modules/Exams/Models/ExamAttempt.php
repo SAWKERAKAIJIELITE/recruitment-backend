@@ -4,6 +4,7 @@ namespace App\Modules\Exams\Models;
 
 use App\Modules\Exams\Enums\AttemptStatus;
 use App\Modules\Exams\Enums\ClosedBy;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -19,10 +20,10 @@ use Illuminate\Support\Facades\Date;
  * @property string $booking_id
  * @property string $session_id
  * @property AttemptStatus $status
- * @property \Carbon\CarbonInterface $started_at
- * @property \Carbon\CarbonInterface $deadline_at
+ * @property CarbonInterface $started_at
+ * @property CarbonInterface $deadline_at
  * @property int $extra_minutes
- * @property ?\Carbon\CarbonInterface $submitted_at
+ * @property ?CarbonInterface $submitted_at
  * @property ?ClosedBy $closed_by
  */
 class ExamAttempt extends Model

@@ -10,6 +10,8 @@ return [
     'renew_without_end' => 'A contract without an end date is not renewed: correct its end date first.',
     'renewal_starts_before_end' => 'A renewal starts on the end date of the previous contract (:date) or later.',
     'ends_after_renewal' => 'A renewed contract ends no later than its renewal starts (:date).',
+    'written_after_end' => 'The contract cannot be written after it was ended (:date).',
+    'written_before_decision' => 'The contract cannot be written before the interview was passed (:date).',
     'ends_before_start' => 'The end date is before the start date.',
     'reference_taken' => 'Another contract has this reference number.',
     'document_not_of_application' => 'The file must be a document of this application that is not archived.',

@@ -38,7 +38,7 @@ final class ConscriptionList
      */
     public static function write(Collection $applications, ReportHeader $header): string
     {
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
         $spreadsheet->getDefaultStyle()->getFont()->setName('Arial')->setSize(11);
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('ورقة1');

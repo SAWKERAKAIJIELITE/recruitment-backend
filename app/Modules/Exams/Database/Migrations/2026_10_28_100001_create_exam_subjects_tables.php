@@ -14,7 +14,8 @@ use Illuminate\Support\Facades\Schema;
  * default never changes a published plan (D-053). Both are managed like the lists: integer keys, normalized unique names, archived
  * instead of deleted (D-034).
  */
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('exam_subjects', function (Blueprint $table) {

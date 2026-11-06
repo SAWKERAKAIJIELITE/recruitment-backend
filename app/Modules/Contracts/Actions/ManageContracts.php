@@ -12,6 +12,7 @@ use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Exceptions\IllegalStatusTransition;
 use App\Modules\Recruitment\Models\Application;
 use App\Support\ArabicText;
+use App\Support\BusinessDay;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
@@ -32,9 +33,7 @@ class ManageContracts
 {
     public const FIELDS = ['contract_type_id', 'reference_number', 'written_on', 'starts_on', 'ends_on', 'document_id', 'notes'];
 
-    public function __construct(private readonly ApplicationLifecycle $lifecycle)
-    {
-    }
+    public function __construct(private readonly ApplicationLifecycle $lifecycle) {}
 
     public function write(Application $application, array $data, StaffUser $actor): Contract
     {
@@ -97,7 +96,7 @@ class ManageContracts
             $contract = Contract::query()->whereKey($contract->id)->lockForUpdate()->firstOrFail();
             $values = $this->values($contract->application, array_intersect_key($changes, array_flip(self::FIELDS)), $contract);
 
-            $before = collect(array_keys($values))->mapWithKeys(fn(string $field) => [$field => $this->plain($contract->getAttribute($field))])->all();
+            $before = collect(array_keys($values))->mapWithKeys(fn (string $field) => [$field => $this->plain($contract->getAttribute($field))])->all();
             $contract->forceFill($values);
             $changed = array_keys($contract->getDirty());
 
@@ -116,6 +115,10 @@ class ManageContracts
                 $this->fail('starts_on', 'contracts.renewal_starts_before_end', ['date' => $contract->renews->ends_on->toDateString()]);
             }
 
+            if (in_array('written_on', $changed, true)) {
+                $this->assertWritingDay($contract);
+            }
+
             if (in_array('ends_on', $changed, true)) {
                 $contract->expiry_reminded_at = null;   // a new end date: a new reminder
             }
@@ -125,7 +128,7 @@ class ManageContracts
             AuditTrail::record('contract.corrected', $actor, [
                 'contract_id' => $contract->id,
                 'reason' => trim($reason),
-                'changes' => collect($changed)->mapWithKeys(fn(string $field) => [$field => ['from' => $before[$field] ?? null, 'to' => $this->plain($contract->getAttribute($field))]])->all(),
+                'changes' => collect($changed)->mapWithKeys(fn (string $field) => [$field => ['from' => $before[$field] ?? null, 'to' => $this->plain($contract->getAttribute($field))]])->all(),
             ]);
 
             return $contract;
@@ -171,7 +174,7 @@ class ManageContracts
 
     private function create(Application $application, ?Contract $previous, array $data, StaffUser $actor): Contract
     {
-        $contract = new Contract();
+        $contract = new Contract;
         $contract->forceFill($this->values($application, array_intersect_key($data, array_flip(self::FIELDS))) + [
             'application_id' => $application->id,
             'sequence' => $previous === null ? 1 : $previous->sequence + 1,
@@ -189,7 +192,7 @@ class ManageContracts
     {
         if (array_key_exists('reference_number', $data)) {
             $data['reference_number'] = ArabicText::digitsToAscii(trim((string) $data['reference_number']));
-            $taken = Contract::query()->where('reference_number', $data['reference_number'])->when($contract, fn($query) => $query->whereKeyNot($contract->id))->exists();
+            $taken = Contract::query()->where('reference_number', $data['reference_number'])->when($contract, fn ($query) => $query->whereKeyNot($contract->id))->exists();
 
             if ($taken) {
                 $this->fail('reference_number', 'contracts.reference_taken');
@@ -203,7 +206,7 @@ class ManageContracts
                 $this->fail('document_id', 'contracts.document_not_of_application');
             }
 
-            if (Contract::query()->where('document_id', $document->id)->when($contract, fn($query) => $query->whereKeyNot($contract->id))->exists()) {
+            if (Contract::query()->where('document_id', $document->id)->when($contract, fn ($query) => $query->whereKeyNot($contract->id))->exists()) {
                 $this->fail('document_id', 'contracts.document_taken');
             }
         }
@@ -218,10 +221,39 @@ class ManageContracts
         }
     }
 
-    /** A decision dated a past day is placed at that day's end (after anything else that day); today means now. */
+    /**
+     * A corrected writing day stays consistent with the record (otherwise the database refuses it or the history
+     * contradicts it): not after the contract was ended, and for a first contract not before the decision it
+     * followed (the interview passed). The status event keeps its date: the correction is in the audit log.
+     */
+    private function assertWritingDay(Contract $contract): void
+    {
+        if ($contract->ended_on !== null && $contract->written_on->greaterThan($contract->ended_on)) {
+            $this->fail('written_on', 'contracts.written_after_end', ['date' => $contract->ended_on->toDateString()]);
+        }
+
+        if ($contract->renews_contract_id !== null) {
+            return;
+        }
+
+        $before = DB::table('application_status_events as written')
+            ->join('application_status_events as before', 'before.id', '=', 'written.previous_event_id')
+            ->where('written.contract_id', $contract->id)
+            ->where('written.to_status', ApplicationStatus::ContractWritten->value)
+            ->value('before.occurred_at');
+
+        if ($before !== null && $contract->written_on->toDateString() < Date::parse($before)->setTimezone(BusinessDay::timezone())->toDateString()) {
+            $this->fail('written_on', 'contracts.written_before_decision', ['date' => Date::parse($before)->setTimezone(BusinessDay::timezone())->toDateString()]);
+        }
+    }
+
+    /**
+     * A decision dated a past day is placed at that day's end (after anything else that day); today means now. Days
+     * are business days (Damascus, D-081).
+     */
     private function dayOf(CarbonInterface $day): CarbonInterface
     {
-        return $day->isToday() ? Date::now() : Date::parse($day->toDateString())->endOfDay();
+        return BusinessDay::isToday($day) ? Date::now() : BusinessDay::endOf($day);
     }
 
     private function plain(mixed $value): mixed

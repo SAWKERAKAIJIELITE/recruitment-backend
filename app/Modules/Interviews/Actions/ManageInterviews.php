@@ -60,6 +60,8 @@ class ManageInterviews
     {
         return DB::transaction(function () use ($sitting, $applicationIds, $firstAt, $minutesBetween, $actor) {
             $sitting = InterviewSitting::query()->whereKey($sitting->id)->sharedLock()->firstOrFail();
+            // Locked in one order (by id) first: two bookings sharing applications in another order never deadlock.
+            Application::query()->whereKey($applicationIds)->orderBy('id')->lockForUpdate()->get();
             $time = Date::parse($firstAt ?? $sitting->starts_at);
             $this->assertWithinSitting($sitting, $time, 'first_at');
             $booked = [];
@@ -77,6 +79,9 @@ class ManageInterviews
     public function reschedule(Interview $interview, array $appointment, string $reason, StaffUser $actor): Interview
     {
         return DB::transaction(function () use ($interview, $appointment, $reason, $actor) {
+            // An interview waiting for an application that moved on (closed, an exam result corrected) is cancelled,
+            // not moved.
+            $this->assertStatus($this->lockApplication($interview->application), ApplicationStatus::AwaitingInterview);
             $interview = $this->lockScheduled($interview);
             $from = ['sitting_id' => $interview->sitting_id, 'scheduled_at' => $interview->scheduled_at];
             [$sitting, $time] = $this->resolve($appointment, $interview);
@@ -158,10 +163,26 @@ class ManageInterviews
                 $this->fail('interview', 'interviews.not_recorded');
             }
 
-            $current = collect(self::RESULT_FIELDS)->mapWithKeys(fn(string $field) => [$field => $interview->getAttribute($field)])->all();
-            $current = array_map(fn($value) => $value instanceof \BackedEnum ? $value->value : $value, $current);
+            $current = collect(self::RESULT_FIELDS)->mapWithKeys(fn (string $field) => [$field => $interview->getAttribute($field)])->all();
+            $current = array_map(fn ($value) => $value instanceof \BackedEnum ? $value->value : $value, $current);
             $values = $this->resultValues(array_replace($current, $changes), $interview);
             $resultChanged = $values['result'] !== $current['result'];
+
+            // Held before it was first entered (the record's CHECK), and not before the decision it followed.
+            if ($values['held_at']->greaterThan($interview->recorded_at)) {
+                $this->fail('held_at', 'interviews.held_after_recorded', ['time' => $interview->recorded_at->toIso8601String()]);
+            }
+
+            // The decision this interview's outcome followed (the event before its outcome event).
+            $previous = DB::table('application_status_events as outcome')
+                ->join('application_status_events as before', 'before.id', '=', 'outcome.previous_event_id')
+                ->where('outcome.interview_id', $interview->id)
+                ->where('outcome.decision_type', DecisionType::Outcome->value)
+                ->value('before.occurred_at');
+
+            if ($previous !== null && $values['held_at']->lessThan(Date::parse($previous))) {
+                $this->fail('held_at', 'interviews.held_before_previous_decision');
+            }
 
             $interview->forceFill($values)->save();
             $revision = (int) $interview->revisions()->max('revision') + 1;
@@ -214,7 +235,7 @@ class ManageInterviews
 
     private function book(Application $application, InterviewSitting $sitting, CarbonInterface $time, StaffUser $actor): Interview
     {
-        $interview = new Interview();
+        $interview = new Interview;
         $interview->forceFill([
             'application_id' => $application->id,
             'round' => (int) Interview::query()->where('application_id', $application->id)->max('round') + 1,

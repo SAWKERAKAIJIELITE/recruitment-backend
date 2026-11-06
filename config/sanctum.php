@@ -37,7 +37,8 @@ return [
     |
     */
 
-    'guard' => ['web'],
+    // No session (cookie) login: every API request carries a token, so no guard is tried before it.
+    'guard' => [],
 
     /*
     |--------------------------------------------------------------------------

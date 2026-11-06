@@ -2,9 +2,9 @@
 
 namespace App\Modules\Identity\Http\Requests;
 
+use App\Modules\Recruitment\Support\ApplicationRules as R;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rules\Password;
-use App\Modules\Recruitment\Support\ApplicationRules as R;
 
 class RegisterUserRequest extends FormRequest
 {
@@ -23,7 +23,7 @@ class RegisterUserRequest extends FormRequest
             'first_name' => ['required', ...$name],
             'last_name' => ['required', ...$name],
             'is_active' => ['required', 'boolean'],
-            'username' => ['required', 'string', 'max:50', 'min:3', 'regex:/^[a-z._-]{3,50}$/','unique:staff_users,username'],
+            'username' => ['required', 'string', 'max:50', 'min:3', 'regex:/^[a-z._-]{3,50}$/', 'unique:staff_users,username'],
             'role' => ['required', 'string', 'exists:roles,slug'],
             'password' => [
                 'required',
@@ -35,7 +35,7 @@ class RegisterUserRequest extends FormRequest
                     ->mixedCase()        // Must contain both uppercase and lowercase letters
                     ->numbers()          // Must contain at least one number
                     ->symbols()          // Must contain at least one special character (!@#$%^&*)
-                    // ->uncompromised(),
+                // ->uncompromised(),
             ],
         ];
     }

@@ -21,9 +21,7 @@ final readonly class ReportPeriod
     /** The longest run of months the monthly series covers. */
     public const MAX_MONTHS = 60;
 
-    private function __construct(public ?CarbonImmutable $start, public ?CarbonImmutable $end)
-    {
-    }
+    private function __construct(public ?CarbonImmutable $start, public ?CarbonImmutable $end) {}
 
     /** @return array<string, list<mixed>> */
     public static function rules(): array

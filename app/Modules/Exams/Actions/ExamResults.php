@@ -23,6 +23,8 @@ use App\Modules\Recruitment\Exceptions\IllegalStatusTransition;
 use App\Modules\Recruitment\Models\Application;
 use Brick\Math\BigDecimal;
 use Carbon\CarbonInterface;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -45,9 +47,8 @@ class ExamResults
 {
     public function __construct(
         private readonly ApplicationLifecycle $lifecycle,
-        private readonly ExamScorer $scorer = new ExamScorer(),
-    ) {
-    }
+        private readonly ExamScorer $scorer = new ExamScorer,
+    ) {}
 
     /** Closes a locked, open attempt and decides it when nothing is missing. */
     public function close(ExamAttempt $attempt, ClosedBy $by, CarbonInterface $at): ExamAttempt
@@ -103,7 +104,7 @@ class ExamResults
                 }
 
                 if ($previous !== null && $decided && ! $actor->hasPermission('exam_results.correct')) {
-                    throw new \Illuminate\Auth\Access\AuthorizationException(__('exams.marks.correct_permission'));
+                    throw new AuthorizationException(__('exams.marks.correct_permission'));
                 }
 
                 ExamManualMark::query()->forceCreate([
@@ -193,7 +194,7 @@ class ExamResults
 
         $result = $this->store($attempt, $plan, $marks, 1, null, $actor);
         $booking = ExamBooking::query()->whereKey($attempt->booking_id)->lockForUpdate()->firstOrFail();
-        $application = Application::query()->findOrFail($booking->application_id);
+        $application = Application::query()->whereKey($booking->application_id)->lockForUpdate()->firstOrFail();
 
         if ($application->current_status !== ApplicationStatus::AwaitingExam) {
             // Closed by staff in the meantime: the result is kept, the application stays where it is.
@@ -202,7 +203,15 @@ class ExamResults
             return $result;
         }
 
-        $this->lifecycle->move($application, $result->passed ? ApplicationStatus::AwaitingInterview : ApplicationStatus::ExamFailed, DecisionType::Outcome, $actor, null, $booking, $attempt->submitted_at);
+        try {
+            $this->lifecycle->move($application, $result->passed ? ApplicationStatus::AwaitingInterview : ApplicationStatus::ExamFailed, DecisionType::Outcome, $actor, null, $booking, $attempt->submitted_at);
+        } catch (IllegalStatusTransition $e) {
+            // Kept, not lost with the attempt's closing: staff see the result and decide (logged).
+            Log::warning('exam_result_not_applied', ['attempt_id' => $attempt->id, 'error' => $e->getMessage()]);
+
+            return $result;
+        }
+
         $booking->forceFill(['decided_at' => Date::now()])->save();
 
         AuditTrail::record('exam_result.decided', $actor, ['attempt_id' => $attempt->id, 'passed' => $result->passed, 'average' => (string) $result->average]);
@@ -252,8 +261,8 @@ class ExamResults
         return ExamSession::query()->with('plan.subjects.parts', 'plan.passPolicy')->findOrFail($attempt->session_id)->plan;
     }
 
-    /** @return \Illuminate\Support\Collection<int, ExamPlanSubjectPart> */
-    private function manualParts(ExamPlanVersion $plan): \Illuminate\Support\Collection
+    /** @return Collection<int, ExamPlanSubjectPart> */
+    private function manualParts(ExamPlanVersion $plan): Collection
     {
         return $plan->subjects->flatMap(fn(ExamPlanSubject $subject) => $subject->parts)->filter(fn(ExamPlanSubjectPart $part) => $part->isManual())->values();
     }

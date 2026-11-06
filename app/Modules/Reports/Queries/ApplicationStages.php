@@ -14,14 +14,14 @@ use Carbon\CarbonInterface;
  * accepted excuses of its interview absences. A correction replaces the decision it corrects and keeps that
  * decision's date: the exam happened then.
  *
- * Exam marks are not here: they come with the exam attempts (D-056).
+ * Each exam decision carries the booking that caused it (exam sessions, D-074), whose marks ExamScores reads.
  */
 final class ApplicationStages
 {
     /**
      * @return array{
      *     nominated_at: ?CarbonInterface,
-     *     exams: list<array{round: int, result: string, at: CarbonInterface, corrected: bool, reason: ?string, exception: ?array{at: CarbonInterface, reason: ?string}, excuse: ?array{at: CarbonInterface, reason: ?string}}>,
+     *     exams: list<array{round: int, result: string, at: CarbonInterface, corrected: bool, reason: ?string, booking_id: ?string, exception: ?array{at: CarbonInterface, reason: ?string}, excuse: ?array{at: CarbonInterface, reason: ?string}}>,
      *     interview_excuses: array<string, array{at: CarbonInterface, reason: ?string}>
      * }
      */
@@ -48,6 +48,7 @@ final class ApplicationStages
                     'at' => $event->occurred_at,
                     'corrected' => false,
                     'reason' => $event->reason,
+                    'booking_id' => $event->exam_booking_id,
                     'exception' => null,
                     'excuse' => null,
                 ],

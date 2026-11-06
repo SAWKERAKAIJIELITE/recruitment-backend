@@ -2,13 +2,14 @@
 
 namespace App\Modules\Identity\Http\Resources;
 
+use App\Modules\Identity\Models\StaffDevice;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * What the public registration endpoint returns: only what the device itself needs to show.
  *
- * @mixin \App\Modules\Identity\Models\StaffDevice
+ * @mixin StaffDevice
  */
 class DeviceRegistrationResource extends JsonResource
 {

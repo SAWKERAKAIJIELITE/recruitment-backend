@@ -44,8 +44,7 @@ class CreateApplication
     public function __construct(
         private readonly ApplicationLifecycle $lifecycle,
         private readonly NominationNumberGenerator $numbers,
-    ) {
-    }
+    ) {}
 
     /**
      * @param  array  $input  validated data (see StoreApplicationRequest)
@@ -107,7 +106,7 @@ class CreateApplication
      */
     public static function lockPeople(array $nationalNumbers): void
     {
-        $numbers = array_values(array_unique(array_map(fn(string $number) => NationalNumber::normalize($number), $nationalNumbers)));
+        $numbers = array_values(array_unique(array_map(fn (string $number) => NationalNumber::normalize($number), $nationalNumbers)));
         sort($numbers);
 
         if ($numbers === []) {
@@ -116,7 +115,7 @@ class CreateApplication
 
         DB::select(
             "SELECT pg_advisory_xact_lock(hashtextextended('candidate:' || n, 0)) FROM unnest(?::text[]) WITH ORDINALITY AS t(n, i) ORDER BY i",
-            ['{' . implode(',', $numbers) . '}'],
+            ['{'.implode(',', $numbers).'}'],
         );
     }
 

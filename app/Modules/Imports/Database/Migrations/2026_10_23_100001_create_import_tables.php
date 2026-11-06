@@ -12,7 +12,8 @@ use Illuminate\Support\Facades\Schema;
  * the system understood, and what is wrong with it, and nothing becomes an application until the batch is
  * approved. Batches and rows are never deleted.
  */
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('import_batches', function (Blueprint $table) {
@@ -36,6 +37,8 @@ return new class extends Migration {
             $table->text('notes')->nullable();
 
             $table->enum('status', ['pending', 'approved', 'cancelled'])->default('pending')->index();
+            // Grows with every change to the batch's rows: an approval names the revision its approver reviewed (D-082).
+            $table->unsignedInteger('revision')->default(0);
             $table->foreignUuid('uploaded_by')->index()->constrained('staff_users')->restrictOnDelete();
             $table->foreignUuid('approved_by')->nullable()->constrained('staff_users')->restrictOnDelete();
             $table->timestampTz('approved_at')->nullable();
@@ -67,7 +70,7 @@ return new class extends Migration {
             $table->foreignUuid('candidate_id')->nullable()->index()->constrained('candidates')->restrictOnDelete();
 
             // "Same person" confirmed by staff, for the national number it was confirmed for.
-            $table->string('confirmed_national_number', 11)->nullable();
+            $table->string('confirmed_national_number', 20)->nullable();   // 11 to 20 digits, like the national number (D-032)
             $table->foreignUuid('reviewed_by')->nullable()->constrained('staff_users')->restrictOnDelete();
             $table->timestampTz('reviewed_at')->nullable();
             $table->text('review_note')->nullable();
@@ -88,7 +91,7 @@ return new class extends Migration {
 
         DB::statement("ALTER TABLE import_rows ADD CONSTRAINT import_rows_imported_has_application CHECK ((status = 'imported') = (application_id IS NOT NULL AND imported_at IS NOT NULL))");
         DB::statement("ALTER TABLE import_rows ADD CONSTRAINT import_rows_excluded_is_explained CHECK (status <> 'excluded' OR (excluded_by IS NOT NULL AND btrim(coalesce(exclude_reason, '')) <> ''))");
-        DB::statement("ALTER TABLE import_rows ADD CONSTRAINT import_rows_row_number_positive CHECK (row_number >= 1)");
+        DB::statement('ALTER TABLE import_rows ADD CONSTRAINT import_rows_row_number_positive CHECK (row_number >= 1)');
     }
 
     public function down(): void

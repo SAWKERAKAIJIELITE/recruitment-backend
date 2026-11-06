@@ -14,7 +14,8 @@ use Illuminate\Support\Facades\Schema;
  * 1 → 2 → 3 ... When the latest contract ends without a renewal, staff record the end and the application becomes
  * contract_ended. "Written" does not mean signed or appointed (§08). Contracts are never deleted.
  */
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         // Managed list: contract types (نوع العقد), like the lists of the Recruitment module (D-024, D-034).

@@ -204,7 +204,7 @@ class ApplicationLifecycle
             $attributes[$cause::statusEventColumn()] = $cause->getKey();
         }
 
-        $event = new ApplicationStatusEvent();
+        $event = new ApplicationStatusEvent;
         $event->forceFill($attributes)->save();
 
         return $event;

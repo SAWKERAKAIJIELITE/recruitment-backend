@@ -7,6 +7,7 @@ use App\Modules\Interviews\Enums\InterviewStatus;
 use App\Modules\Interviews\Models\Interview;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Reports\Queries\ApplicationStages;
+use App\Modules\Reports\Queries\ExamScores;
 use App\Modules\Reports\Support\ReportPeriod;
 use App\Modules\Reports\Support\ReportTable;
 use Carbon\CarbonInterface;
@@ -107,9 +108,15 @@ final class RecruitmentTables
             }
         }
 
-        usort($decisions, fn(array $a, array $b) => [$a[1]['at'], $a[0]->nomination_number] <=> [$b[1]['at'], $b[0]->nomination_number]);
+        usort($decisions, fn (array $a, array $b) => [$a[1]['at'], $a[0]->nomination_number] <=> [$b[1]['at'], $b[0]->nomination_number]);
+
+        // The marks (D-080): a column per subject in the plans' order, the total, the average; the failure cause.
+        $marks = ExamScores::forBookings(array_values(array_filter(array_map(fn (array $decision) => $decision[1]['booking_id'] ?? null, $decisions))));
+        $subjects = $view === 'absent' ? [] : $marks['subjects'];
+        $withCause = in_array($view, ['all', 'failed'], true) && $subjects !== [];
 
         $columns = [['nomination_number', 14], ['full_name', 24], ['nominating_entity', 18], ['qualification', 14], ['residence', 16], ['exam_round', 8], ['attendance', 9], ['exam_date', 12], ['exam_result', 11]];
+        $scoreColumns = $subjects === [] ? [] : [...array_map(fn (string $name) => [$name, 10], array_values($subjects)), [__('reports.columns.exam_total', [], 'ar'), 10], [__('reports.columns.exam_average', [], 'ar'), 9]];
         $columns = match ($view) {
             'passed' => [...$columns, ['pass_kind', 22], ['exception_reason', 26]],
             'failed' => [...$columns, ['exception', 18], ['exception_reason', 26]],
@@ -117,9 +124,15 @@ final class RecruitmentTables
             default => [...$columns, ['later_decision', 24], ['decision_reason', 26]],
         };
 
-        $rows = array_map(function (array $decision) use ($view) {
+        $rows = array_map(function (array $decision) use ($view, $marks, $subjects, $withCause) {
             [$application, $exam] = $decision;
             $later = $exam['exception'] ?? $exam['excuse'];
+            $score = $marks['scores'][$exam['booking_id'] ?? ''] ?? null;
+            $scoreCells = $subjects === [] ? [] : [
+                ...array_map(fn (int $id) => $score['subjects'][$id] ?? null, array_keys($subjects)),
+                $score['total'] ?? null,
+                $score['average'] ?? null,
+            ];
             $row = [
                 $application->nomination_number,
                 $application->candidate->full_name,
@@ -127,12 +140,12 @@ final class RecruitmentTables
                 $application->academicQualification->name_ar,
                 self::join($application->residenceDistrict->name_ar, $application->residenceArea?->name_ar),
                 $exam['round'],
-                __('reports.attendance.' . ($exam['result'] === 'absent' ? 'absent' : 'present'), [], 'ar'),
+                __('reports.attendance.'.($exam['result'] === 'absent' ? 'absent' : 'present'), [], 'ar'),
                 self::day($exam['at']),
-                __("reports.results.{$exam['result']}", [], 'ar') . ($exam['corrected'] ? ' ' . __('reports.corrected', [], 'ar') : ''),
+                __("reports.results.{$exam['result']}", [], 'ar').($exam['corrected'] ? ' '.__('reports.corrected', [], 'ar') : ''),
             ];
 
-            return [...$row, ...match ($view) {
+            return [...$row, ...$scoreCells, ...($withCause ? [$score['cause'] ?? null] : []), ...match ($view) {
                 'passed' => [
                     $exam['exception'] === null ? __('reports.pass_kinds.regular', [], 'ar') : __('reports.pass_kinds.exception', ['date' => self::day($exam['exception']['at'])], 'ar'),
                     $exam['exception']['reason'] ?? null,
@@ -150,17 +163,20 @@ final class RecruitmentTables
             }];
         }, $decisions);
 
-        $results = array_count_values(array_map(fn(array $decision) => $decision[1]['result'], $decisions));
+        $results = array_count_values(array_map(fn (array $decision) => $decision[1]['result'], $decisions));
         $totals = [__('reports.total_decisions', [], 'ar') => count($rows)];
 
         foreach (['passed', 'failed', 'absent'] as $result) {
             $totals[__('reports.total_exam', ['result' => __("reports.results.{$result}", [], 'ar')], 'ar')] = $results[$result] ?? 0;
         }
 
-        $totals[__('reports.total_excepted', [], 'ar')] = count(array_filter($decisions, fn(array $decision) => $decision[1]['exception'] !== null));
-        $totals[__('reports.total_excused', [], 'ar')] = count(array_filter($decisions, fn(array $decision) => $decision[1]['excuse'] !== null));
+        $totals[__('reports.total_excepted', [], 'ar')] = count(array_filter($decisions, fn (array $decision) => $decision[1]['exception'] !== null));
+        $totals[__('reports.total_excused', [], 'ar')] = count(array_filter($decisions, fn (array $decision) => $decision[1]['excuse'] !== null));
 
-        return new ReportTable(__("reports.tables.exams_{$view}", [], 'ar'), self::columns($columns), $rows, $totals);
+        $columns = self::columns($columns);
+        array_splice($columns, 9, 0, [...$scoreColumns, ...($withCause ? [[__('reports.columns.failure_cause', [], 'ar'), 30]] : [])]);
+
+        return new ReportTable(__("reports.tables.exams_{$view}", [], 'ar'), $columns, $rows, $totals, wide: $subjects !== []);
     }
 
     /**
@@ -176,9 +192,9 @@ final class RecruitmentTables
             }
 
             return $period->contains($interview->held_at ?? $interview->scheduled_at);
-        })->sortBy(fn(Interview $interview) => [($interview->held_at ?? $interview->scheduled_at)->getTimestamp(), $interview->application->nomination_number])->values();
+        })->sortBy(fn (Interview $interview) => [($interview->held_at ?? $interview->scheduled_at)->getTimestamp(), $interview->application->nomination_number])->values();
 
-        $grade = fn(?InterviewGrade $grade) => $grade?->labelAr();
+        $grade = fn (?InterviewGrade $grade) => $grade?->labelAr();
         $rows = $kept->map(function (Interview $interview) use (&$stages, $grade, $view) {
             $application = $interview->application;
             $stage = $stages[$application->id] ??= ApplicationStages::of($application);
@@ -191,10 +207,10 @@ final class RecruitmentTables
                 $application->candidate->full_name,
                 $application->nominatingEntity->name_ar,
                 $exam === null ? null : self::day($exam['at']),
-                $exam === null ? null : __("reports.results.{$exam['result']}", [], 'ar') . ($exam['exception'] === null ? '' : ' ' . __('reports.then_excepted', [], 'ar')),
+                $exam === null ? null : __("reports.results.{$exam['result']}", [], 'ar').($exam['exception'] === null ? '' : ' '.__('reports.then_excepted', [], 'ar')),
                 $interview->round,
                 $sitting->committee_name ?? __('reports.one_off_sitting', [], 'ar'),
-                $sitting->members->map(fn($member) => "{$member->name} ({$member->capacity->labelAr()})")->implode('، '),
+                $sitting->members->map(fn ($member) => "{$member->name} ({$member->capacity->labelAr()})")->implode('، '),
                 $sitting->location,
                 self::time($interview->scheduled_at),
             ];
@@ -206,7 +222,7 @@ final class RecruitmentTables
             return [
                 ...$row,
                 self::day($interview->held_at),
-                $interview->result === null ? null : __('reports.attendance.' . ($interview->result->value === 'absent' ? 'absent' : 'present'), [], 'ar'),
+                $interview->result === null ? null : __('reports.attendance.'.($interview->result->value === 'absent' ? 'absent' : 'present'), [], 'ar'),
                 $grade($interview->scientific_grade),
                 $grade($interview->general_grade),
                 $interview->result?->labelAr(),
@@ -227,7 +243,7 @@ final class RecruitmentTables
 
         $columns = [...$columns, ['held_on', 12], ['attendance', 9], ['scientific_grade', 11], ['general_grade', 11], ['interview_result', 11], ['overall_grade', 11], [$view === 'absent' ? 'absence_reason' : 'committee_note', 26], ['excuse', 18]];
 
-        $results = $kept->filter(fn(Interview $interview) => $interview->result !== null)->countBy(fn(Interview $interview) => $interview->result->value);
+        $results = $kept->filter(fn (Interview $interview) => $interview->result !== null)->countBy(fn (Interview $interview) => $interview->result->value);
         $totals = [__('reports.total_interviews', [], 'ar') => count($rows)];
 
         foreach (['passed', 'failed', 'absent'] as $result) {
@@ -235,7 +251,7 @@ final class RecruitmentTables
         }
 
         if ($view === 'all') {
-            $totals[__('reports.total_waiting', [], 'ar')] = $kept->filter(fn(Interview $interview) => $interview->status === InterviewStatus::Scheduled)->count();
+            $totals[__('reports.total_waiting', [], 'ar')] = $kept->filter(fn (Interview $interview) => $interview->status === InterviewStatus::Scheduled)->count();
         }
 
         return new ReportTable(__("reports.tables.interviews_{$view}", [], 'ar'), self::columns($columns), $rows, $totals, wide: true);
@@ -244,9 +260,9 @@ final class RecruitmentTables
     /** @return list<ReportTable> the dashboard (Dashboard::build) as tables */
     public static function dashboard(array $summary): array
     {
-        $t = fn(string $key, array $replace = []) => __("reports.dashboard.{$key}", $replace, 'ar');
+        $t = fn (string $key, array $replace = []) => __("reports.dashboard.{$key}", $replace, 'ar');
         $totals = $summary['totals'];
-        $percent = fn(?float $rate) => $rate === null ? null : $rate;
+        $percent = fn (?float $rate) => $rate === null ? null : $rate;
 
         $indicators = new ReportTable($t('indicators'), [[$t('indicator'), 34], [$t('value'), 14]], [
             [$t('nominations'), $totals['nominations']],
@@ -272,10 +288,10 @@ final class RecruitmentTables
         ]);
 
         $monthly = new ReportTable($t('monthly'), [[$t('month'), 34], [$t('nominations'), 14], [$t('exam_takers'), 14], [$t('interview_takers'), 14], [$t('contracts_written'), 14]],
-            array_map(fn(array $month) => [$month['month'], $month['nominations'], $month['exam_takers'], $month['interview_takers'], $month['contracts_written']], $summary['monthly']));
+            array_map(fn (array $month) => [$month['month'], $month['nominations'], $month['exam_takers'], $month['interview_takers'], $month['contracts_written']], $summary['monthly']));
 
-        $breakdown = fn(string $title, string $first, array $rows) => new ReportTable($title, [[$first, 34], [$t('nominations'), 14], [$t('exam_passed'), 14], [$t('exam_passed_by_exception'), 14], [$t('interview_passed'), 14], [$t('contracts_written'), 14]],
-            array_map(fn(array $row) => [$row['name'], $row['nominations'], $row['exam_passed'], $row['exam_passed_by_exception'], $row['interview_passed'], $row['contracts_written']], $rows));
+        $breakdown = fn (string $title, string $first, array $rows) => new ReportTable($title, [[$first, 34], [$t('nominations'), 14], [$t('exam_passed'), 14], [$t('exam_passed_by_exception'), 14], [$t('interview_passed'), 14], [$t('contracts_written'), 14]],
+            array_map(fn (array $row) => [$row['name'], $row['nominations'], $row['exam_passed'], $row['exam_passed_by_exception'], $row['interview_passed'], $row['contracts_written']], $rows));
 
         return [
             $indicators,
@@ -288,7 +304,7 @@ final class RecruitmentTables
     /** @param list<array{0: string, 1: int}> $columns key => width */
     private static function columns(array $columns): array
     {
-        return array_map(fn(array $column) => [__("reports.columns.{$column[0]}", [], 'ar'), $column[1]], $columns);
+        return array_map(fn (array $column) => [__("reports.columns.{$column[0]}", [], 'ar'), $column[1]], $columns);
     }
 
     private static function studyingYears(Application $application): ?string
@@ -307,7 +323,7 @@ final class RecruitmentTables
 
     private static function join(?string ...$parts): ?string
     {
-        $parts = array_filter(array_map(fn(?string $part) => $part === null ? null : trim($part), $parts));
+        $parts = array_filter(array_map(fn (?string $part) => $part === null ? null : trim($part), $parts));
 
         return $parts === [] ? null : implode(' — ', $parts);
     }

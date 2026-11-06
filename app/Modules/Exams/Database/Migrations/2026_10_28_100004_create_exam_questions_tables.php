@@ -14,7 +14,8 @@ use Illuminate\Support\Facades\Schema;
  * never deleted. Single correct answer among 2 to 6 options, kept in the order they were written (options are not
  * shuffled, D-056).
  */
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('exam_questions', function (Blueprint $table) {

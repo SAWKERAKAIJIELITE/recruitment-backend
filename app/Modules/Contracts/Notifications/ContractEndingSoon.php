@@ -8,9 +8,7 @@ use Illuminate\Notifications\Notification;
 /** In the system (database channel): a contract ends within the reminder window and is not renewed (D-065). */
 class ContractEndingSoon extends Notification
 {
-    public function __construct(private readonly Contract $contract)
-    {
-    }
+    public function __construct(private readonly Contract $contract) {}
 
     /** @return list<string> */
     public function via(object $notifiable): array

@@ -45,7 +45,7 @@ final class HeaderMatcher
         }
 
         // Best matches first: exact before contained, longer alias before shorter.
-        usort($candidates, fn($a, $b) => [$b[0], $b[1]] <=> [$a[0], $a[1]]);
+        usort($candidates, fn ($a, $b) => [$b[0], $b[1]] <=> [$a[0], $a[1]]);
 
         $fields = [];
         $usedColumns = [];
@@ -59,7 +59,7 @@ final class HeaderMatcher
 
         $ignored = array_values(array_filter(
             array_keys($headers),
-            fn(string $column) => ! isset($usedColumns[$column]) && self::normalize($headers[$column]) !== '',
+            fn (string $column) => ! isset($usedColumns[$column]) && self::normalize($headers[$column]) !== '',
         ));
 
         return ['fields' => $fields, 'ignored' => $ignored];

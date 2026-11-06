@@ -59,7 +59,7 @@ trait StaffTestHelpers
         $pair = $this->newDeviceKey();
         $parsed = DeviceCrypto::parsePublicKey($pair['public_pem']);
 
-        $device = new StaffDevice();
+        $device = new StaffDevice;
         $device->forceFill([
             'label' => 'Approved PC',
             'public_key' => $parsed['pem'],

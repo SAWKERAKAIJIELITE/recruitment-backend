@@ -20,8 +20,7 @@ final readonly class SubjectResult
         public BigRational $score,
         public string $band,
         public array $parts = [],
-    ) {
-    }
+    ) {}
 
     public function display(int $scale = 2): string
     {

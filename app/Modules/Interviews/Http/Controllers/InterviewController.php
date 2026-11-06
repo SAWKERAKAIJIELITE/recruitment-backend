@@ -153,6 +153,9 @@ class InterviewController extends Controller
      */
     public function excuse(InterviewExcuseRequest $request, Application $application, ManageInterviews $interviews): JsonResponse|InterviewResource
     {
+        // Booking the next round is scheduling: it needs interviews.manage as well.
+        abort_if($request->validated('appointment') !== null && ! $request->user()->hasPermission('interviews.manage'), 403);
+
         $next = $interviews->acceptExcuse(
             $application,
             $request->validated('reason'),

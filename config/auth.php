@@ -1,5 +1,7 @@
 <?php
 
+use App\Modules\Identity\Models\StaffUser;
+use App\Modules\Recruitment\Models\Candidate;
 
 return [
 
@@ -76,11 +78,11 @@ return [
         // ],
         'staff_users' => [
             'driver' => 'eloquent',
-            'model' => App\Modules\Identity\Models\StaffUser::class,
+            'model' => StaffUser::class,
         ],
         'candidates' => [
             'driver' => 'eloquent',
-            'model' => App\Modules\Recruitment\Models\Candidate::class,
+            'model' => Candidate::class,
         ],
 
         // 'users' => [

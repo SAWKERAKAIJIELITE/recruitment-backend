@@ -34,20 +34,21 @@ final class Dashboard
     public static function build(array $filters): array
     {
         $period = ReportPeriod::from($filters);
-        $applications = ApplicationSearch::filter(Application::query(), ReportFilters::applicationFilters($filters))
-            ->with('statusEvents')
-            ->get(['id', 'nominating_entity_id', 'job_position_id', 'created_at']);
+        $filtered = fn () => ApplicationSearch::filter(Application::query(), ReportFilters::applicationFilters($filters));
+        $applications = $filtered()->with('statusEvents')->get(['id', 'nominating_entity_id', 'job_position_id', 'created_at']);
+        // The same applications as a subquery, not a list of ids: no limit on how many a report may count.
+        $ids = $filtered()->select('applications.id');
 
-        $stages = $applications->mapWithKeys(fn(Application $application) => [$application->id => ApplicationStages::of($application)]);
+        $stages = $applications->mapWithKeys(fn (Application $application) => [$application->id => ApplicationStages::of($application)]);
         $byId = $applications->keyBy('id');
 
         $interviews = Interview::query()
-            ->whereIn('application_id', $applications->modelKeys())
+            ->whereIn('application_id', $ids)
             ->where('status', InterviewStatus::Recorded)
             ->get(['id', 'application_id', 'result', 'held_at']);
 
         $contracts = Contract::query()
-            ->whereIn('application_id', $applications->modelKeys())
+            ->whereIn('application_id', $ids)
             ->get(['id', 'application_id', 'sequence', 'written_on']);
 
         // One list of dated facts, each counted where it falls: [kind, application id, moment].
@@ -107,12 +108,12 @@ final class Dashboard
             }
         }
 
-        $inPeriod = array_values(array_filter($facts, fn(array $fact) => ($fact[3] ?? false) ? $period->containsDate($fact[2]) : $period->contains($fact[2])));
-        $count = fn(string $kind, ?callable $where = null) => count(array_filter($inPeriod, fn(array $fact) => $fact[0] === $kind && ($where === null || $where($fact))));
+        $inPeriod = array_values(array_filter($facts, fn (array $fact) => ($fact[3] ?? false) ? $period->containsDate($fact[2]) : $period->contains($fact[2])));
+        $count = fn (string $kind, ?callable $where = null) => count(array_filter($inPeriod, fn (array $fact) => $fact[0] === $kind && ($where === null || $where($fact))));
 
         $earliest = collect($stages)->pluck('nominated_at')->filter()->min();
-        $monthly = array_map(fn(string $month) => ['month' => $month] + self::counts(
-            fn(string $kind) => $count($kind, fn(array $fact) => ReportPeriod::monthOf($fact[2]) === $month),
+        $monthly = array_map(fn (string $month) => ['month' => $month] + self::counts(
+            fn (string $kind) => $count($kind, fn (array $fact) => ReportPeriod::monthOf($fact[2]) === $month),
             ['nominations', 'exam_takers', 'interview_takers', 'contracts_written'],
         ), $period->months($earliest));
 
@@ -139,7 +140,7 @@ final class Dashboard
                     'pass_rate_percent' => self::rate($count('interview_passed'), $count('interview_takers')),
                 ],
                 'contracts' => ['written' => $count('contracts_written'), 'renewals' => $count('contract_renewals')],
-                'average_days' => array_map(fn(array $days) => $days === [] ? null : round(array_sum($days) / count($days), 1), $durations),
+                'average_days' => array_map(fn (array $days) => $days === [] ? null : round(array_sum($days) / count($days), 1), $durations),
             ],
             'monthly' => $monthly,
             'by_nominating_entity' => self::breakdown($inPeriod, $byId->map->nominating_entity_id->all(), NominatingEntity::withTrashed()->pluck('name_ar', 'id')->all()),
@@ -167,7 +168,7 @@ final class Dashboard
             $rows[$group][$kind]++;
         }
 
-        usort($rows, fn(array $a, array $b) => [$b['nominations'], $a['name']] <=> [$a['nominations'], $b['name']]);
+        usort($rows, fn (array $a, array $b) => [$b['nominations'], $a['name']] <=> [$a['nominations'], $b['name']]);
 
         return $rows;
     }

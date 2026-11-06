@@ -2,13 +2,14 @@
 
 namespace App\Modules\Identity\Http\Resources;
 
+use App\Modules\Identity\Models\StaffUser;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * One row of the staff list.
  *
- * @mixin \App\Modules\Identity\Models\StaffUser
+ * @mixin StaffUser
  */
 class StaffUserSummaryResource extends JsonResource
 {

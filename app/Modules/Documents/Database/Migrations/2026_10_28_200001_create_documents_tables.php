@@ -16,7 +16,8 @@ use Illuminate\Support\Facades\Schema;
  *
  * A document row is the evidence of an upload: it is never changed or deleted, only archived once, with a reason.
  */
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('document_types', function (Blueprint $table) {
@@ -64,7 +65,8 @@ return new class extends Migration {
         DB::statement('ALTER TABLE documents ADD CONSTRAINT documents_size_positive CHECK (size_bytes > 0)');
 
         // A document of a person-level type has no application; one of an application-level type has one.
-        DB::unprepared(<<<'SQL'
+        DB::unprepared(
+            <<<'SQL'
             CREATE OR REPLACE FUNCTION documents_match_type_scope() RETURNS trigger AS
             $$
                 DECLARE
@@ -85,7 +87,8 @@ return new class extends Migration {
         DB::unprepared('CREATE TRIGGER documents_scope BEFORE INSERT ON documents FOR EACH ROW EXECUTE FUNCTION documents_match_type_scope()');
 
         // The upload itself never changes; the only change is archiving it, once. Rows are never deleted.
-        DB::unprepared(<<<'SQL'
+        DB::unprepared(
+            <<<'SQL'
             CREATE OR REPLACE FUNCTION documents_archive_only() RETURNS trigger AS
             $$
                 BEGIN
@@ -105,6 +108,7 @@ return new class extends Migration {
             SQL
         );
         DB::unprepared('CREATE TRIGGER documents_immutable BEFORE UPDATE OR DELETE ON documents FOR EACH ROW EXECUTE FUNCTION documents_archive_only()');
+        DB::unprepared('CREATE TRIGGER documents_no_truncate BEFORE TRUNCATE ON documents FOR EACH STATEMENT EXECUTE FUNCTION prevent_row_modification()');
     }
 
     public function down(): void

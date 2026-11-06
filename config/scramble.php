@@ -94,8 +94,8 @@ return [
             'showDeveloperTools' => 'always',
             'agent' => ['disabled' => true],
             'credentials' => 'include',
-            "authentication" => [
-                "createAnySecurityScheme" => true,
+            'authentication' => [
+                'createAnySecurityScheme' => true,
             ],
         ],
     ],

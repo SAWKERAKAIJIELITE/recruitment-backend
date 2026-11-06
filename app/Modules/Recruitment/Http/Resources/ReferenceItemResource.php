@@ -10,7 +10,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * One entry of a managed list. All list models share this shape (areas add district_id and district); Scramble needs
  * one of them named to read the column types.
  *
- * @mixin \App\Modules\Recruitment\Models\Area
+ * @mixin Area
  */
 class ReferenceItemResource extends JsonResource
 {

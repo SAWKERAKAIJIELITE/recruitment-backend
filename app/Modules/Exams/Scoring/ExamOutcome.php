@@ -28,8 +28,7 @@ final readonly class ExamOutcome
         public bool $passed,
         public array $reasons,
         public int $policyVersion,
-    ) {
-    }
+    ) {}
 
     /** Subjects that passed only thanks to the tolerance. */
     public function toleratedSubjectIds(): array

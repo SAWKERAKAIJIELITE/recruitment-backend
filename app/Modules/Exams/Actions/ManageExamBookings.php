@@ -37,11 +37,14 @@ class ManageExamBookings
 
             $booked = [];
 
+            // Locked in one order (by id) first: two bookings sharing applications in another order never deadlock.
+            Application::query()->whereKey($applicationIds)->orderBy('id')->lockForUpdate()->get();
+
             foreach (array_values($applicationIds) as $index => $id) {
                 $application = Application::query()->whereKey($id)->lockForUpdate()->firstOrFail();
                 $this->assertBookable($application, $session, "application_ids.{$index}");
 
-                $booking = new ExamBooking();
+                $booking = new ExamBooking;
                 $booking->forceFill([
                     'session_id' => $session->id,
                     'application_id' => $application->id,
@@ -64,6 +67,12 @@ class ManageExamBookings
 
             if ($booking->status !== BookingStatus::Booked) {
                 $this->fail('booking', 'exams.bookings.not_waiting', ['status' => $booking->status->labelAr()]);
+            }
+
+            // Once the late window closed, a booking not started is an absence (the sweep records it); cancelling it
+            // would put the application back in the queue without an accepted excuse.
+            if ($actor !== null && Date::now()->greaterThanOrEqualTo(ExamSession::query()->findOrFail($booking->session_id)->lateUntil())) {
+                $this->fail('booking', 'exams.bookings.window_closed');
             }
 
             $booking->forceFill(['status' => BookingStatus::Cancelled, 'cancelled_at' => Date::now(), 'cancelled_by' => $actor?->id, 'cancel_reason' => trim($reason)])->save();

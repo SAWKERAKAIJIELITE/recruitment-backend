@@ -15,13 +15,14 @@ class ResetStaffPassword
 {
     public function execute(StaffUser $target, string $password, StaffUser $actor): StaffUser
     {
-        $ended = DB::transaction(function () use ($target, $password) {
-            $target->forceFill(['password' => $password])->save();
+        DB::transaction(function () use ($target, $password, $actor) {
+            // Locked: a login that checked the old password re-reads it with the row locked and fails (LoginStaff).
+            $locked = StaffUser::query()->whereKey($target->id)->lockForUpdate()->firstOrFail();
+            $locked->forceFill(['password' => $password])->save();
+            $ended = $locked->tokens()->delete();
 
-            return $target->tokens()->delete();
+            AccessLog::record('password_reset', $actor, ['user_id' => $target->id, 'sessions_ended' => $ended]);
         });
-
-        AccessLog::record('password_reset', $actor, ['user_id' => $target->id, 'sessions_ended' => $ended]);
 
         return $target->fresh(['roles', 'permissions']);
     }

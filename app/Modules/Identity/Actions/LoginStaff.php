@@ -2,12 +2,14 @@
 
 namespace App\Modules\Identity\Actions;
 
+use App\Modules\Audit\Support\AuditTrail;
 use App\Modules\Identity\Models\DeviceLoginChallenge;
 use App\Modules\Identity\Models\StaffDevice;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Identity\Support\DeviceCrypto;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class LoginStaff
@@ -44,25 +46,34 @@ class LoginStaff
         $passwordMatches = Hash::check($data->password, $user->password);
         $ownsDevice = $device->staff_user_id === $user->id;
 
-        if (!$passwordMatches || !$user->is_active || !$ownsDevice) {
+        if (! $passwordMatches || ! $user->is_active || ! $ownsDevice) {
             $this->fail(match (true) {
-                !$passwordMatches => 'bad_password',
-                !$user->is_active => 'inactive_user',
+                ! $passwordMatches => 'bad_password',
+                ! $user->is_active => 'inactive_user',
                 default => 'device_belongs_to_someone_else',
             }, $device->id, $user->id);
         }
 
-        $device->forceFill(['last_seen_at' => now()])->save();
-        $user->forceFill(['last_login_at' => now()])->save();
+        // Issued with the device and the user locked and re-read: a revocation, deactivation or password reset
+        // that committed while the password was being checked wins, and no token outlives it.
+        $newToken = DB::transaction(function () use ($device, $user, $data) {
+            $device = StaffDevice::query()->whereKey($device->id)->lockForUpdate()->firstOrFail();
+            $locked = StaffUser::query()->whereKey($user->id)->lockForUpdate()->firstOrFail();
 
-        // $newToken = $user->createToken($data->tokenName);
-        // Staff tokens live for a week (config); the global Sanctum expiration is disabled on purpose.
-        $newToken = $user->createToken(
-            $data->tokenName,
-            ['*'],
-            now()->addMinutes((int) config('staff_auth.token_lifetime_minutes')),
-        );
-        $newToken->accessToken->forceFill(['staff_device_id' => $device->id])->save();
+            if (! $device->isApproved() || ! $locked->is_active || $locked->password !== $user->password) {
+                $this->fail('changed_during_login', $device->id, $user->id);
+            }
+
+            $device->forceFill(['last_seen_at' => now()])->save();
+            $locked->forceFill(['last_login_at' => now()])->save();
+
+            // Staff tokens live for a day (config); the global Sanctum expiration is disabled on purpose.
+            $newToken = $locked->createToken($data->tokenName, ['*'], now()->addMinutes((int) config('staff_auth.token_lifetime_minutes')));
+            $newToken->accessToken->forceFill(['staff_device_id' => $device->id])->save();
+            AuditTrail::record('auth.staff_login', $locked, ['user_id' => $locked->id, 'device_id' => $device->id]);
+
+            return $newToken;
+        });
 
         return [
             'token' => $newToken->plainTextToken,
@@ -89,7 +100,7 @@ class LoginStaff
         $challenge = DeviceLoginChallenge::find($data->challengeId);
         $device = StaffDevice::find($data->deviceId);
 
-        if ($challenge === null || $device === null || !$device->isApproved()) {
+        if ($challenge === null || $device === null || ! $device->isApproved()) {
             return null;
         }
 

@@ -2,6 +2,7 @@
 
 namespace App\Modules\Imports\Http\Resources;
 
+use App\Modules\Imports\Models\ImportRow;
 use App\Modules\Imports\Support\ReferenceLookup;
 use App\Modules\Recruitment\Support\ApplicationRules;
 use Illuminate\Http\Request;
@@ -11,7 +12,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * One row of a batch: the cells as they were in Excel, the values understood (list values with their
  * names), what is wrong, and the decisions taken on it.
  *
- * @mixin \App\Modules\Imports\Models\ImportRow
+ * @mixin ImportRow
  */
 class ImportRowResource extends JsonResource
 {
@@ -59,7 +60,7 @@ class ImportRowResource extends JsonResource
         $lookup = $request->attributes->get(ReferenceLookup::class);
 
         if (! $lookup instanceof ReferenceLookup) {
-            $lookup = new ReferenceLookup();   // one per request, shared by every row of the response
+            $lookup = new ReferenceLookup;   // one per request, shared by every row of the response
             $request->attributes->set(ReferenceLookup::class, $lookup);
         }
 

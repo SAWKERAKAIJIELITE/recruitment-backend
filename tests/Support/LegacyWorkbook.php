@@ -84,15 +84,15 @@ final class LegacyWorkbook
     }
 
     /**
-     * @param  list<array<string, mixed>>  $rows
      * Like the real template: three title rows, an empty row, the headers on row 5 (title => null puts the
      * headers on row 1).
-     *
+    *
+     * @param  list<array<string, mixed>>  $rows
      * @param  array{headers?: array<string, ?string>, title?: ?string, sheets_before?: list<string>, sheet?: string, empty_rows_between?: bool, precalculate?: bool}  $options
      */
     public static function file(array $rows, array $options = [], string $filename = 'candidates.xlsx'): UploadedFile
     {
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
         $spreadsheet->removeSheetByIndex(0);
 
         foreach ($options['sheets_before'] ?? ['لوحة التحكم'] as $name) {
@@ -148,7 +148,7 @@ final class LegacyWorkbook
             $line += ($options['empty_rows_between'] ?? false) ? 2 : 1;
         }
 
-        $path = tempnam(sys_get_temp_dir(), 'legacy-') . '.xlsx';
+        $path = tempnam(sys_get_temp_dir(), 'legacy-').'.xlsx';
         $writer = new Xlsx($spreadsheet);
         $writer->setPreCalculateFormulas($options['precalculate'] ?? true);   // false: formulas the engine must not run
         $writer->save($path);

@@ -6,6 +6,7 @@ use App\Modules\Exams\Enums\BookingStatus;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Contracts\StatusChangeCause;
 use App\Modules\Recruitment\Models\Application;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -20,7 +21,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
  * @property string $application_id
  * @property int $round
  * @property BookingStatus $status
- * @property ?\Carbon\CarbonInterface $decided_at
+ * @property ?CarbonInterface $decided_at
  */
 class ExamBooking extends Model implements StatusChangeCause
 {

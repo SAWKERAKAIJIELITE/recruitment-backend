@@ -12,6 +12,13 @@ class DevUsersSeeder extends Seeder
 {
     public function run(): void
     {
+        // Known passwords: never in production, whoever calls this seeder.
+        if (app()->environment('production')) {
+            $this->command?->warn('DevUsersSeeder does not run in production.');
+
+            return;
+        }
+
         $accounts = [
             ['admin', 'مسؤول النظام', 'system_admin', '1234'],
             ['manager', 'المدير العام', 'general_manager', '5678'],
@@ -26,7 +33,7 @@ class DevUsersSeeder extends Seeder
                     'last_name' => explode(' ', $name)[1],
                     'password' => 'password',
                     'personal_number' => $personalNumber,
-                    'is_active' => true
+                    'is_active' => true,
                 ],
             );
             $user->roles()->syncWithoutDetaching([Role::where('slug', $roleSlug)->value('id')]);

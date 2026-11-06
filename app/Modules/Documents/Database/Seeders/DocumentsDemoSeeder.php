@@ -18,9 +18,7 @@ use Illuminate\Http\UploadedFile;
  */
 class DocumentsDemoSeeder extends Seeder
 {
-    public function __construct(private readonly ManageDocuments $documents)
-    {
-    }
+    public function __construct(private readonly ManageDocuments $documents) {}
 
     public function run(): void
     {

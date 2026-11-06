@@ -14,6 +14,7 @@ use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Models\Application;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * What the clock decides (analysis doc §06: "after the window closes without a valid attempt, an absence is
@@ -30,9 +31,7 @@ use Illuminate\Support\Facades\DB;
  */
 class SweepExamSessions
 {
-    public function __construct(private readonly ApplicationLifecycle $lifecycle, private readonly ExamResults $results)
-    {
-    }
+    public function __construct(private readonly ApplicationLifecycle $lifecycle, private readonly ExamResults $results) {}
 
     /** @return array{absent: int, closed: int} */
     public function sweep(?string $sessionId = null): array
@@ -48,7 +47,7 @@ class SweepExamSessions
             ->pluck('id');
 
         foreach ($late as $id) {
-            $absent += (int) DB::transaction(fn() => $this->markAbsent($id));
+            $absent += (int) $this->each('absent', $id, fn () => DB::transaction(fn () => $this->markAbsent($id)));
         }
 
         $expired = ExamAttempt::query()
@@ -58,7 +57,7 @@ class SweepExamSessions
             ->pluck('id');
 
         foreach ($expired as $id) {
-            $closed += (int) DB::transaction(function () use ($id) {
+            $closed += (int) $this->each('close', $id, fn () => DB::transaction(function () use ($id) {
                 $attempt = ExamAttempt::query()->whereKey($id)->lockForUpdate()->firstOrFail();
 
                 if (! $attempt->hasExpired()) {
@@ -68,10 +67,22 @@ class SweepExamSessions
                 $this->results->close($attempt, ClosedBy::Timeout, $attempt->deadline_at);
 
                 return true;
-            });
+            }));
         }
 
         return ['absent' => $absent, 'closed' => $closed];
+    }
+
+    /** One item at a time: an item that fails (a lock wait, a decision refused) is logged and tried again next time; the others go on. */
+    private function each(string $what, string $id, \Closure $work): bool
+    {
+        try {
+            return (bool) $work();
+        } catch (\Throwable $e) {
+            Log::error('exam_sweep_failed', ['what' => $what, 'id' => $id, 'error' => $e->getMessage()]);
+
+            return false;
+        }
     }
 
     private function markAbsent(string $id): bool

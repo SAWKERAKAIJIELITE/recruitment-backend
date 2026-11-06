@@ -62,7 +62,7 @@ class StaffUserRegistrationTest extends TestCase
         $this->assertSame(['recruitment_staff'], $user->roles->pluck('slug')->all());
         $this->assertSame('004512', $user->personal_number);
         $this->assertNotSame('Str0ng!Pass', $user->password);   // hashed
-        Log::shouldHaveReceived('notice')->withArgs(fn(string $event) => str_contains($event, 'user_created'))->once();
+        Log::shouldHaveReceived('notice')->withArgs(fn (string $event) => str_contains($event, 'user_created'))->once();
     }
 
     public function test_without_users_manage_only_roles_within_ones_own_permissions(): void

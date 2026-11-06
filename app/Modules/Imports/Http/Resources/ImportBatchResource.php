@@ -2,6 +2,7 @@
 
 namespace App\Modules\Imports\Http\Resources;
 
+use App\Modules\Imports\Models\ImportBatch;
 use App\Modules\Recruitment\Http\Resources\ReferenceSummary;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -9,7 +10,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
 /**
  * One import batch: the file, what was read from it, the row counts per status, and who did what.
  *
- * @mixin \App\Modules\Imports\Models\ImportBatch
+ * @mixin ImportBatch
  */
 class ImportBatchResource extends JsonResource
 {
@@ -24,12 +25,14 @@ class ImportBatchResource extends JsonResource
             'sheet_name' => $this->sheet_name,
             'header_row' => $this->header_row,
             'status' => $this->status,
+            /** Grows with every change to its rows; send it back when approving (D-082). */
+            'revision' => $this->revision,
             'status_label' => __("imports.statuses.{$this->status->value}"),
             'nominating_entity' => ReferenceSummary::of($this->nominatingEntity),
             'source_district' => ReferenceSummary::of($this->sourceDistrict),
             'notes' => $this->notes,
             // Which column of the sheet became which field, and which columns were not used.
-            'columns' => collect($this->column_map)->map(fn(array $column, string $field) => $column + ['field' => $field])->values(),
+            'columns' => collect($this->column_map)->map(fn (array $column, string $field) => $column + ['field' => $field])->values(),
             'ignored_columns' => $this->ignored_columns,
             // Number of rows in each status (total = all rows of the file).
             'counts' => [

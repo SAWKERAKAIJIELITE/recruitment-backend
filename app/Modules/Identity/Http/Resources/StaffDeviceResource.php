@@ -2,10 +2,11 @@
 
 namespace App\Modules\Identity\Http\Resources;
 
+use App\Modules\Identity\Models\StaffDevice;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
-/** @mixin \App\Modules\Identity\Models\StaffDevice */
+/** @mixin StaffDevice */
 class StaffDeviceResource extends JsonResource
 {
     public function toArray(Request $request): array

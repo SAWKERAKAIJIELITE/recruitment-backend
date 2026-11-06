@@ -17,6 +17,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Tests\Support\RecruitmentTestHelpers;
 use Tests\Support\StaffTestHelpers;
 use Tests\TestCase;
@@ -24,7 +25,7 @@ use Tests\TestCase;
 /** Documents of people and applications (D-057). */
 class DocumentApiTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private const PDF = "%PDF-1.4\n1 0 obj << >> endobj\n%%EOF\n";
 
@@ -257,7 +258,7 @@ class DocumentApiTest extends TestCase
         $application = $this->openApplication();
         $other = $this->openApplication(null, ['candidate' => ['national_number' => '22222222222']]);
         $row = [
-            'id' => (string) \Illuminate\Support\Str::uuid7(), 'candidate_id' => $application->candidate_id, 'original_filename' => 'a.pdf',
+            'id' => (string) Str::uuid7(), 'candidate_id' => $application->candidate_id, 'original_filename' => 'a.pdf',
             'stored_path' => 'documents/a.pdf', 'mime_type' => 'application/pdf', 'size_bytes' => 10, 'sha256' => str_repeat('a', 64),
             'uploaded_by' => $this->hiringStaff()->id, 'created_at' => now(),
         ];

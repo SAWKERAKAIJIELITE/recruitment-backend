@@ -3,6 +3,7 @@
 namespace App\Modules\Identity\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Modules\Identity\Actions\ChangeStaffActivation;
 use App\Modules\Identity\Actions\ManageStaffAccess;
 use App\Modules\Identity\Actions\RegisterStaffUser;
 use App\Modules\Identity\Actions\ResetStaffPassword;
@@ -45,6 +46,25 @@ class StaffUserController extends Controller
     public function resetPassword(ResetUserPasswordRequest $request, StaffUser $user, ResetStaffPassword $reset): StaffUserAccessResource
     {
         return new StaffUserAccessResource($reset->execute($user, $request->validated('password'), $request->user()));
+    }
+
+    /**
+     * Deactivate a staff user
+     *
+     * `reason` required. The user cannot log in, and every session ends at once; roles, device and history stay. Not
+     * yourself, and not the last active user able to manage users (422).
+     */
+    public function deactivate(Request $request, StaffUser $user, ChangeStaffActivation $activation): StaffUserAccessResource
+    {
+        $reason = $request->validate(['reason' => ['required', 'string', 'min:3', 'max:1000']])['reason'];
+
+        return new StaffUserAccessResource($activation->deactivate($user, $reason, $request->user()));
+    }
+
+    /** Reactivate a staff user: the account comes back as it was. */
+    public function activate(Request $request, StaffUser $user, ChangeStaffActivation $activation): StaffUserAccessResource
+    {
+        return new StaffUserAccessResource($activation->activate($user, $request->user()));
     }
 
     /**

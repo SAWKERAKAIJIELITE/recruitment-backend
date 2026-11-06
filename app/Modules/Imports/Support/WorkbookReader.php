@@ -39,7 +39,7 @@ final class WorkbookReader
         }
 
         // The sheet named like the candidates sheet alone if there is one; otherwise the first sheets in order.
-        $candidates = array_values(array_filter($names, fn(string $name) => $preferred !== '' && str_contains(HeaderMatcher::normalize($name), $preferred)));
+        $candidates = array_values(array_filter($names, fn (string $name) => $preferred !== '' && str_contains(HeaderMatcher::normalize($name), $preferred)));
         $candidates = $candidates !== [] ? [$candidates[0]] : array_slice($names, 0, self::MAX_SHEETS_TRIED);
 
         $best = null;
@@ -62,12 +62,12 @@ final class WorkbookReader
 
         $missing = array_filter(
             ImportField::cases(),
-            fn(ImportField $field) => $field->isRequiredColumn() && ! isset($best['fields'][$field->value]),
+            fn (ImportField $field) => $field->isRequiredColumn() && ! isset($best['fields'][$field->value]),
         );
 
         if ($missing !== []) {
             ImportProblem::fail('file', 'missing_columns', [
-                'columns' => implode('، ', array_map(fn(ImportField $field) => '«' . ($field->headers()[0] ?? $field->value) . '»', $missing)),
+                'columns' => implode('، ', array_map(fn (ImportField $field) => '«'.($field->headers()[0] ?? $field->value).'»', $missing)),
             ]);
         }
 
@@ -103,8 +103,8 @@ final class WorkbookReader
     private static function assertNoUnsafeFormulas(Worksheet $sheet): void
     {
         $unsafe = '/\|'                                                    // DDE: =cmd|' /c ...'!A0
-            . '|\[\d+\]|\[[^\]]*\.(xl|csv|ods)|[A-Za-z]:\\\\|\\\\\\\\'   // external workbooks, paths, UNC
-            . '|\b(WEBSERVICE|FILTERXML|CALL|REGISTER(\.ID)?|RTD|EXEC|DDE|HYPERLINK|IMPORTDATA|IMPORTXML)\s*\(/i';
+            .'|\[\d+\]|\[[^\]]*\.(xl|csv|ods)|[A-Za-z]:\\\\|\\\\\\\\'   // external workbooks, paths, UNC
+            .'|\b(WEBSERVICE|FILTERXML|CALL|REGISTER(\.ID)?|RTD|EXEC|DDE|HYPERLINK|IMPORTDATA|IMPORTXML)\s*\(/i';
 
         foreach ($sheet->getCoordinates() as $coordinate) {
             $cell = $sheet->getCell($coordinate);
@@ -181,7 +181,7 @@ final class WorkbookReader
             }
 
             if (count($rows) >= $max) {
-                ImportProblem::fail('file', 'too_many_rows', ['count' => '+' . $max, 'max' => $max]);
+                ImportProblem::fail('file', 'too_many_rows', ['count' => '+'.$max, 'max' => $max]);
             }
 
             $rows[] = ['number' => $row, 'cells' => $cells];

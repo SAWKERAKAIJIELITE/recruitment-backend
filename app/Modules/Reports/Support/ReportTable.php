@@ -20,8 +20,7 @@ final readonly class ReportTable
         public array $rows,
         public array $totals = [],
         public bool $wide = false,                 // many columns: A3 in PDF
-    ) {
-    }
+    ) {}
 
     public function count(): int
     {

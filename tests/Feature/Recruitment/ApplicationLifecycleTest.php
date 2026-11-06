@@ -19,7 +19,7 @@ use Tests\TestCase;
 
 class ApplicationLifecycleTest extends TestCase
 {
-    use RefreshDatabase, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase;
 
     private ApplicationLifecycle $lifecycle;
 
@@ -33,7 +33,7 @@ class ApplicationLifecycleTest extends TestCase
     /** @return list<string> */
     private function statusesOf(Application $application): array
     {
-        return $application->fresh()->history()->map(fn($event) => $event->to_status->value)->all();
+        return $application->fresh()->history()->map(fn ($event) => $event->to_status->value)->all();
     }
 
     /** A raw history row, for tests that go around the application code. */
@@ -90,7 +90,7 @@ class ApplicationLifecycleTest extends TestCase
 
         $this->assertSame(
             [null, 'awaiting_exam', 'exam_absent'],
-            $application->fresh()->history()->map(fn($event) => $event->fromStatus()?->value)->all(),
+            $application->fresh()->history()->map(fn ($event) => $event->fromStatus()?->value)->all(),
         );
     }
 
@@ -293,7 +293,7 @@ class ApplicationLifecycleTest extends TestCase
     private function createCauseTable(string $table): void
     {
         DB::statement("CREATE TABLE {$table} (id uuid PRIMARY KEY)");
-        StatusEventCauseColumns::add(Str::singular($table) . '_id', $table);
+        StatusEventCauseColumns::add(Str::singular($table).'_id', $table);
     }
 
     private function causeOf(string $table): StatusChangeCause
@@ -301,9 +301,10 @@ class ApplicationLifecycleTest extends TestCase
         $id = (string) Str::uuid();
         DB::table($table)->insert(['id' => $id]);
 
-        $column = Str::singular($table) . '_id';
+        $column = Str::singular($table).'_id';
 
-        return new class($id, $column) implements StatusChangeCause {
+        return new class($id, $column) implements StatusChangeCause
+        {
             private static string $column;
 
             public function __construct(private readonly string $id, string $column)

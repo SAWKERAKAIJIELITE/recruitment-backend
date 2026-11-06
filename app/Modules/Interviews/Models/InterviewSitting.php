@@ -5,6 +5,7 @@ namespace App\Modules\Interviews\Models;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Interviews\Enums\InterviewStatus;
 use App\Modules\Interviews\Enums\SittingKind;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -17,7 +18,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  *
  * @property string $id
  * @property SittingKind $kind
- * @property \Carbon\CarbonInterface $starts_at
+ * @property CarbonInterface $starts_at
  * @property string $location
  * @property ?string $committee_name
  */

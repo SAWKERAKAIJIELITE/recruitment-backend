@@ -2,10 +2,11 @@
 
 namespace App\Modules\Identity\Actions;
 
-use App\Rules\HexString;
+use App\Modules\Audit\Support\AuditTrail;
 use App\Modules\Identity\Enums\DeviceStatus;
 use App\Modules\Identity\Models\StaffDevice;
 use App\Modules\Identity\Models\StaffUser;
+use App\Rules\HexString;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -19,11 +20,22 @@ class ApproveDevice
      */
     public function execute(StaffDevice $device, ?StaffUser $approver, string $fingerprint, StaffUser $owner): StaffDevice
     {
+        return DB::transaction(function () use ($device, $approver, $fingerprint, $owner) {
+            // Locked: two approvals of one device (to two owners) cannot both pass the checks.
+            $device = StaffDevice::query()->whereKey($device->id)->lockForUpdate()->firstOrFail();
+            $owner = StaffUser::query()->whereKey($owner->id)->lockForUpdate()->firstOrFail();
+
+            return $this->approve($device, $approver, $fingerprint, $owner);
+        });
+    }
+
+    private function approve(StaffDevice $device, ?StaffUser $approver, string $fingerprint, StaffUser $owner): StaffDevice
+    {
         if ($device->status !== DeviceStatus::Pending) {
             throw ValidationException::withMessages(['device' => ['Only a pending device can be approved.']]);
         }
 
-        if (!$owner->is_active) {
+        if (! $owner->is_active) {
             throw ValidationException::withMessages(['staff_user_id' => ['The device owner must be an active staff user.']]);
         }
 
@@ -38,24 +50,20 @@ class ApproveDevice
         // refuses non-hex input with HexString; the console command reaches this directly).
         $typed = HexString::digits($fingerprint);
 
-        if (!hash_equals(strtoupper(substr($device->fingerprint, 0, 32)), $typed)) {
+        if (! hash_equals(strtoupper(substr($device->fingerprint, 0, 32)), $typed)) {
             throw ValidationException::withMessages([
                 'fingerprint' => ['The fingerprint does not match the one shown by the device.'],
             ]);
         }
 
-        DB::transaction(function () use ($device, $approver, $owner) {
-            $device->forceFill([
-                'status' => DeviceStatus::Approved,
-                'staff_user_id' => $owner->id,
-                'approved_by' => $approver?->id,
-                'approved_at' => now(),
-            ])->save();
+        $device->forceFill([
+            'status' => DeviceStatus::Approved,
+            'staff_user_id' => $owner->id,
+            'approved_by' => $approver?->id,
+            'approved_at' => now(),
+        ])->save();
 
-            // $device->staffUsers()->syncWithoutDetaching(
-            //     collect($staffUserIds)->mapWithKeys(fn(string $id) => [$id => ['assigned_by' => $approver?->id]])->all()
-            // );
-        });
+        AuditTrail::record('device.approved', $approver, ['device_id' => $device->id, 'user_id' => $owner->id, 'from_console' => $approver === null]);
 
         return $device->refresh();
     }

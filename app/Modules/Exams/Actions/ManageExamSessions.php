@@ -21,9 +21,7 @@ use Illuminate\Validation\ValidationException;
  */
 class ManageExamSessions
 {
-    public function __construct(private readonly DrawSessionQuestions $draw)
-    {
-    }
+    public function __construct(private readonly DrawSessionQuestions $draw) {}
 
     /** @param array{plan_version_id: string, starts_at: string, location: string, late_minutes?: ?int, password: string, notes?: ?string} $data */
     public function create(array $data, StaffUser $actor): ExamSession
@@ -35,7 +33,7 @@ class ManageExamSessions
                 $this->fail('plan_version_id', 'exams.sessions.plan_not_published', ['status' => __("exams.statuses.{$plan->status->value}")]);
             }
 
-            $session = new ExamSession();
+            $session = new ExamSession;
             $session->fill(['starts_at' => $data['starts_at'], 'location' => $data['location'], 'notes' => $data['notes'] ?? null]);
             $session->forceFill([
                 'plan_version_id' => $plan->id,
@@ -104,7 +102,7 @@ class ManageExamSessions
         DB::transaction(function () use ($session, $actor) {
             $session = $this->lock($session);
 
-            if ($session->bookings()->exists()) {
+            if ($session->bookings()->exists() || $session->extensions()->exists()) {
                 $this->fail('session', 'exams.sessions.in_use');
             }
 

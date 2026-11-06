@@ -12,6 +12,7 @@ use App\Modules\Recruitment\Models\JobPosition;
 use App\Modules\Recruitment\Models\MaritalStatus;
 use App\Modules\Recruitment\Models\NominatingEntity;
 use App\Modules\Recruitment\Models\Specialization;
+use Illuminate\Database\Eloquent\Model;
 
 /** The managed lists (the hidden "_Lists" sheet of the Excel template). The value is the URL segment. */
 enum ReferenceType: string
@@ -27,7 +28,7 @@ enum ReferenceType: string
     case HealthConditions = 'health-conditions';
     case ContractTypes = 'contract-types';
 
-    /** @return class-string<\Illuminate\Database\Eloquent\Model> */
+    /** @return class-string<Model> */
     public function model(): string
     {
         return match ($this) {

@@ -2,13 +2,14 @@
 
 namespace App\Modules\Recruitment\Http\Resources;
 
+use App\Modules\Recruitment\Models\Candidate;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * One row of the people list.
  *
- * @mixin \App\Modules\Recruitment\Models\Candidate
+ * @mixin Candidate
  */
 class CandidateSummaryResource extends JsonResource
 {

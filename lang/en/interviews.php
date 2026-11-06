@@ -23,6 +23,7 @@ return [
     'one_off_one_member' => 'A one-off sitting is one interviewer: exactly one member.',
     'duplicate_sitting' => 'A sitting with the same start, place and members exists (:id): do not enter it twice.',
     'duplicate_sitting_now' => 'Another user has just entered the same sitting (start, place and members).',
+    'held_after_recorded' => 'The interview cannot be held after its result was entered (:time).',
     'committee_name_required' => 'A committee sitting keeps its name.',
     'sitting_in_use' => 'Interviews were booked into this sitting (or moved out of it), so it is not deleted: cancel or move them; the sitting stays as their record.',
 ];

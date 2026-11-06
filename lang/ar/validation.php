@@ -140,6 +140,8 @@ return [
         'candidate.birth_place_id' => 'مكان الولادة',
         'candidate.notes' => 'ملاحظات المرشح',
         'q' => 'نص البحث',
+        'options' => 'الخيارات',
+        'correct_option' => 'رقم الخيار الصحيح',
         'national_number' => 'الرقم الوطني',
         'from' => 'من تاريخ',
         'to' => 'إلى تاريخ',

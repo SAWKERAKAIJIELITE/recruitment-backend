@@ -8,8 +8,7 @@ final class CellValue
     public function __construct(
         public readonly mixed $value,       // string, int, float, bool or null (formulas: their cached result)
         public readonly string $display,    // formatted as Excel shows it
-    ) {
-    }
+    ) {}
 
     public function isEmpty(): bool
     {

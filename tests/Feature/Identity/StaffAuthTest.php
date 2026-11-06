@@ -5,6 +5,8 @@ namespace Tests\Feature\Identity;
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Tests\Support\StaffTestHelpers;
 use Tests\TestCase;
@@ -14,7 +16,9 @@ class StaffAuthTest extends TestCase
     use RefreshDatabase, StaffTestHelpers;
 
     private const LOGIN = '/api/v1/staff/auth/login';
+
     private const ME = '/api/v1/staff/auth/me';
+
     private const LOGOUT = '/api/v1/staff/auth/logout';
 
     protected function setUp(): void
@@ -26,15 +30,15 @@ class StaffAuthTest extends TestCase
     public function test_staff_logs_in_from_an_approved_device_with_case_insensitive_username(): void
     {
         $user = StaffUserFactory::new()
-        ->withRole('recruitment_staff')
-        ->create(['username' => 'sara', 'password' => 'secret-pass']);
+            ->withRole('recruitment_staff')
+            ->create(['username' => 'sara', 'password' => 'secret-pass']);
 
         ['device' => $device, 'key' => $key] = $this->approvedDevice($user);
 
         $response = $this->deviceLogin($device, $key, 'Sara', 'secret-pass')
             ->assertOk()
             ->assertJsonStructure([
-                'token', 'token_type', 'user' => ['id', 'username', 'roles', 'permissions']
+                'token', 'token_type', 'user' => ['id', 'username', 'roles', 'permissions'],
             ])
             ->assertJsonPath('user.roles.0', 'recruitment_staff');
 
@@ -47,7 +51,7 @@ class StaffAuthTest extends TestCase
     public function test_wrong_password_is_rejected(): void
     {
         $user = StaffUserFactory::new()
-        ->create(['username' => 'sara', 'password' => 'secret-pass']);
+            ->create(['username' => 'sara', 'password' => 'secret-pass']);
 
         ['device' => $device, 'key' => $key] = $this->approvedDevice($user);
 
@@ -59,7 +63,7 @@ class StaffAuthTest extends TestCase
     public function test_unknown_user_gets_the_same_failure_as_a_wrong_password(): void
     {
         $user = StaffUserFactory::new()
-        ->create(['username' => 'sara', 'password' => 'secret-pass']);
+            ->create(['username' => 'sara', 'password' => 'secret-pass']);
 
         ['device' => $device, 'key' => $key] = $this->approvedDevice($user);
 
@@ -72,8 +76,8 @@ class StaffAuthTest extends TestCase
     public function test_inactive_account_cannot_log_in(): void
     {
         $user = StaffUserFactory::new()
-        ->inactive()
-        ->create(['username' => 'off', 'password' => 'secret-pass']);
+            ->inactive()
+            ->create(['username' => 'off', 'password' => 'secret-pass']);
 
         ['device' => $device, 'key' => $key] = $this->approvedDevice($user);
 
@@ -105,8 +109,8 @@ class StaffAuthTest extends TestCase
     public function test_me_returns_the_token_owner(): void
     {
         $user = StaffUserFactory::new()
-        ->withRole('general_manager')
-        ->create(['username' => 'boss']);
+            ->withRole('general_manager')
+            ->create(['username' => 'boss']);
 
         $this->asStaff($user)->getJson(self::ME)
             ->assertOk()
@@ -139,7 +143,7 @@ class StaffAuthTest extends TestCase
 
         $this->deviceLogin($device, $key, 'sara', 'secret-pass')->assertOk();
 
-        $expiresAt = \Illuminate\Support\Carbon::parse(\Illuminate\Support\Facades\DB::table('personal_access_tokens')->value('expires_at'));
+        $expiresAt = Carbon::parse(DB::table('personal_access_tokens')->value('expires_at'));
 
         $this->assertEqualsWithDelta(now()->addDay()->timestamp, $expiresAt->timestamp, 60);
     }

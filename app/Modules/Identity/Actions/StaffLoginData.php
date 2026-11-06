@@ -12,6 +12,5 @@ final readonly class StaffLoginData
         public string $username,
         public string $password,
         public string $tokenName = 'api',
-    ) {
-    }
+    ) {}
 }

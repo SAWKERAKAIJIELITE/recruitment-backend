@@ -9,7 +9,8 @@ use Illuminate\Support\Facades\Schema;
  * The person (D-024). Only facts that never change between two applications live here; everything
  * declared at application time (residence, contact, education, availability, health) is on applications.
  */
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('candidates', function (Blueprint $table) {

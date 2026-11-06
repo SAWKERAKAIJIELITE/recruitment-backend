@@ -18,7 +18,8 @@ use Illuminate\Support\Facades\Schema;
  * is closed and every hand mark entered, the result is decided and moves the application (the booking is the cause
  * of that event). Nothing here is deleted, except a session nobody was ever booked into.
  */
-return new class extends Migration {
+return new class extends Migration
+{
     private const BOOKING_STATUSES = ['booked', 'cancelled', 'absent', 'attended'];
 
     private const ATTEMPT_STATUSES = ['in_progress', 'submitted'];
@@ -43,7 +44,8 @@ return new class extends Migration {
             $table->index('starts_at');
         });
 
-        DB::statement('ALTER TABLE exam_sessions ADD CONSTRAINT exam_sessions_timing CHECK (duration_minutes > 0 AND late_minutes < duration_minutes)');
+        // A late window of at least a minute: with none, nobody could ever start (the start is already too late).
+        DB::statement('ALTER TABLE exam_sessions ADD CONSTRAINT exam_sessions_timing CHECK (duration_minutes > 0 AND late_minutes > 0 AND late_minutes < duration_minutes)');
 
         Schema::create('exam_session_questions', function (Blueprint $table) {
             $table->id();
@@ -102,7 +104,7 @@ return new class extends Migration {
             $table->index(['session_id', 'status']);
         });
 
-        DB::statement("ALTER TABLE exam_attempts ADD CONSTRAINT exam_attempts_closed CHECK ((status = 'submitted') = (submitted_at IS NOT NULL) AND (submitted_at IS NULL) = (closed_by IS NULL) AND (submitted_at IS NULL OR submitted_at >= started_at) AND deadline_at > started_at)");
+        DB::statement("ALTER TABLE exam_attempts ADD CONSTRAINT exam_attempts_closed CHECK ((status = 'submitted') = (submitted_at IS NOT NULL) AND (submitted_at IS NULL) = (closed_by IS NULL) AND (submitted_at IS NULL OR (submitted_at >= started_at AND submitted_at <= deadline_at)) AND deadline_at > started_at)");
 
         Schema::create('exam_attempt_items', function (Blueprint $table) {
             $table->id();
@@ -312,7 +314,8 @@ return new class extends Migration {
                         RAISE EXCEPTION 'Exam attempts are never deleted' USING ERRCODE = 'integrity_constraint_violation';
                     END IF;
 
-                    IF OLD.status = 'submitted' AND (NEW.status <> 'submitted' OR NEW.submitted_at <> OLD.submitted_at OR NEW.closed_by <> OLD.closed_by OR NEW.deadline_at <> OLD.deadline_at) THEN
+                    IF OLD.status = 'submitted' AND (NEW.status <> 'submitted' OR NEW.submitted_at <> OLD.submitted_at OR NEW.closed_by <> OLD.closed_by
+                        OR NEW.deadline_at <> OLD.deadline_at OR NEW.extra_minutes <> OLD.extra_minutes OR NEW.start_ip IS DISTINCT FROM OLD.start_ip) THEN
                         RAISE EXCEPTION 'A closed attempt is never reopened or changed' USING ERRCODE = 'integrity_constraint_violation';
                     END IF;
 
@@ -343,7 +346,7 @@ return new class extends Migration {
 
                     SELECT status INTO attempt_status FROM exam_attempts WHERE id = NEW.attempt_id;
 
-                    IF NEW.selected_option IS DISTINCT FROM OLD.selected_option AND attempt_status <> 'in_progress' THEN
+                    IF (NEW.selected_option IS DISTINCT FROM OLD.selected_option OR NEW.answered_at IS DISTINCT FROM OLD.answered_at) AND attempt_status <> 'in_progress' THEN
                         RAISE EXCEPTION 'The answers of a closed attempt do not change' USING ERRCODE = 'integrity_constraint_violation';
                     END IF;
 

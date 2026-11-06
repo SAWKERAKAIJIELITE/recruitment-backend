@@ -26,9 +26,7 @@ class InterviewsDemoSeeder extends Seeder
         ['name' => 'سامر الحسن', 'capacity' => 'secretary'],
     ];
 
-    public function __construct(private readonly ManageSittings $sittings, private readonly ManageInterviews $interviews)
-    {
-    }
+    public function __construct(private readonly ManageSittings $sittings, private readonly ManageInterviews $interviews) {}
 
     public function run(): void
     {

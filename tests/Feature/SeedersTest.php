@@ -2,6 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Modules\Contracts\Database\Seeders\ContractsDemoSeeder;
+use App\Modules\Contracts\Database\Seeders\ContractTypesSeeder;
+use App\Modules\Contracts\Models\Contract;
 use App\Modules\Documents\Database\Seeders\DocumentsDemoSeeder;
 use App\Modules\Documents\Database\Seeders\DocumentTypesSeeder;
 use App\Modules\Documents\Models\Document;
@@ -9,17 +12,15 @@ use App\Modules\Documents\Models\DocumentType;
 use App\Modules\Exams\Database\Seeders\ExamsDemoSeeder;
 use App\Modules\Exams\Database\Seeders\ExamSubjectsSeeder;
 use App\Modules\Exams\Models\ExamPlanVersion;
+use App\Modules\Exams\Models\ExamQuestion;
 use App\Modules\Exams\Models\ExamSubject;
 use App\Modules\Identity\Database\Seeders\DevUsersSeeder;
-use App\Modules\Interviews\Database\Seeders\InterviewsDemoSeeder;
-use App\Modules\Interviews\Models\Interview;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use App\Modules\Imports\Database\Seeders\ImportsDemoSeeder;
 use App\Modules\Imports\Enums\ImportRowStatus;
 use App\Modules\Imports\Models\ImportBatch;
-use App\Modules\Contracts\Database\Seeders\ContractsDemoSeeder;
-use App\Modules\Contracts\Database\Seeders\ContractTypesSeeder;
-use App\Modules\Contracts\Models\Contract;
+use App\Modules\Interviews\Database\Seeders\InterviewsDemoSeeder;
+use App\Modules\Interviews\Models\Interview;
 use App\Modules\Recruitment\Database\Seeders\AreasSeeder;
 use App\Modules\Recruitment\Database\Seeders\JobPositionsSeeder;
 use App\Modules\Recruitment\Database\Seeders\RecruitmentDemoSeeder;
@@ -190,7 +191,7 @@ class SeedersTest extends TestCase
 
         $this->assertEqualsCanonicalizing(['published', 'retired', 'published', 'draft'], ExamPlanVersion::query()->pluck('status')->map->value->all());
         $this->assertSame(120, ExamPlanVersion::query()->where('status', 'published')->where('version', 1)->sole()->questionCount());   // 6 online items × 20
-        $this->assertSame(6 * 3 * \App\Modules\Exams\Database\Seeders\ExamsDemoSeeder::QUESTIONS_PER_DIFFICULTY, \App\Modules\Exams\Models\ExamQuestion::query()->count());
+        $this->assertSame(6 * 3 * ExamsDemoSeeder::QUESTIONS_PER_DIFFICULTY, ExamQuestion::query()->count());
 
         $this->seed(ExamsDemoSeeder::class);
         $this->assertSame(4, ExamPlanVersion::query()->count());

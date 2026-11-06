@@ -18,7 +18,7 @@ class NominationNumberTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->generator = new NominationNumberGenerator();
+        $this->generator = new NominationNumberGenerator;
         Carbon::setTestNow('2026-05-01 10:00:00');
     }
 

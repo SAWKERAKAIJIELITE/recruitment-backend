@@ -187,6 +187,7 @@ class ManageExamPlans
 
             if (! $planSubject->scoredFromParts()) {
                 $problems += $this->questionProblems($planSubject, $planSubject->subject_id, null, "{$key}.questions", $name);
+
                 continue;
             }
 

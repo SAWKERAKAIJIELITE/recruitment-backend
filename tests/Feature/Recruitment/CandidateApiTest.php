@@ -16,7 +16,7 @@ use Tests\TestCase;
 /** People: search, file, corrections, deactivation (D-049). */
 class CandidateApiTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private const URL = '/api/v1/staff/candidates';
 
@@ -53,8 +53,8 @@ class CandidateApiTest extends TestCase
         $this->person('11111111111', 'أحمد علي');
         $this->person('22222222222', 'سارة خالد');
 
-        $this->asStaff($staff)->getJson(self::URL . '?q=' . urlencode('احمد'))->assertJsonCount(1, 'data');
-        $this->asStaff($staff)->getJson(self::URL . '?q=' . urlencode('٢٢٢٢٢٢٢٢٢٢٢'))->assertJsonCount(1, 'data')
+        $this->asStaff($staff)->getJson(self::URL.'?q='.urlencode('احمد'))->assertJsonCount(1, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?q='.urlencode('٢٢٢٢٢٢٢٢٢٢٢'))->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.full_name', 'سارة خالد');
     }
 
@@ -65,9 +65,9 @@ class CandidateApiTest extends TestCase
         $ended = $this->person('22222222222');
         $this->closeApplication($ended->applications()->sole());
 
-        $this->asStaff($staff)->getJson(self::URL . '?has_live_application=true')->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $live->id);
-        $this->asStaff($staff)->getJson(self::URL . '?has_live_application=0')->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $ended->id);
-        $this->asStaff($staff)->getJson(self::URL . '?is_active=false')->assertJsonCount(0, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?has_live_application=true')->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $live->id);
+        $this->asStaff($staff)->getJson(self::URL.'?has_live_application=0')->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $ended->id);
+        $this->asStaff($staff)->getJson(self::URL.'?is_active=false')->assertJsonCount(0, 'data');
     }
 
     public function test_one_person_shows_all_applications_newest_first(): void
@@ -79,7 +79,7 @@ class CandidateApiTest extends TestCase
         $this->travel(1)->minutes();
         $second = $this->openApplication(null, ['job_position_id' => $this->jobPosition('إداري')->id]);
 
-        $this->asStaff($staff)->getJson(self::URL . "/{$person->id}")
+        $this->asStaff($staff)->getJson(self::URL."/{$person->id}")
             ->assertOk()
             ->assertJsonPath('data.national_number', '01234567890')
             ->assertJsonPath('data.applications.0.id', $second->id)
@@ -92,7 +92,7 @@ class CandidateApiTest extends TestCase
         $person = $this->person();
 
         $this->asStaff(StaffUserFactory::new()->create())->getJson(self::URL)->assertForbidden();
-        $this->asStaff(StaffUserFactory::new()->withRole('general_manager')->create())->getJson(self::URL . "/{$person->id}")->assertOk();
+        $this->asStaff(StaffUserFactory::new()->withRole('general_manager')->create())->getJson(self::URL."/{$person->id}")->assertOk();
     }
 
     // ---- corrections ----
@@ -103,13 +103,13 @@ class CandidateApiTest extends TestCase
         $person = $this->person();
         Log::spy();
 
-        $this->asStaff($staff)->patchJson(self::URL . "/{$person->id}", ['full_name' => 'أحمد محمود علي', 'birth_date' => '1997-05-02'])
+        $this->asStaff($staff)->patchJson(self::URL."/{$person->id}", ['full_name' => 'أحمد محمود علي', 'birth_date' => '1997-05-02'])
             ->assertOk()
             ->assertJsonPath('data.full_name', 'أحمد محمود علي')
             ->assertJsonPath('data.birth_date', '1997-05-02');
 
-        $this->asStaff($staff)->getJson(self::URL . '?q=' . urlencode('محمود'))->assertJsonCount(1, 'data');
-        Log::shouldHaveReceived('notice')->withArgs(fn(string $event, array $context) => $event === 'candidate.updated'
+        $this->asStaff($staff)->getJson(self::URL.'?q='.urlencode('محمود'))->assertJsonCount(1, 'data');
+        Log::shouldHaveReceived('notice')->withArgs(fn (string $event, array $context) => $event === 'candidate.updated'
             && $context['changes']['full_name'] === ['from' => 'أحمد محمد علي', 'to' => 'أحمد محمود علي']
             && $context['changes']['birth_date'] === ['from' => '1998-03-01', 'to' => '1997-05-02']
             && ! isset($context['changes']['name_search_key']))->once();
@@ -121,10 +121,10 @@ class CandidateApiTest extends TestCase
         $person = $this->person('01234567890');
         $this->person('22222222222', 'سارة خالد');
 
-        $this->asStaff($staff)->patchJson(self::URL . "/{$person->id}", ['national_number' => '22222222222'])
+        $this->asStaff($staff)->patchJson(self::URL."/{$person->id}", ['national_number' => '22222222222'])
             ->assertStatus(422)->assertJsonPath('errors.national_number.0', __('recruitment.national_number_taken'));
 
-        $this->asStaff($staff)->patchJson(self::URL . "/{$person->id}", ['national_number' => '٠١٢٣٤٥٦٧٨٩٩'])
+        $this->asStaff($staff)->patchJson(self::URL."/{$person->id}", ['national_number' => '٠١٢٣٤٥٦٧٨٩٩'])
             ->assertOk()->assertJsonPath('data.national_number', '01234567899');
     }
 
@@ -133,9 +133,9 @@ class CandidateApiTest extends TestCase
         $person = $this->person();
         $staff = $this->hiringStaff();
 
-        $this->asStaff($staff)->patchJson(self::URL . "/{$person->id}", ['full_name' => 'احمد 2'])->assertStatus(422)->assertJsonValidationErrors('full_name');
-        $this->asStaff($staff)->patchJson(self::URL . "/{$person->id}", ['national_number' => '123'])->assertStatus(422)->assertJsonValidationErrors('national_number');
-        $this->asStaff($staff)->patchJson(self::URL . "/{$person->id}", ['full_name' => null])->assertStatus(422)->assertJsonValidationErrors('full_name');
+        $this->asStaff($staff)->patchJson(self::URL."/{$person->id}", ['full_name' => 'احمد 2'])->assertStatus(422)->assertJsonValidationErrors('full_name');
+        $this->asStaff($staff)->patchJson(self::URL."/{$person->id}", ['national_number' => '123'])->assertStatus(422)->assertJsonValidationErrors('national_number');
+        $this->asStaff($staff)->patchJson(self::URL."/{$person->id}", ['full_name' => null])->assertStatus(422)->assertJsonValidationErrors('full_name');
     }
 
     public function test_correcting_needs_candidates_manage(): void
@@ -143,7 +143,7 @@ class CandidateApiTest extends TestCase
         $person = $this->person();
 
         $this->asStaff(StaffUserFactory::new()->withRole('general_manager')->create())
-            ->patchJson(self::URL . "/{$person->id}", ['notes' => 'x'])->assertForbidden();
+            ->patchJson(self::URL."/{$person->id}", ['notes' => 'x'])->assertForbidden();
     }
 
     // ---- deactivation ----
@@ -153,7 +153,7 @@ class CandidateApiTest extends TestCase
         $person = $this->person();
         $live = $person->applications()->sole();
 
-        $this->asStaff($this->hiringStaff())->postJson(self::URL . "/{$person->id}/deactivate", ['reason' => 'متوفى'])
+        $this->asStaff($this->hiringStaff())->postJson(self::URL."/{$person->id}/deactivate", ['reason' => 'متوفى'])
             ->assertStatus(422)
             ->assertJsonPath('errors.candidate.0', __('recruitment.candidate_has_live_application', ['number' => $live->nomination_number]));
     }
@@ -164,7 +164,7 @@ class CandidateApiTest extends TestCase
         $person = $this->person();
         $this->closeApplication($person->applications()->sole());
 
-        $this->asStaff($staff)->postJson(self::URL . "/{$person->id}/deactivate", ['reason' => 'طلب الجهة'])
+        $this->asStaff($staff)->postJson(self::URL."/{$person->id}/deactivate", ['reason' => 'طلب الجهة'])
             ->assertOk()
             ->assertJsonPath('data.is_active', false)
             ->assertJsonPath('data.deactivation.reason', 'طلب الجهة')
@@ -173,7 +173,7 @@ class CandidateApiTest extends TestCase
         $response = $this->asStaff($staff)->postJson('/api/v1/staff/applications', $this->applicationPayload())->assertStatus(422);
         $this->assertSame(__('recruitment.candidate_inactive'), $response->json('errors')['candidate.national_number'][0]);
 
-        $this->asStaff($staff)->postJson(self::URL . "/{$person->id}/activate")->assertOk()->assertJsonPath('data.deactivation', null);
+        $this->asStaff($staff)->postJson(self::URL."/{$person->id}/activate")->assertOk()->assertJsonPath('data.deactivation', null);
         $this->asStaff($staff)->postJson('/api/v1/staff/applications', $this->applicationPayload())->assertCreated();
     }
 
@@ -183,10 +183,10 @@ class CandidateApiTest extends TestCase
         $person = $this->person();
         $this->closeApplication($person->applications()->sole());
 
-        $this->asStaff($staff)->postJson(self::URL . "/{$person->id}/deactivate", [])->assertStatus(422)->assertJsonValidationErrors('reason');
-        $this->asStaff($staff)->postJson(self::URL . "/{$person->id}/activate")->assertStatus(422);
-        $this->asStaff($staff)->postJson(self::URL . "/{$person->id}/deactivate", ['reason' => 'سبب'])->assertOk();
-        $this->asStaff($staff)->postJson(self::URL . "/{$person->id}/deactivate", ['reason' => 'سبب'])->assertStatus(422);
+        $this->asStaff($staff)->postJson(self::URL."/{$person->id}/deactivate", [])->assertStatus(422)->assertJsonValidationErrors('reason');
+        $this->asStaff($staff)->postJson(self::URL."/{$person->id}/activate")->assertStatus(422);
+        $this->asStaff($staff)->postJson(self::URL."/{$person->id}/deactivate", ['reason' => 'سبب'])->assertOk();
+        $this->asStaff($staff)->postJson(self::URL."/{$person->id}/deactivate", ['reason' => 'سبب'])->assertStatus(422);
     }
 
     public function test_the_database_requires_when_who_and_why_for_an_inactive_person_and_nothing_for_an_active_one(): void
@@ -203,8 +203,8 @@ class CandidateApiTest extends TestCase
             ['is_active' => true, 'deactivation_reason' => 'سبب'],
         ] as $values) {
             try {
-                DB::transaction(fn() => DB::table('candidates')->where('id', $person->id)->update($values));
-                $this->fail('The database accepted ' . json_encode(array_keys($values)));
+                DB::transaction(fn () => DB::table('candidates')->where('id', $person->id)->update($values));
+                $this->fail('The database accepted '.json_encode(array_keys($values)));
             } catch (QueryException) {
                 $this->addToAssertionCount(1);
             }

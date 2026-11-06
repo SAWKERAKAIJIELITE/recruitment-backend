@@ -2,13 +2,14 @@
 
 namespace App\Modules\Recruitment\Http\Resources;
 
+use App\Modules\Recruitment\Models\ApplicationStatusEvent;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * One event of an application's history. from_status is the previous event's status (null for the first).
  *
- * @mixin \App\Modules\Recruitment\Models\ApplicationStatusEvent
+ * @mixin ApplicationStatusEvent
  */
 class StatusEventResource extends JsonResource
 {

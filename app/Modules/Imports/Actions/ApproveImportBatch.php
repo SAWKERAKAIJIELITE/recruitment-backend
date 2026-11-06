@@ -51,25 +51,41 @@ class ApproveImportBatch
         private readonly ImportChecker $checker,
         private readonly CreateApplication $create,
         private readonly NominationNumberGenerator $numbers,
-    ) {
-    }
+    ) {}
 
-    public function execute(ImportBatch $batch, StaffUser $actor): ImportBatch
+    /** @param int $reviewed the batch's revision the approver looked at (D-082) */
+    public function execute(ImportBatch $batch, StaffUser $actor, int $reviewed): ImportBatch
     {
-        return DB::transaction(function () use ($batch, $actor) {
+        return DB::transaction(function () use ($batch, $actor, $reviewed) {
             $batch = ImportBatch::query()->whereKey($batch->getKey())->lockForUpdate()->firstOrFail();
 
             if (! $batch->isPending()) {
                 ImportProblem::fail('batch', 'batch_not_pending', ['status' => __("imports.statuses.{$batch->status->value}")]);
             }
 
-            // Four eyes (D-047): whoever uploaded the file cannot approve it.
+            // Four eyes (D-047): whoever uploaded the file cannot approve it, nor whoever changed its rows: someone
+            // else must have looked at those changes.
             if ($batch->uploaded_by === $actor->id) {
                 throw new AuthorizationException(__('imports.own_batch'));
             }
 
+            $changedRows = DB::table('audit_events')
+                ->where('actor_id', $actor->id)
+                ->whereIn('event', ['import.row_corrected', 'import.person_confirmed', 'import.row_excluded', 'import.row_included'])
+                ->whereRaw("context->>'batch_id' = ?", [$batch->getKey()])
+                ->exists();
+
+            if ($changedRows) {
+                throw new AuthorizationException(__('imports.approver_changed_rows'));
+            }
+
+            // What the approver reviewed is what is approved: any change since gives 422 and the current revision.
+            if ($batch->revision !== $reviewed) {
+                ImportProblem::fail('revision', 'batch_changed', ['revision' => $batch->revision]);
+            }
+
             CreateApplication::lockPeople(
-                $batch->rows()->get()->map(fn(ImportRow $row) => $row->nationalNumber())->filter()->values()->all(),
+                $batch->rows()->get()->map(fn (ImportRow $row) => $row->nationalNumber())->filter()->values()->all(),
             );
 
             // What staff last saw as valid must still be valid: a row must never be left out silently.

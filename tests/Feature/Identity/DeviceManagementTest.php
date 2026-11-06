@@ -5,8 +5,12 @@ namespace Tests\Feature\Identity;
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use App\Modules\Identity\Enums\DeviceStatus;
+use App\Modules\Identity\Models\StaffDevice;
+use Illuminate\Database\Eloquent\MassAssignmentException;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\StaffTestHelpers;
 use Tests\TestCase;
 
@@ -106,7 +110,7 @@ class DeviceManagementTest extends TestCase
         ['device' => $device] = $this->pendingDevice();
 
         $this->getJson("/api/v1/staff/devices/{$device->id}/status")->assertOk()->assertExactJson(['status' => 'pending']);
-        $this->getJson('/api/v1/staff/devices/' . Str::uuid() . '/status')->assertNotFound();
+        $this->getJson('/api/v1/staff/devices/'.Str::uuid().'/status')->assertNotFound();
         $this->getJson('/api/v1/staff/devices/not-a-uuid/status')->assertNotFound();
     }
 
@@ -155,7 +159,7 @@ class DeviceManagementTest extends TestCase
         ];
     }
 
-    #[\PHPUnit\Framework\Attributes\DataProvider('malformedFingerprints')]
+    #[DataProvider('malformedFingerprints')]
     public function test_a_malformed_fingerprint_is_refused_before_comparing(string $typed): void
     {
         ['device' => $device] = $this->pendingDevice();
@@ -245,16 +249,16 @@ class DeviceManagementTest extends TestCase
     {
         ['device' => $device] = $this->pendingDevice();
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
 
         $device->forceFill(['status' => DeviceStatus::Approved, 'approved_at' => now()])->save();
     }
 
     public function test_status_cannot_be_mass_assigned(): void
     {
-        $this->expectException(\Illuminate\Database\Eloquent\MassAssignmentException::class);
+        $this->expectException(MassAssignmentException::class);
 
-        \App\Modules\Identity\Models\StaffDevice::create([
+        StaffDevice::create([
             'label' => 'Sneaky',
             'public_key' => 'x',
             'fingerprint' => str_repeat('a', 64),
@@ -298,7 +302,7 @@ class DeviceManagementTest extends TestCase
         $owner = StaffUserFactory::new()->create();
         $this->approvedDevice($owner);
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
 
         $this->approvedDevice($owner);
     }

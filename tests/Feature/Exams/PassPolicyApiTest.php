@@ -14,7 +14,7 @@ use Tests\TestCase;
 /** Adding versions of the pass rules (D-052, D-063). */
 class PassPolicyApiTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, ExamTestHelpers, RecruitmentTestHelpers;
+    use ExamTestHelpers, RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private const URL = '/api/v1/staff/exam-pass-policies';
 

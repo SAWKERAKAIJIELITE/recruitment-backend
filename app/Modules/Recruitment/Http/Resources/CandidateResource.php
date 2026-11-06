@@ -2,13 +2,14 @@
 
 namespace App\Modules\Recruitment\Http\Resources;
 
+use App\Modules\Recruitment\Models\Candidate;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * The person: the facts that do not change between applications.
  *
- * @mixin \App\Modules\Recruitment\Models\Candidate
+ * @mixin Candidate
  */
 class CandidateResource extends JsonResource
 {

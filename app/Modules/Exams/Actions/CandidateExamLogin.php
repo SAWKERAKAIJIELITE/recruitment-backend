@@ -7,6 +7,7 @@ use App\Modules\Exams\Enums\BookingStatus;
 use App\Modules\Exams\Models\ExamBooking;
 use App\Modules\Recruitment\Models\Candidate;
 use App\Modules\Recruitment\Support\NationalNumber;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -28,6 +29,7 @@ class CandidateExamLogin
         $candidate = Candidate::query()->where('national_number', NationalNumber::normalize($nationalNumber))->first();
 
         if ($candidate === null || ! $candidate->is_active) {
+            Hash::make($password);   // as slow as a booked person's check: the time tells nothing
             $this->fail($candidate === null ? 'unknown_national_number' : 'inactive', $nationalNumber, $ip);
         }
 
@@ -47,22 +49,24 @@ class CandidateExamLogin
             throw ValidationException::withMessages(['national_number' => [__('exams.candidate.too_late', ['time' => $booking->session->lateUntil()->toIso8601String()])]]);
         }
 
-        [$token, $replaced] = DB::transaction(function () use ($candidate, $booking, $now) {
+        $token = DB::transaction(function () use ($candidate, $booking, $now, $ip) {
+            // Locked: two logins at the same moment cannot both keep a token.
+            Candidate::query()->whereKey($candidate->id)->lockForUpdate()->first();
             $replaced = $candidate->tokens()->delete();
             $minutes = (int) config('exams.candidate_token_minutes');
             $token = $candidate->createToken('exam', ['exam'], $now->copy()->addMinutes($minutes));
             $token->accessToken->forceFill(['exam_booking_id' => $booking->id])->save();
 
-            return [$token->plainTextToken, $replaced];
-        });
+            AuditTrail::record('exam.candidate_login', null, ['candidate_id' => $candidate->id, 'booking_id' => $booking->id, 'ip' => $ip, 'previous_logins_ended' => $replaced], $candidate->id);
 
-        AuditTrail::record('exam.candidate_login', null, ['candidate_id' => $candidate->id, 'booking_id' => $booking->id, 'ip' => $ip, 'previous_logins_ended' => $replaced]);
+            return $token->plainTextToken;
+        });
 
         return ['token' => $token, 'booking' => $booking];
     }
 
     /** From a while before the start until the session (or this candidate's own extended attempt) ends. */
-    private function withinWindow(ExamBooking $booking, \Carbon\CarbonInterface $now): bool
+    private function withinWindow(ExamBooking $booking, CarbonInterface $now): bool
     {
         $end = $booking->session->endsAt();
         $deadline = $booking->attempt()->value('deadline_at');

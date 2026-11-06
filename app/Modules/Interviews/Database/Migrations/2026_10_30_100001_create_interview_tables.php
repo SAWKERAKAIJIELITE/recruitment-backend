@@ -17,7 +17,8 @@ use Illuminate\Support\Facades\Schema;
  * moves the application's status, with the interview as the cause of that status event. Rescheduling and every
  * version of the result are kept (append-only); interviews are never deleted.
  */
-return new class extends Migration {
+return new class extends Migration
+{
     private const KINDS = ['committee', 'one_off'];
 
     private const STATUSES = ['scheduled', 'recorded', 'cancelled'];
@@ -49,7 +50,6 @@ return new class extends Migration {
         $this->textKeyFunction();
         // The same start, place (spaces, letter forms of ا/ي/ه and tatweel ignored) and members: one sitting, not two.
         DB::statement('CREATE UNIQUE INDEX interview_sittings_no_duplicate ON interview_sittings (starts_at, interview_text_key(location), committee_key)');
-        DB::statement("ALTER TABLE interview_sittings ADD CONSTRAINT interview_sittings_committee_name_format CHECK (committee_name IS NULL OR (committee_name !~ '[0-9٠-٩۰-۹]' AND char_length(btrim(committee_name)) >= 3))");
 
         Schema::create('interviews', function (Blueprint $table) {
             $table->uuid('id')->primary();

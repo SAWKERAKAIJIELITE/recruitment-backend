@@ -3,7 +3,6 @@
 namespace App\Modules\Exams\Actions;
 
 use App\Modules\Exams\Enums\Difficulty;
-use App\Modules\Exams\Models\ExamPlanSubject;
 use App\Modules\Exams\Models\ExamPlanSubjectPart;
 use App\Modules\Exams\Models\ExamQuestion;
 use App\Modules\Exams\Models\ExamSession;
@@ -19,9 +18,7 @@ use Random\Randomizer;
  */
 final class DrawSessionQuestions
 {
-    public function __construct(private readonly Randomizer $random = new Randomizer())
-    {
-    }
+    public function __construct(private readonly Randomizer $random = new Randomizer) {}
 
     /** @return int how many questions were drawn */
     public function draw(ExamSession $session): int

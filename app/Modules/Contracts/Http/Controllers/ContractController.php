@@ -13,6 +13,7 @@ use App\Modules\Contracts\Http\Resources\ContractResource;
 use App\Modules\Contracts\Models\Contract;
 use App\Modules\Recruitment\Models\Application;
 use App\Support\ArabicText;
+use App\Support\BusinessDay;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -126,7 +127,7 @@ class ContractController extends Controller
      */
     public function end(EndContractRequest $request, Contract $contract, ManageContracts $contracts): ContractResource
     {
-        $endedOn = Date::parse($request->validated('ended_on') ?? Date::today()->toDateString());
+        $endedOn = Date::parse($request->validated('ended_on') ?? BusinessDay::today());
 
         return $this->resource($contracts->end($contract, $endedOn, $request->validated('reason'), $request->user()));
     }

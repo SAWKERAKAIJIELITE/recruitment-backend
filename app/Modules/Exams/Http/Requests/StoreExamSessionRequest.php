@@ -23,7 +23,7 @@ class StoreExamSessionRequest extends FormRequest
             'plan_version_id' => ['required', 'uuid', Rule::exists('exam_plan_versions', 'id')],
             'starts_at' => ['required', 'date', 'after:now'],
             'location' => ['required', 'string', 'min:2', 'max:300'],
-            'late_minutes' => ['nullable', 'integer', 'min:0', 'max:600'],
+            'late_minutes' => ['nullable', 'integer', 'min:1', 'max:600'],
             /** Told to the candidates on the day (written on the board); stored hashed, never shown again. */
             'password' => ['required', 'string', 'min:6', 'max:64'],
             'notes' => ['nullable', 'string', 'max:2000'],

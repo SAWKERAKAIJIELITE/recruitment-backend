@@ -26,7 +26,7 @@ class DistrictsSeeder extends Seeder
         'درعا',
         'السويداء',
         'القنيطرة',
-        'تدمر'
+        'تدمر',
     ];
 
     public function run(): void

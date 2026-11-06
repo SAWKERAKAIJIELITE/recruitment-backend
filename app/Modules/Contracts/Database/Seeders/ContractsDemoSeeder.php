@@ -23,9 +23,7 @@ use Illuminate\Support\Facades\DB;
  */
 class ContractsDemoSeeder extends Seeder
 {
-    public function __construct(private readonly ManageContracts $contracts, private readonly RemindExpiringContracts $remind)
-    {
-    }
+    public function __construct(private readonly ManageContracts $contracts, private readonly RemindExpiringContracts $remind) {}
 
     public function run(): void
     {

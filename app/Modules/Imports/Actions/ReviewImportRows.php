@@ -35,9 +35,7 @@ class ReviewImportRows
         'works_for_other_government_entity' => 'boolean', 'full_commitment' => 'boolean', 'overnight_work' => 'boolean',
     ];
 
-    public function __construct(private readonly ImportChecker $checker)
-    {
-    }
+    public function __construct(private readonly ImportChecker $checker) {}
 
     /** @return list<string> */
     public static function correctableKeys(): array
@@ -130,7 +128,16 @@ class ReviewImportRows
     /** Checks every open row again (after list changes), under the same batch lock as every other change. */
     public function revalidate(ImportBatch $batch): void
     {
-        DB::transaction(fn() => $this->checker->check($this->lockOpenBatch($batch->getKey())));
+        DB::transaction(function () use ($batch) {
+            $batch = $this->lockOpenBatch($batch->getKey());
+            $before = $batch->rows()->pluck('status', 'id')->map(fn ($status) => $status instanceof \BackedEnum ? $status->value : $status)->all();
+            $this->checker->check($batch);
+            $after = $batch->rows()->pluck('status', 'id')->map(fn ($status) => $status instanceof \BackedEnum ? $status->value : $status)->all();
+
+            if ($before !== $after) {
+                $batch->increment('revision');   // rows changed status: an approver must look again
+            }
+        });
     }
 
     /** Locks the batch (approval locks it too), runs the change, then checks the whole batch again. */
@@ -142,6 +149,7 @@ class ReviewImportRows
             $row->refresh();
             $change($row);
             $this->checker->check($batch);
+            $batch->increment('revision');   // what an approver reviewed is no longer what is there
 
             return $row->refresh();
         });
@@ -177,7 +185,7 @@ class ReviewImportRows
             return $kind === 'flag' ? false : null;   // a flag is never unknown: clearing it means "no"
         }
 
-        $invalid = fn() => ImportProblem::fail("values.{$key}", 'invalid_correction', ['field' => __("imports.fields.{$key}")]);
+        $invalid = fn () => ImportProblem::fail("values.{$key}", 'invalid_correction', ['field' => __("imports.fields.{$key}")]);
 
         return match ($kind) {
             'id' => is_int($value) || (is_string($value) && ctype_digit($value)) ? (int) $value : $invalid(),

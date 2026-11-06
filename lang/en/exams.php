@@ -37,6 +37,7 @@ return [
         'already_booked' => 'This application already has an exam booking that is not decided yet.',
         'not_waiting' => 'Only a booking whose candidate has not started is cancelled; this one is :status.',
         'application_moved' => 'The application was no longer awaiting its exam when the late window closed.',
+        'window_closed' => 'The late window has closed: whoever did not start is absent, and comes back through an accepted excuse.',
     ],
     'attempts' => [
         'not_running' => 'Only a running attempt whose time is not over can be extended.',
@@ -51,6 +52,8 @@ return [
         'no_such_question' => 'There is no question with this number in your exam.',
         'no_such_option' => 'This question has no option with this number.',
         'not_started' => 'You have not started the exam yet.',
+        'outside_venue' => 'The exam is reached only from the network of the exam venue.',
+        'application_moved' => 'Your application is no longer awaiting its exam: see the recruitment staff.',
     ],
     'marks' => [
         'not_a_manual_part' => 'This is not a hand-marked part of this session\'s plan.',

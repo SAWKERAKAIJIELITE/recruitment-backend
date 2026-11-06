@@ -15,6 +15,8 @@ use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use Illuminate\Testing\TestResponse;
 use Tests\Support\RecruitmentTestHelpers;
 use Tests\Support\StaffTestHelpers;
 use Tests\TestCase;
@@ -22,7 +24,7 @@ use Tests\TestCase;
 /** Interviews: sittings, appointments, results, corrections, excuses (D-059, D-061, D-067). */
 class InterviewApiTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private const GRADES = ['scientific_grade' => 'very_good', 'general_grade' => 'good', 'overall_grade' => 'very_good'];
 
@@ -59,7 +61,7 @@ class InterviewApiTest extends TestCase
     private function sitting(array $overrides = []): string
     {
         return $this->asStaff($this->staff)->postJson('/api/v1/staff/interview-sittings', $overrides + [
-            'starts_at' => '2026-10-30T08:00:00Z', 'location' => 'مبنى الإدارة - القاعة ' . (2 + $this->sittings++), 'committee_name' => 'لجنة دمشق الأولى', 'members' => $this->members(),
+            'starts_at' => '2026-10-30T08:00:00Z', 'location' => 'مبنى الإدارة - القاعة '.(2 + $this->sittings++), 'committee_name' => 'لجنة دمشق الأولى', 'members' => $this->members(),
         ])->assertCreated()->json('data.id');
     }
 
@@ -71,7 +73,7 @@ class InterviewApiTest extends TestCase
         ])->assertCreated()->json('data.id');
     }
 
-    private function schedule(Application $application, array $appointment): \Illuminate\Testing\TestResponse
+    private function schedule(Application $application, array $appointment): TestResponse
     {
         return $this->asStaff($this->staff)->postJson("/api/v1/staff/applications/{$application->id}/interviews", $appointment);
     }
@@ -81,12 +83,12 @@ class InterviewApiTest extends TestCase
         return $this->schedule($application, ['sitting_id' => $sitting ?? $this->sitting()])->assertCreated()->json('data.id');
     }
 
-    private function record(string $interview, array $body): \Illuminate\Testing\TestResponse
+    private function record(string $interview, array $body): TestResponse
     {
         return $this->asStaff($this->staff)->postJson("/api/v1/staff/interviews/{$interview}/result", $body);
     }
 
-    private function reschedule(string $interview, array $body): \Illuminate\Testing\TestResponse
+    private function reschedule(string $interview, array $body): TestResponse
     {
         return $this->asStaff($this->staff)->postJson("/api/v1/staff/interviews/{$interview}/reschedule", $body + ['reason' => 'طلب المرشح']);
     }
@@ -171,10 +173,15 @@ class InterviewApiTest extends TestCase
         $this->asStaff($this->staff)->postJson($url, ['location' => 'القاعة 5'] + $same)->assertCreated();                                     // another place
         $later = $this->asStaff($this->staff)->postJson($url, ['starts_at' => '2026-10-30T10:00:00Z'] + $same)->assertCreated()->json('data.id');   // another time
 
-        // Nor made the same afterwards.
+        // Nor made the same afterwards, once the fingerprints are stored as at commit (tests never commit).
+        DB::statement('SET CONSTRAINTS interview_members_key_sitting IMMEDIATE');
+        DB::statement('SET CONSTRAINTS ALL DEFERRED');
         $this->asStaff($this->staff)->patchJson("{$url}/{$later}", ['starts_at' => '2026-10-30T08:00:00Z'])
             ->assertStatus(422)->assertJsonPath('errors.starts_at.0', __('interviews.duplicate_sitting', ['id' => $first]));
         $this->assertSame('2026-10-30 10:00:00+00', DB::table('interview_sittings')->where('id', $later)->value('starts_at'));
+
+        // Moved to the first one's time with another committee in the same change: not the same sitting.
+        $this->asStaff($this->staff)->patchJson("{$url}/{$later}", ['starts_at' => '2026-10-30T08:00:00Z', 'members' => [['name' => 'سامر الحسن', 'capacity' => 'chair']]])->assertOk();
     }
 
     public function test_a_member_with_an_account_carries_the_accounts_name(): void
@@ -273,9 +280,41 @@ class InterviewApiTest extends TestCase
         $url = '/api/v1/staff/interview-sittings';
         $this->asStaff($this->staff)->postJson($url, ['starts_at' => '2026-11-01T08:00:00Z', 'location' => 'القاعة 7', 'members' => $this->members()])
             ->assertStatus(422)->assertJsonValidationErrors('committee_name');
-        $this->asStaff($this->staff)->patchJson("{$url}/" . $this->sitting(), ['committee_name' => null])
+        $this->asStaff($this->staff)->patchJson("{$url}/".$this->sitting(), ['committee_name' => null])
             ->assertStatus(422)->assertJsonPath('errors.committee_name.0', __('interviews.committee_name_required'));
-        $this->asStaff($this->staff)->patchJson("{$url}/" . $this->oneOffSitting(), ['committee_name' => null])->assertOk();
+        $this->asStaff($this->staff)->patchJson("{$url}/".$this->oneOffSitting(), ['committee_name' => null])->assertOk();
+    }
+
+    public function test_review_fixes_for_corrections_reschedules_and_excuses(): void
+    {
+        // A held time sent with an offset is the instant meant (D-081).
+        $application = $this->awaitingInterview();   // passed its exam yesterday at 09:00
+        $interview = $this->scheduled($application, $this->sitting(['starts_at' => '2026-10-29T08:00:00Z']));
+        $this->record($interview, ['result' => 'passed', 'held_at' => '2026-10-30T11:30:00+03:00'] + self::GRADES)->assertOk();
+        $this->assertSame('2026-10-30 08:30:00+00', DB::table('interviews')->where('id', $interview)->value('held_at'));
+
+        // A correction cannot move the holding after its entry, nor before the decision it followed.
+        $this->asStaff($this->corrector())->postJson("/api/v1/staff/interviews/{$interview}/correct", ['held_at' => '2026-10-30T08:59:00Z', 'reason' => 'خطأ في الوقت'])->assertOk();
+        $this->travelTo('2026-10-30 12:00:00');
+        $this->asStaff($this->corrector())->postJson("/api/v1/staff/interviews/{$interview}/correct", ['held_at' => '2026-10-30T11:00:00Z', 'reason' => 'خطأ في الوقت'])
+            ->assertStatus(422)->assertJsonPath('errors.held_at.0', __('interviews.held_after_recorded', ['time' => '2026-10-30T09:00:00+00:00']));
+        $this->asStaff($this->corrector())->postJson("/api/v1/staff/interviews/{$interview}/correct", ['held_at' => '2026-10-29T08:30:00Z', 'reason' => 'خطأ في الوقت'])
+            ->assertStatus(422)->assertJsonPath('errors.held_at.0', __('interviews.held_before_previous_decision'));
+        $this->travelTo('2026-10-30 09:00:00');
+
+        // An interview of an application that moved on is not rescheduled.
+        $other = $this->awaitingInterview('22222222222');
+        $waiting = $this->scheduled($other);
+        $this->closeApplication($other);
+        $this->reschedule($waiting, ['sitting_id' => $this->sitting()])
+            ->assertStatus(422)->assertJsonPath('errors.application.0', __('interviews.wrong_application_status', ['status' => S::Closed->labelAr()]));
+
+        // Booking the next round with an excuse is scheduling: interviews.manage too.
+        $absent = $this->awaitingInterview('33333333333');
+        $this->record($this->scheduled($absent), ['result' => 'absent'])->assertOk();
+        $approver = $this->allow(StaffUserFactory::new()->create(), 'exceptions.approve');
+        $this->asStaff($approver)->postJson("/api/v1/staff/applications/{$absent->id}/interview-excuse", ['reason' => 'عذر طبي', 'appointment' => ['sitting_id' => $this->sitting()]])->assertForbidden();
+        $this->asStaff($approver)->postJson("/api/v1/staff/applications/{$absent->id}/interview-excuse", ['reason' => 'عذر طبي'])->assertNoContent();
     }
 
     public function test_a_committee_has_at_most_one_chair_and_known_capacities(): void
@@ -286,7 +325,7 @@ class InterviewApiTest extends TestCase
             ->assertStatus(422)->assertJsonPath('errors.members.0', __('interviews.one_chair'));
         $this->asStaff($this->staff)->postJson('/api/v1/staff/interview-sittings', ['starts_at' => '2026-11-01T08:00:00Z', 'location' => 'x x', 'committee_name' => 'لجنة', 'members' => [['name' => 'أ ب', 'capacity' => 'رئيس اللجنة']]])
             ->assertStatus(422)->assertJsonValidationErrors('members.0.capacity');
-        $this->asStaff($this->staff)->patchJson('/api/v1/staff/interview-sittings/' . $this->sitting(), ['members' => $two])->assertStatus(422)->assertJsonPath('errors.members.0', __('interviews.one_chair'));
+        $this->asStaff($this->staff)->patchJson('/api/v1/staff/interview-sittings/'.$this->sitting(), ['members' => $two])->assertStatus(422)->assertJsonPath('errors.members.0', __('interviews.one_chair'));
     }
 
     public function test_only_an_application_awaiting_its_interview_and_one_at_a_time(): void
@@ -376,7 +415,7 @@ class InterviewApiTest extends TestCase
         $applications = [$this->awaitingInterview('11111111111'), $this->awaitingInterview('22222222222'), $this->awaitingInterview('33333333333')];
         $sitting = $this->sitting(['starts_at' => '2026-11-01T08:00:00Z']);
         $url = "/api/v1/staff/interview-sittings/{$sitting}/bookings";
-        $ids = array_map(fn(Application $application) => $application->id, $applications);
+        $ids = array_map(fn (Application $application) => $application->id, $applications);
 
         $this->asStaff($this->staff)->postJson($url, ['application_ids' => [$ids[2], $ids[0]], 'first_at' => '2026-11-01T09:00:00Z', 'minutes_between' => 20])
             ->assertCreated()
@@ -407,8 +446,8 @@ class InterviewApiTest extends TestCase
         $booked = $this->awaitingInterview('44444444444');
         $this->scheduled($booked);                                                                            // booked: not in the queue
 
-        $queue = fn(string $query = '') => array_column($this->asStaff($this->staff)->getJson('/api/v1/staff/interviews/queue?' . $query)->assertOk()->json('data'), 'nomination_number');
-        $numbers = fn(Application ...$applications) => array_map(fn(Application $application) => $application->nomination_number, $applications);
+        $queue = fn (string $query = '') => array_column($this->asStaff($this->staff)->getJson('/api/v1/staff/interviews/queue?'.$query)->assertOk()->json('data'), 'nomination_number');
+        $numbers = fn (Application ...$applications) => array_map(fn (Application $application) => $application->nomination_number, $applications);
 
         $this->assertSame($numbers($old, $young, $third), $queue());                                                    // longest waiting first
         $this->assertSame($numbers($third, $young, $old), $queue("priority[]=specialization_id:{$sharia->id},{$arabic->id}"));
@@ -445,7 +484,7 @@ class InterviewApiTest extends TestCase
         $this->assertSame($interview, $event->interview_id);
         $this->assertSame('outcome', $event->decision_type);
         $this->assertStringStartsWith('2026-10-30 08:00:00', $event->occurred_at);
-        Log::shouldHaveReceived('notice')->withArgs(fn(string $event) => $event === 'interview.recorded')->once();
+        Log::shouldHaveReceived('notice')->withArgs(fn (string $event) => $event === 'interview.recorded')->once();
     }
 
     public function test_failed_and_absent_results(): void
@@ -620,7 +659,7 @@ class InterviewApiTest extends TestCase
         $this->asStaff($reader)->getJson('/api/v1/staff/interviews?status=scheduled')->assertJsonCount(1, 'data');
         $this->asStaff($reader)->getJson('/api/v1/staff/interviews?result=passed')->assertJsonCount(1, 'data');
         $this->asStaff($reader)->getJson("/api/v1/staff/interviews?sitting_id={$sitting}")->assertJsonCount(2, 'data');
-        $this->asStaff($reader)->getJson('/api/v1/staff/interviews?committee_name=' . urlencode('حمص'))->assertJsonCount(1, 'data');
+        $this->asStaff($reader)->getJson('/api/v1/staff/interviews?committee_name='.urlencode('حمص'))->assertJsonCount(1, 'data');
         $this->asStaff($reader)->getJson('/api/v1/staff/interviews?from=2026-11-01')->assertJsonCount(1, 'data');
         $this->asStaff($reader)->getJson('/api/v1/staff/interview-sittings?from=2026-11-01')->assertJsonCount(1, 'data')->assertJsonPath('data.0.interviews_count', 1);
         $this->asStaff($reader)->getJson('/api/v1/staff/interviews/queue')->assertOk();
@@ -665,30 +704,30 @@ class InterviewApiTest extends TestCase
         };
         $recorded = ['status' => 'recorded', 'held_at' => '2026-10-30 08:00:00', 'recorded_by' => $this->staff->id, 'recorded_at' => now()];
 
-        $refused(fn() => DB::table('interviews')->where('id', $interview)->update(['status' => 'recorded']));                              // no result
-        $refused(fn() => DB::table('interviews')->where('id', $interview)->update($recorded + ['result' => 'passed']));                     // attended without grades
-        $refused(fn() => DB::table('interviews')->where('id', $interview)->update($recorded + ['result' => 'absent', 'overall_grade' => 'good']));
-        $refused(fn() => DB::table('interviews')->where('id', $interview)->update(['result' => 'absent', 'held_at' => '2026-10-30 10:00:00', 'recorded_at' => '2026-10-30 09:00:00'] + $recorded));   // held after it was entered
-        $refused(fn() => DB::table('interviews')->where('id', $interview)->update(['result' => 'absent', 'held_at' => '2026-10-30 07:00:00'] + $recorded));   // held before the sitting
-        $refused(fn() => DB::table('interviews')->where('id', $interview)->update(['status' => 'cancelled', 'cancelled_at' => now(), 'cancelled_by' => $this->staff->id]));   // no reason
-        $refused(fn() => DB::table('interviews')->where('id', $interview)->update(['scientific_grade' => 'outstanding']));
-        $refused(fn() => DB::table('interviews')->where('id', $interview)->update(['status' => 'done']));
-        $refused(fn() => DB::table('interviews')->where('id', $interview)->update(['scheduled_at' => '2026-10-30 07:00:00']));               // before the sitting
-        $refused(fn() => DB::table('interviews')->where('id', $interview)->update(['sitting_id' => null]));                                 // always in a sitting
-        $refused(fn() => DB::table('interviews')->where('id', $interview)->delete());
-        $refused(fn() => DB::table('interviews')->insert(['id' => (string) \Illuminate\Support\Str::uuid7(), 'application_id' => $application->id, 'round' => 2, 'sitting_id' => $sitting, 'scheduled_at' => '2026-10-30 09:00:00', 'status' => 'scheduled', 'created_by' => $this->staff->id]));   // a second waiting interview
-        $refused(fn() => DB::table('interview_sittings')->where('id', $sitting)->update(['starts_at' => '2026-10-30 09:00:00']));          // after a booking
-        $refused(fn() => DB::table('interview_sittings')->where('id', $sitting)->update(['kind' => 'one_off']));
-        $refused(fn() => DB::table('interview_members')->insert(['position' => 1, 'name' => 'x', 'capacity' => 'member']));                 // no sitting
-        $refused(fn() => DB::table('interview_members')->insert(['sitting_id' => $sitting, 'sitting_kind' => 'committee', 'position' => 9, 'name' => 'x', 'capacity' => 'رئيس']));
-        $refused(fn() => DB::table('interview_members')->insert(['sitting_id' => $sitting, 'sitting_kind' => 'committee', 'position' => 9, 'name' => 'x', 'capacity' => 'chair']));   // a second chair
+        $refused(fn () => DB::table('interviews')->where('id', $interview)->update(['status' => 'recorded']));                              // no result
+        $refused(fn () => DB::table('interviews')->where('id', $interview)->update($recorded + ['result' => 'passed']));                     // attended without grades
+        $refused(fn () => DB::table('interviews')->where('id', $interview)->update($recorded + ['result' => 'absent', 'overall_grade' => 'good']));
+        $refused(fn () => DB::table('interviews')->where('id', $interview)->update(['result' => 'absent', 'held_at' => '2026-10-30 10:00:00', 'recorded_at' => '2026-10-30 09:00:00'] + $recorded));   // held after it was entered
+        $refused(fn () => DB::table('interviews')->where('id', $interview)->update(['result' => 'absent', 'held_at' => '2026-10-30 07:00:00'] + $recorded));   // held before the sitting
+        $refused(fn () => DB::table('interviews')->where('id', $interview)->update(['status' => 'cancelled', 'cancelled_at' => now(), 'cancelled_by' => $this->staff->id]));   // no reason
+        $refused(fn () => DB::table('interviews')->where('id', $interview)->update(['scientific_grade' => 'outstanding']));
+        $refused(fn () => DB::table('interviews')->where('id', $interview)->update(['status' => 'done']));
+        $refused(fn () => DB::table('interviews')->where('id', $interview)->update(['scheduled_at' => '2026-10-30 07:00:00']));               // before the sitting
+        $refused(fn () => DB::table('interviews')->where('id', $interview)->update(['sitting_id' => null]));                                 // always in a sitting
+        $refused(fn () => DB::table('interviews')->where('id', $interview)->delete());
+        $refused(fn () => DB::table('interviews')->insert(['id' => (string) Str::uuid7(), 'application_id' => $application->id, 'round' => 2, 'sitting_id' => $sitting, 'scheduled_at' => '2026-10-30 09:00:00', 'status' => 'scheduled', 'created_by' => $this->staff->id]));   // a second waiting interview
+        $refused(fn () => DB::table('interview_sittings')->where('id', $sitting)->update(['starts_at' => '2026-10-30 09:00:00']));          // after a booking
+        $refused(fn () => DB::table('interview_sittings')->where('id', $sitting)->update(['kind' => 'one_off']));
+        $refused(fn () => DB::table('interview_members')->insert(['position' => 1, 'name' => 'x', 'capacity' => 'member']));                 // no sitting
+        $refused(fn () => DB::table('interview_members')->insert(['sitting_id' => $sitting, 'sitting_kind' => 'committee', 'position' => 9, 'name' => 'x', 'capacity' => 'رئيس']));
+        $refused(fn () => DB::table('interview_members')->insert(['sitting_id' => $sitting, 'sitting_kind' => 'committee', 'position' => 9, 'name' => 'x', 'capacity' => 'chair']));   // a second chair
 
         $this->record($interview, ['result' => 'passed'] + self::GRADES)->assertOk();
-        $refused(fn() => DB::table('interview_members')->where('sitting_id', $sitting)->update(['name' => 'غيره']));                          // frozen
-        $refused(fn() => DB::table('interview_members')->insert(['sitting_id' => $sitting, 'sitting_kind' => 'committee', 'position' => 9, 'name' => 'x', 'capacity' => 'member']));
-        $refused(fn() => DB::table('interview_result_revisions')->update(['result' => 'failed']));
-        $refused(fn() => DB::table('interview_result_revisions')->delete());
-        $refused(fn() => DB::table('interview_reschedules')->insert(['interview_id' => $interview, 'from_sitting_id' => $sitting, 'to_sitting_id' => $sitting, 'from_scheduled_at' => now(), 'to_scheduled_at' => now(), 'reason' => 'x', 'rescheduled_by' => $this->staff->id, 'created_at' => now()]));   // nothing changed
+        $refused(fn () => DB::table('interview_members')->where('sitting_id', $sitting)->update(['name' => 'غيره']));                          // frozen
+        $refused(fn () => DB::table('interview_members')->insert(['sitting_id' => $sitting, 'sitting_kind' => 'committee', 'position' => 9, 'name' => 'x', 'capacity' => 'member']));
+        $refused(fn () => DB::table('interview_result_revisions')->update(['result' => 'failed']));
+        $refused(fn () => DB::table('interview_result_revisions')->delete());
+        $refused(fn () => DB::table('interview_reschedules')->insert(['interview_id' => $interview, 'from_sitting_id' => $sitting, 'to_sitting_id' => $sitting, 'from_scheduled_at' => now(), 'to_scheduled_at' => now(), 'reason' => 'x', 'rescheduled_by' => $this->staff->id, 'created_at' => now()]));   // nothing changed
     }
 
     /**
@@ -710,8 +749,8 @@ class InterviewApiTest extends TestCase
             }
         };
 
-        $check(fn() => DB::table('interview_members')->where('sitting_id', $sitting)->delete());
-        $check(fn() => DB::table('interview_sittings')->insert(['id' => (string) \Illuminate\Support\Str::uuid7(), 'kind' => 'committee', 'starts_at' => now(), 'location' => 'x', 'created_by' => $this->staff->id]));
+        $check(fn () => DB::table('interview_members')->where('sitting_id', $sitting)->delete());
+        $check(fn () => DB::table('interview_sittings')->insert(['id' => (string) Str::uuid7(), 'kind' => 'committee', 'starts_at' => now(), 'location' => 'x', 'created_by' => $this->staff->id]));
 
         // A committee replaced inside one transaction is fine.
         DB::transaction(function () use ($sitting) {
@@ -727,7 +766,7 @@ class InterviewApiTest extends TestCase
     {
         $sitting = $this->oneOffSitting();
         $committee = $this->sitting();
-        $insert = fn(array $row) => DB::table('interview_members')->insert($row + ['position' => 9, 'name' => 'عضو ثان', 'capacity' => 'member']);
+        $insert = fn (array $row) => DB::table('interview_members')->insert($row + ['position' => 9, 'name' => 'عضو ثان', 'capacity' => 'member']);
 
         foreach ([
             'a second member' => ['sitting_id' => $sitting, 'sitting_kind' => 'one_off', 'message' => 'interview_members_one_off_single'],
@@ -735,7 +774,7 @@ class InterviewApiTest extends TestCase
             'a committee member said one-off' => ['sitting_id' => $committee, 'sitting_kind' => 'one_off', 'message' => 'foreign key'],
         ] as $case => $row) {
             try {
-                DB::transaction(fn() => $insert(array_diff_key($row, ['message' => true])));
+                DB::transaction(fn () => $insert(array_diff_key($row, ['message' => true])));
                 $this->fail("The database accepted {$case}.");
             } catch (QueryException $e) {
                 $this->assertStringContainsString($row['message'], $e->getMessage(), $case);
@@ -750,7 +789,7 @@ class InterviewApiTest extends TestCase
         DB::statement('SET CONSTRAINTS interview_members_key_sitting IMMEDIATE');
         DB::statement('SET CONSTRAINTS ALL DEFERRED');
         $this->assertSame(32, strlen((string) DB::table('interview_sittings')->where('id', $first)->value('committee_key')));
-        $copy = (string) \Illuminate\Support\Str::uuid7();
+        $copy = (string) Str::uuid7();
 
         try {
             DB::transaction(function () use ($copy) {

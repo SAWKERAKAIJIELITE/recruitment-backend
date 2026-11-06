@@ -18,8 +18,8 @@ class EnsureStaffIsActive
     {
         $user = $request->user();
 
-        if (!$user instanceof StaffUser || !$user->is_active) {
-            throw new AuthenticationException();
+        if (! $user instanceof StaffUser || ! $user->is_active) {
+            throw new AuthenticationException;
         }
 
         return $next($request);

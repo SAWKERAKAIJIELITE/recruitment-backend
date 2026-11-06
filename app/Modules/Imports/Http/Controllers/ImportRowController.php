@@ -25,7 +25,7 @@ class ImportRowController extends Controller
 
         $rows = $batch->rows()
             ->with(ImportRowResource::RELATIONS)
-            ->when($filters['status'] ?? null, fn($query, string $status) => $query->where('status', $status))
+            ->when($filters['status'] ?? null, fn ($query, string $status) => $query->where('status', $status))
             ->paginate(50);
 
         return ImportRowResource::collection($rows);

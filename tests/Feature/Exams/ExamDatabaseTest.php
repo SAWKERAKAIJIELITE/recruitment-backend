@@ -16,7 +16,7 @@ use Tests\TestCase;
 /** What the database itself guarantees about exam plans, pass policies and the question bank (D-052 to D-055). */
 class ExamDatabaseTest extends TestCase
 {
-    use RefreshDatabase, ExamTestHelpers;
+    use ExamTestHelpers, RefreshDatabase;
 
     protected function setUp(): void
     {

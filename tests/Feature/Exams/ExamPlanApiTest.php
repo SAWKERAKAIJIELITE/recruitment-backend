@@ -18,7 +18,7 @@ use Tests\TestCase;
 /** Exam plan versions per job position (D-053, D-054). */
 class ExamPlanApiTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, ExamTestHelpers;
+    use ExamTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private const URL = '/api/v1/staff/exam-plans';
 
@@ -230,12 +230,12 @@ class ExamPlanApiTest extends TestCase
         $hadith = $this->subject();
         $quran = $this->quran();
         $id = $this->draftId($manager, $this->position());
-        $this->asStaff($manager)->putJson(self::URL . "/{$id}", $this->planContent([$hadith], $quran, stock: false))->assertOk();
+        $this->asStaff($manager)->putJson(self::URL."/{$id}", $this->planContent([$hadith], $quran, stock: false))->assertOk();
         $this->stockBank($hadith, null, 2);                    // 2 of each: hard (1) is enough, easy and medium (2) too
         ExamQuestion::query()->where('subject_id', $hadith->id)->where('difficulty', 'medium')->first()->delete();   // archived: not counted
         $this->stockBank($quran[0], $quran[2], 5);             // questions of التجويد do not count for التلاوة
 
-        $this->asStaff($manager)->getJson(self::URL . "/{$id}/readiness")
+        $this->asStaff($manager)->getJson(self::URL."/{$id}/readiness")
             ->assertOk()
             ->assertJsonPath('data.ready', false)
             ->assertJsonPath('data.problems', [
@@ -244,12 +244,12 @@ class ExamPlanApiTest extends TestCase
                 'subjects.1.parts.0.questions.medium' => [__('exams.bank_short', ['item' => 'القرآن الكريم / التلاوة', 'difficulty' => 'متوسط', 'have' => 0, 'need' => 2])],
                 'subjects.1.parts.0.questions.hard' => [__('exams.bank_short', ['item' => 'القرآن الكريم / التلاوة', 'difficulty' => 'صعب', 'have' => 0, 'need' => 1])],
             ]);
-        $this->asStaff($manager)->postJson(self::URL . "/{$id}/publish")->assertStatus(422)->assertJsonValidationErrors('subjects.0.questions.medium');
+        $this->asStaff($manager)->postJson(self::URL."/{$id}/publish")->assertStatus(422)->assertJsonValidationErrors('subjects.0.questions.medium');
 
         $this->stockBank($hadith, null, 1);
         $this->stockBank($quran[0], $quran[1], 2);
-        $this->asStaff($manager)->getJson(self::URL . "/{$id}/readiness")->assertJsonPath('data.ready', true);
-        $this->asStaff($manager)->postJson(self::URL . "/{$id}/publish")->assertOk();
+        $this->asStaff($manager)->getJson(self::URL."/{$id}/readiness")->assertJsonPath('data.ready', true);
+        $this->asStaff($manager)->postJson(self::URL."/{$id}/publish")->assertOk();
     }
 
     public function test_a_subject_scored_as_a_whole_draws_on_all_its_questions(): void
@@ -257,10 +257,10 @@ class ExamPlanApiTest extends TestCase
         $manager = $this->examManager();
         [$quran, $recitation] = $this->quran();
         $id = $this->draftId($manager, $this->position());
-        $this->asStaff($manager)->putJson(self::URL . "/{$id}", ['duration_minutes' => 30, 'subjects' => [['subject_id' => $quran->id, 'questions' => $this->askedQuestions]]])->assertOk();
+        $this->asStaff($manager)->putJson(self::URL."/{$id}", ['duration_minutes' => 30, 'subjects' => [['subject_id' => $quran->id, 'questions' => $this->askedQuestions]]])->assertOk();
         $this->stockBank($quran, $recitation, 2);
 
-        $this->asStaff($manager)->postJson(self::URL . "/{$id}/publish")->assertOk();
+        $this->asStaff($manager)->postJson(self::URL."/{$id}/publish")->assertOk();
     }
 
     public function test_a_subject_or_part_archived_after_it_was_added_blocks_publishing(): void
@@ -269,11 +269,11 @@ class ExamPlanApiTest extends TestCase
         $hadith = $this->subject();
         $quran = $this->quran();
         $id = $this->draftId($manager, $this->position());
-        $this->asStaff($manager)->putJson(self::URL . "/{$id}", $this->planContent([$hadith], $quran))->assertOk();
+        $this->asStaff($manager)->putJson(self::URL."/{$id}", $this->planContent([$hadith], $quran))->assertOk();
         $hadith->delete();
         $quran[2]->delete();
 
-        $this->asStaff($manager)->postJson(self::URL . "/{$id}/publish")
+        $this->asStaff($manager)->postJson(self::URL."/{$id}/publish")
             ->assertStatus(422)
             ->assertJsonPath('errors', [
                 'subjects.0.subject_id' => [__('exams.subject_archived', ['subject' => 'الحديث النبوي'])],
@@ -297,11 +297,11 @@ class ExamPlanApiTest extends TestCase
             ->assertJsonPath('data.subjects.1.parts.1.max_score', '40.00')
             ->json('data.id');
 
-        $this->asStaff($manager)->postJson(self::URL . "/{$v2}/publish")->assertOk()->assertJsonPath('data.status', 'published');
+        $this->asStaff($manager)->postJson(self::URL."/{$v2}/publish")->assertOk()->assertJsonPath('data.status', 'published');
 
-        $this->asStaff($manager)->getJson(self::URL . "/{$v1->id}")->assertJsonPath('data.status', 'retired')->assertJsonPath('data.question_count', 10);
+        $this->asStaff($manager)->getJson(self::URL."/{$v1->id}")->assertJsonPath('data.status', 'retired')->assertJsonPath('data.question_count', 10);
         $this->assertNotNull($v1->fresh()->retired_at);
-        $this->asStaff($manager)->getJson(self::URL . "?job_position_id={$position->id}&status=published")->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $v2);
+        $this->asStaff($manager)->getJson(self::URL."?job_position_id={$position->id}&status=published")->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $v2);
     }
 
     public function test_a_draft_can_start_from_an_older_version_of_the_same_position_only(): void
@@ -325,7 +325,7 @@ class ExamPlanApiTest extends TestCase
 
         $this->asStaff($this->examManager())->patchJson("/api/v1/staff/exam-subject-parts/{$quran[1]->id}", ['default_weight' => 90, 'default_assessment' => 'manual'])->assertOk();
 
-        $this->asStaff($this->examManager())->getJson(self::URL . "/{$plan->id}")
+        $this->asStaff($this->examManager())->getJson(self::URL."/{$plan->id}")
             ->assertJsonPath('data.subjects.0.parts.0.weight', '60.00')
             ->assertJsonPath('data.subjects.0.parts.0.assessment', 'exam');
     }
@@ -337,7 +337,7 @@ class ExamPlanApiTest extends TestCase
         $plan = $this->publishedPlan($this->position(), $this->planContent([$hadith], [$quran, $recitation, $tajweed]));
 
         // التلاوة from the exam (47 of 60 points), التجويد entered by staff: 38 out of its scale of 40.
-        $outcome = (new ExamScorer())->score(
+        $outcome = (new ExamScorer)->score(
             $plan->scoringPlan(),
             [$hadith->id => Mark::of(80), $quran->id => [$recitation->id => Mark::of(47, 60), $tajweed->id => Mark::of(38, 40)]],
             $plan->passPolicy->rules(),
@@ -360,9 +360,9 @@ class ExamPlanApiTest extends TestCase
         $reader = StaffUserFactory::new()->withRole('general_manager')->create();
 
         $this->asStaff($reader)->getJson(self::URL)->assertOk()->assertJsonCount(3, 'data');
-        $this->asStaff($reader)->getJson(self::URL . "?job_position_id={$position->id}")->assertJsonCount(2, 'data')->assertJsonPath('data.0.version', 2);
-        $this->asStaff($reader)->getJson(self::URL . '?status=draft')->assertJsonCount(1, 'data');
-        $this->asStaff($reader)->getJson(self::URL . '?status=old')->assertStatus(422);
+        $this->asStaff($reader)->getJson(self::URL."?job_position_id={$position->id}")->assertJsonCount(2, 'data')->assertJsonPath('data.0.version', 2);
+        $this->asStaff($reader)->getJson(self::URL.'?status=draft')->assertJsonCount(1, 'data');
+        $this->asStaff($reader)->getJson(self::URL.'?status=old')->assertStatus(422);
     }
 
     public function test_only_exam_bank_managers_change_plans_or_see_readiness(): void
@@ -371,12 +371,12 @@ class ExamPlanApiTest extends TestCase
         $plan = $this->publishedPlan($position, $this->planContent([$this->subject()]));
         $staff = StaffUserFactory::new()->withRole('recruitment_staff')->create();
 
-        $this->asStaff($staff)->getJson(self::URL . "/{$plan->id}")->assertOk();
+        $this->asStaff($staff)->getJson(self::URL."/{$plan->id}")->assertOk();
         $this->asStaff($staff)->postJson(self::URL, ['job_position_id' => $position->id])->assertForbidden();
-        $this->asStaff($staff)->postJson(self::URL . "/{$plan->id}/publish")->assertForbidden();
-        $this->asStaff($staff)->getJson(self::URL . "/{$plan->id}/readiness")->assertForbidden();
+        $this->asStaff($staff)->postJson(self::URL."/{$plan->id}/publish")->assertForbidden();
+        $this->asStaff($staff)->getJson(self::URL."/{$plan->id}/readiness")->assertForbidden();
         $this->asStaff(StaffUserFactory::new()->create())->getJson(self::URL)->assertForbidden();
-        $this->asStaff($this->examManager())->getJson(self::URL . '/' . (string) Str::uuid())->assertNotFound();
+        $this->asStaff($this->examManager())->getJson(self::URL.'/'.(string) Str::uuid())->assertNotFound();
     }
 
     public function test_versions_number_up_per_job_position(): void

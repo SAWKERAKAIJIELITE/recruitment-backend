@@ -16,7 +16,8 @@ use Illuminate\Support\Facades\Schema;
  * to a published or retired version and to its subjects and parts (triggers), because sessions and results point
  * at it.
  */
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('exam_plan_versions', function (Blueprint $table) {

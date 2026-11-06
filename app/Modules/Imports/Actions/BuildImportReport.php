@@ -18,7 +18,7 @@ class BuildImportReport
     /** Writes the report to a temporary file and returns its path. */
     public function execute(ImportBatch $batch): string
     {
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle(mb_substr(__('imports.report.title'), 0, 31));
         $sheet->setRightToLeft(true);

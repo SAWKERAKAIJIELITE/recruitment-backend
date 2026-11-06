@@ -11,10 +11,12 @@ use App\Modules\Recruitment\Actions\ApplicationLifecycle;
 use App\Modules\Recruitment\Enums\ApplicationStatus as S;
 use App\Modules\Recruitment\Enums\DecisionType as D;
 use App\Modules\Recruitment\Models\Application;
+use App\Modules\Reports\Queries\CandidateResults;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Testing\TestResponse;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use Tests\Support\RecruitmentTestHelpers;
 use Tests\Support\StaffTestHelpers;
 use Tests\TestCase;
@@ -22,7 +24,7 @@ use Tests\TestCase;
 /** The results report for candidates: a PDF statement and an Excel / PDF list, without notes or reasons (D-066). */
 class ResultsReportTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private const NOTE = 'ملاحظة سرية للجنة';
 
@@ -61,14 +63,14 @@ class ResultsReportTest extends TestCase
     {
         $path = tempnam(sys_get_temp_dir(), 'pdf-test-');
         file_put_contents($path, $response->getContent());
-        $text = (string) shell_exec('pdftotext -enc UTF-8 ' . escapeshellarg($path) . ' -');
+        $text = (string) shell_exec('pdftotext -enc UTF-8 '.escapeshellarg($path).' -');
         unlink($path);
 
         return $text;
     }
 
     /** The number next to a label in the totals. */
-    private function total(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, string $label): mixed
+    private function total(Worksheet $sheet, string $label): mixed
     {
         foreach ($sheet->getRowIterator() as $row) {
             if ($sheet->getCell([1, $row->getRowIndex()])->getValue() === $label) {
@@ -91,14 +93,16 @@ class ResultsReportTest extends TestCase
         $this->assertStringContainsString(rawurlencode("{$application->nomination_number}.pdf"), $response->headers->get('Content-Disposition'));
 
         $text = $this->pdfText($response);
-        if (getenv('KEEP_REPORT_PDF')) { file_put_contents(getenv('KEEP_REPORT_PDF'), $response->getContent()); }
+        if (getenv('KEEP_REPORT_PDF')) {
+            file_put_contents(getenv('KEEP_REPORT_PDF'), $response->getContent());
+        }
         $this->assertStringContainsString($application->nomination_number, $text);
         $this->assertStringContainsString('01234567890', $text);
         $this->assertStringContainsString('2026-10-10', $text);                                         // the interview date
-        Log::shouldHaveReceived('notice')->withArgs(fn(string $event) => $event === 'report.results_statement')->once();
+        Log::shouldHaveReceived('notice')->withArgs(fn (string $event) => $event === 'report.results_statement')->once();
 
         // What the statement is built from (the PDF text of Arabic is shaped, so the content is checked here).
-        $result = \App\Modules\Reports\Queries\CandidateResults::of(collect([$application->load(\App\Modules\Reports\Queries\CandidateResults::RELATIONS)]))[0];
+        $result = CandidateResults::of(collect([$application->load(CandidateResults::RELATIONS)]))[0];
         $this->assertSame(['result' => 'failed', 'label' => 'راسب', 'decided_on' => '2026-10-01', 'admitted_by_exception' => true], $result['exam']);
         $this->assertSame('ممتاز', $result['interview']['grades']['scientific']['label']);
         $shown = json_encode(array_diff_key($result, ['application' => true]), JSON_UNESCAPED_UNICODE);
@@ -113,7 +117,7 @@ class ResultsReportTest extends TestCase
 
         $response = $this->asStaff($this->staff)->get('/api/v1/staff/reports/results?sort=nomination_number')->assertOk();
         $sheet = IOFactory::load($response->getFile()->getPathname())->getActiveSheet();
-        $cells = collect($sheet->toArray())->flatten()->filter()->map(fn($value) => (string) $value)->values()->all();
+        $cells = collect($sheet->toArray())->flatten()->filter()->map(fn ($value) => (string) $value)->values()->all();
 
         $this->assertTrue($sheet->getRightToLeft());
         $this->assertStringContainsString('نتائج الاختبارات والمقابلات', (string) $sheet->getCell('A1')->getValue());

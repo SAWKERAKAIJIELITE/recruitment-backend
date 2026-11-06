@@ -24,7 +24,8 @@ class ManageStaffAccess
      */
     public function assignRole(StaffUser $target, Role $role, StaffUser $actor): StaffUser
     {
-        $cleared = DB::transaction(function () use ($target, $role, $actor) {
+        DB::transaction(function () use ($target, $role, $actor) {
+            AccessInvariants::serialize();
             $assignment = ['automatic' => false, 'note' => null, 'assigned_by' => $actor->id, 'created_at' => Date::now()];
 
             if ($target->roles()->whereKey($role->id)->exists()) {
@@ -40,38 +41,35 @@ class ManageStaffAccess
             AutomaticRoles::sync($target, $actor);
             AccessInvariants::ensureSomeoneCanManageUsers();
 
-            return $cleared;
+            AccessLog::record('role_assigned', $actor, ['user_id' => $target->id, 'role' => $role->slug, 'overrides_cleared' => $cleared]);
         });
-
-        AccessLog::record('role_assigned', $actor, ['user_id' => $target->id, 'role' => $role->slug, 'overrides_cleared' => $cleared]);
 
         return $this->fresh($target);
     }
 
     /**
-     * Takes the role away. A role the system added (all its permissions granted directly) would come straight back,
-     * so taking it away takes those direct grants away with it.
+     * Takes the role away. When the user's direct grants hold every permission of the role (always so for a role
+     * the system added), it would come straight back as automatic: those grants go with it.
      */
     public function removeRole(StaffUser $target, Role $role, StaffUser $actor): StaffUser
     {
-        $revoked = DB::transaction(function () use ($target, $role, $actor) {
-            $automatic = (bool) $target->roles()->whereKey($role->id)->first()?->pivot->automatic;
+        DB::transaction(function () use ($target, $role, $actor) {
+            AccessInvariants::serialize();
             $target->roles()->detach($role->id);
+            $permissionIds = $role->permissions()->pluck('permissions.id');
+            $grants = $target->permissions()->wherePivot('is_granted', true)->whereIn('permissions.id', $permissionIds)->get();
             $revoked = [];
 
-            if ($automatic) {
-                $grants = $target->permissions()->wherePivot('is_granted', true)->whereIn('permissions.id', $role->permissions()->pluck('permissions.id'));
+            if ($permissionIds->isNotEmpty() && $grants->count() === $permissionIds->count()) {
                 $revoked = $grants->pluck('slug')->all();
-                $target->permissions()->detach($grants->pluck('permissions.id'));
+                $target->permissions()->detach($grants->pluck('id'));
             }
 
             AutomaticRoles::sync($target, $actor);
             AccessInvariants::ensureSomeoneCanManageUsers();
 
-            return $revoked;
+            AccessLog::record('role_removed', $actor, ['user_id' => $target->id, 'role' => $role->slug, 'grants_removed' => $revoked]);
         });
-
-        AccessLog::record('role_removed', $actor, ['user_id' => $target->id, 'role' => $role->slug, 'grants_removed' => $revoked]);
 
         return $this->fresh($target);
     }
@@ -80,18 +78,19 @@ class ManageStaffAccess
     public function setPermission(StaffUser $target, Permission $permission, bool $granted, StaffUser $actor): StaffUser
     {
         DB::transaction(function () use ($target, $permission, $granted, $actor) {
+            AccessInvariants::serialize();
             $target->permissions()->syncWithoutDetaching([
                 $permission->id => ['is_granted' => $granted, 'granted_by' => $actor->id, 'note' => null],
             ]);
 
             AutomaticRoles::sync($target, $actor);
             AccessInvariants::ensureSomeoneCanManageUsers();
-        });
 
-        AccessLog::record($granted ? 'permission_granted' : 'permission_denied', $actor, [
-            'user_id' => $target->id,
-            'permission' => $permission->slug,
-        ]);
+            AccessLog::record($granted ? 'permission_granted' : 'permission_denied', $actor, [
+                'user_id' => $target->id,
+                'permission' => $permission->slug,
+            ]);
+        });
 
         return $this->fresh($target);
     }
@@ -100,13 +99,14 @@ class ManageStaffAccess
     public function clearPermission(StaffUser $target, Permission $permission, StaffUser $actor): StaffUser
     {
         DB::transaction(function () use ($target, $permission, $actor) {
+            AccessInvariants::serialize();
             $target->permissions()->detach($permission->id);
 
             AutomaticRoles::sync($target, $actor);
             AccessInvariants::ensureSomeoneCanManageUsers();
-        });
 
-        AccessLog::record('permission_override_cleared', $actor, ['user_id' => $target->id, 'permission' => $permission->slug]);
+            AccessLog::record('permission_override_cleared', $actor, ['user_id' => $target->id, 'permission' => $permission->slug]);
+        });
 
         return $this->fresh($target);
     }

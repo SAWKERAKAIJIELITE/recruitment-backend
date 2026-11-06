@@ -28,9 +28,9 @@ class ImportChecker
     public function check(ImportBatch $batch): void
     {
         $rows = $batch->rows()->get();
-        $open = $rows->filter(fn(ImportRow $row) => $row->status->isChecked());
+        $open = $rows->filter(fn (ImportRow $row) => $row->status->isChecked());
 
-        $lookup = new ReferenceLookup();
+        $lookup = new ReferenceLookup;
         $people = $this->people($open);
         $live = $this->liveApplications($people);
         $firstRowOf = $this->firstRowPerNationalNumber($open);

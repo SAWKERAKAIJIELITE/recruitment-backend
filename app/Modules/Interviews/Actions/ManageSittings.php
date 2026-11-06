@@ -60,6 +60,8 @@ class ManageSittings
                 $this->assertMemberCount($sitting->kind, $members);
                 $sitting->members()->delete();
                 Committee::write($sitting, $members);
+                // The old fingerprint no longer describes the committee; the new one is computed at commit.
+                $sitting->forceFill(['committee_key' => null]);
             }
 
             if (isset($data['starts_at'])) {
@@ -77,8 +79,9 @@ class ManageSittings
                 $this->fail('committee_name', 'interviews.committee_name_required');
             }
 
-            $sitting->save();
+            // Checked before saving: the unique index is checked at once, and would answer without the other's id.
             $this->assertNotDuplicate($sitting);
+            $sitting->save();
 
             AuditTrail::record('interview_sitting.updated', $actor, ['sitting_id' => $sitting->id, 'fields' => array_keys($data), 'members' => $members !== null]);
 

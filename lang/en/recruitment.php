@@ -6,6 +6,7 @@ return [
     'name_archived' => 'An archived entry with this name already exists: restore it instead.',
     'area_not_in_district' => 'The selected area does not belong to the selected district.',
     'illegal_transition' => 'This cannot be done to an application whose status is ":status".',
+    'changed_meanwhile' => 'Another user has just changed this person: try again.',
     'national_number_taken' => 'This national number belongs to another person.',
     'candidate_inactive' => 'This person is deactivated and cannot be nominated.',
     'candidate_already_inactive' => 'This person is already deactivated.',

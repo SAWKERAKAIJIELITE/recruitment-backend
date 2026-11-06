@@ -9,6 +9,8 @@ use App\Modules\Exams\Models\ExamResult;
 use App\Modules\Recruitment\Http\Resources\ReferenceSummary;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /**
  * A booking into an exam session: the candidate, the attempt (times, answered questions, right answers once closed,
@@ -28,9 +30,13 @@ class ExamBookingResource extends JsonResource
     {
         return [
             ...array_values(array_diff(self::RELATIONS, ['attempt.result'])),
-            'attempt' => fn($attempt) => $attempt
-                ->withCount(['items as questions_count', 'items as answered_count' => fn($items) => $items->whereNotNull('selected_option'), 'items as correct_count' => fn($items) => $items->where('is_correct', true)])
-                ->withMax('items as last_saved_at', 'answered_at'),
+            'attempt' => fn ($attempt) => $attempt
+                ->withCount(['items as questions_count', 'items as answered_count' => fn ($items) => $items->whereNotNull('selected_option'), 'items as correct_count' => fn ($items) => $items->where('is_correct', true)])
+                // The last save of any answer, clearing included.
+                ->addSelect(['last_saved_at' => DB::table('exam_answer_revisions as r')
+                    ->join('exam_attempt_items as i', 'i.id', '=', 'r.attempt_item_id')
+                    ->whereColumn('i.attempt_id', 'exam_attempts.id')
+                    ->selectRaw('max(r.saved_at)')]),
             'attempt.result',
         ];
     }
@@ -65,13 +71,13 @@ class ExamBookingResource extends JsonResource
                 'submitted_at' => $attempt->submitted_at?->toIso8601String(),
                 /** candidate (submitted) or timeout (closed by the server at the deadline). */
                 'closed_by' => $attempt->closed_by?->value,
-                'questions' => (int) ($attempt->questions_count ?? $attempt->items()->count()),
-                'answered' => (int) ($attempt->answered_count ?? $attempt->items()->whereNotNull('selected_option')->count()),
+                'questions' => (int) $attempt->questions_count,
+                'answered' => (int) $attempt->answered_count,
                 /** Right answers, once closed. */
-                'correct' => $attempt->isOpen() ? null : (int) ($attempt->correct_count ?? $attempt->items()->where('is_correct', true)->count()),
-                /** The candidate's last saved answer: a desk that stopped saving shows here. */
-                'last_saved_at' => ($saved = $attempt->getAttribute('last_saved_at') ?? $attempt->items()->max('answered_at')) === null ? null : \Illuminate\Support\Carbon::parse($saved)->toIso8601String(),
-                'extensions' => $attempt->extensions->map(fn(ExamAttemptExtension $extension) => [
+                'correct' => $attempt->isOpen() ? null : (int) $attempt->correct_count,
+                /** The candidate's last save (an answer or a clearing): a desk that stopped saving shows here. */
+                'last_saved_at' => $attempt->getAttribute('last_saved_at') === null ? null : Carbon::parse($attempt->getAttribute('last_saved_at'))->toIso8601String(),
+                'extensions' => $attempt->extensions->map(fn (ExamAttemptExtension $extension) => [
                     'minutes' => $extension->minutes,
                     'for_everyone' => $extension->session_extension_id !== null,
                     'reason' => $extension->reason,

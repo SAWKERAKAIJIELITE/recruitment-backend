@@ -59,8 +59,7 @@ class RecruitmentDemoSeeder extends Seeder
         private readonly CreateApplication $create,
         private readonly ApplicationLifecycle $lifecycle,
         private readonly ChangeCandidateActivation $activation,
-    ) {
-    }
+    ) {}
 
     public function run(): void
     {
@@ -70,7 +69,7 @@ class RecruitmentDemoSeeder extends Seeder
             return;
         }
 
-        $references = new DemoReferences();
+        $references = new DemoReferences;
         $staff = StaffUser::query()->where('username', 'staff')->firstOrFail();
         $manager = StaffUser::query()->where('username', 'manager')->firstOrFail();   // holds exceptions.approve and applications.close
 

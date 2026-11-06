@@ -29,8 +29,7 @@ final class RowParser
         private readonly ReferenceLookup $lookup,
         private readonly string $calendar = '1900',
         private readonly ?int $defaultNominatingEntityId = null,
-    ) {
-    }
+    ) {}
 
     /**
      * @param  array<string, CellValue>  $cells  ImportField value => cell (fields without a column are absent)
@@ -189,6 +188,12 @@ final class RowParser
             ])];
         }
 
+        // Stored as a number at full length: a leading zero may still be gone, and Excel keeps only 15 significant
+        // digits. Staff confirm it (a correction with the same value) rather than the file deciding.
+        if ($cell->isNumeric()) {
+            return [null, self::issue('national_number_stored_as_number', ['suggestion' => $digits])];
+        }
+
         return [$digits, null];   // the length is checked with the other rules (corrections too)
     }
 
@@ -198,7 +203,7 @@ final class RowParser
 
         if ($cell->isNumeric() && ! str_starts_with($phone, '0')) {
             return [null, self::issue('phone_leading_zero', [
-                'suggestion' => str_starts_with($phone, '963') ? '+' . $phone : '0' . $phone,
+                'suggestion' => str_starts_with($phone, '963') ? '+'.$phone : '0'.$phone,
             ])];
         }
 
@@ -291,7 +296,7 @@ final class RowParser
         }
 
         $key = ArabicText::searchKey(preg_replace('/[\p{P}]+/u', ' ', $cell->text()) ?? $cell->text());
-        $normalize = fn(array $words) => array_map(fn(string $word) => ArabicText::searchKey($word), $words);
+        $normalize = fn (array $words) => array_map(fn (string $word) => ArabicText::searchKey($word), $words);
 
         return match (true) {
             in_array($key, $normalize(self::NO), true) => [false, null],

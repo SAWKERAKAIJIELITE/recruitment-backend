@@ -14,6 +14,7 @@ use App\Modules\Recruitment\Enums\ApplicationStatus as S;
 use App\Modules\Recruitment\Enums\DecisionType as D;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Models\NominatingEntity;
+use Carbon\CarbonInterface;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
@@ -36,7 +37,7 @@ use Tests\TestCase;
  */
 class StaffReportsTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private StaffUser $staff;
 
@@ -51,7 +52,7 @@ class StaffReportsTest extends TestCase
         $this->story();
     }
 
-    private function at(string $moment): \Carbon\CarbonInterface
+    private function at(string $moment): CarbonInterface
     {
         $this->travelTo($moment);
 
@@ -109,7 +110,7 @@ class StaffReportsTest extends TestCase
 
     private function summary(array $query = []): TestResponse
     {
-        return $this->asStaff($this->staff)->getJson('/api/v1/staff/reports/summary?' . http_build_query($query))->assertOk();
+        return $this->asStaff($this->staff)->getJson('/api/v1/staff/reports/summary?'.http_build_query($query))->assertOk();
     }
 
     private function sheet(TestResponse $response, int $index = 0): Worksheet
@@ -125,7 +126,7 @@ class StaffReportsTest extends TestCase
         $rows = [];
 
         for ($line = $from; $sheet->getCell([1, $line])->getValue() !== null; $line++) {
-            $rows[] = array_map(fn($value) => $value === null ? null : (string) $value, $sheet->rangeToArray("A{$line}:{$sheet->getHighestColumn()}{$line}", null, false, false)[0]);
+            $rows[] = array_map(fn ($value) => $value === null ? null : (string) $value, $sheet->rangeToArray("A{$line}:{$sheet->getHighestColumn()}{$line}", null, false, false)[0]);
         }
 
         return $rows;
@@ -226,7 +227,7 @@ class StaffReportsTest extends TestCase
         $this->assertSame(['2', 'حاضر', '2026-05-03', 'ناجح', null, null], array_slice($rows[3], 5));   // B's second time
         $this->assertSame(4, $this->total($sheet, 'عدد القرارات'));
         $this->assertSame(1, $this->total($sheet, 'قُبلوا باستثناء'));
-        Log::shouldHaveReceived('notice')->withArgs(fn(string $event, array $context) => $event === 'report.exported' && $context['report'] === 'exams' && $context['rows'] === 4)->once();
+        Log::shouldHaveReceived('notice')->withArgs(fn (string $event, array $context) => $event === 'report.exported' && $context['report'] === 'exams' && $context['rows'] === 4)->once();
     }
 
     public function test_the_exam_views(): void
@@ -299,7 +300,7 @@ class StaffReportsTest extends TestCase
         ], $book->getSheetNames());
 
         $first = $book->getSheet(0);
-        $links = collect($first->getHyperlinkCollection())->map(fn($link) => $link->getUrl())->values()->all();
+        $links = collect($first->getHyperlinkCollection())->map(fn ($link) => $link->getUrl())->values()->all();
         $this->assertCount(9, $links);
         $this->assertContains("sheet://'سجل المقابلات'!A1", $links);
     }

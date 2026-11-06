@@ -28,9 +28,7 @@ use Throwable;
  */
 class UploadImportBatch
 {
-    public function __construct(private readonly ImportChecker $checker)
-    {
-    }
+    public function __construct(private readonly ImportChecker $checker) {}
 
     public function execute(UploadedFile $file, StaffUser $actor, ?int $nominatingEntityId = null, ?int $sourceDistrictId = null, ?string $notes = null): ImportBatch
     {
@@ -39,7 +37,7 @@ class UploadImportBatch
 
         $sheet = WorkbookReader::read($file->getRealPath());
         $this->assertEveryRowHasANationalNumber($sheet);
-        $parser = new RowParser(new ReferenceLookup(), $sheet->calendar, $nominatingEntityId);
+        $parser = new RowParser(new ReferenceLookup, $sheet->calendar, $nominatingEntityId);
 
         $id = (string) Str::uuid7();
         $extension = in_array(strtolower($file->getClientOriginalExtension()), ['xlsx', 'xls'], true) ? strtolower($file->getClientOriginalExtension()) : 'xlsx';
@@ -49,7 +47,7 @@ class UploadImportBatch
 
         try {
             return DB::transaction(function () use ($id, $file, $path, $hash, $sheet, $parser, $actor, $nominatingEntityId, $sourceDistrictId, $notes) {
-                $batch = new ImportBatch();
+                $batch = new ImportBatch;
                 $batch->forceFill([
                     'id' => $id,
                     'original_filename' => SafeFilename::of($file->getClientOriginalName(), 'import.xlsx'),
@@ -58,8 +56,8 @@ class UploadImportBatch
                     'file_size' => $file->getSize(),
                     'sheet_name' => mb_substr($sheet->sheetName, 0, 100),
                     'header_row' => $sheet->headerRow,
-                    'column_map' => collect($sheet->fields)->map(fn(string $letter) => ['column' => $letter, 'header' => $sheet->headers[$letter]])->all(),
-                    'ignored_columns' => array_map(fn(string $letter) => ['column' => $letter, 'header' => $sheet->headers[$letter]], $sheet->ignored),
+                    'column_map' => collect($sheet->fields)->map(fn (string $letter) => ['column' => $letter, 'header' => $sheet->headers[$letter]])->all(),
+                    'ignored_columns' => array_map(fn (string $letter) => ['column' => $letter, 'header' => $sheet->headers[$letter]], $sheet->ignored),
                     'nominating_entity_id' => $nominatingEntityId,
                     'source_district_id' => $sourceDistrictId,
                     'notes' => $notes,
@@ -122,12 +120,11 @@ class UploadImportBatch
 
         if ($missing !== []) {
             ImportProblem::fail('file', 'missing_national_numbers', [
-                'rows' => implode('، ', array_slice($missing, 0, 20)) . (count($missing) > 20 ? '، …' : ''),
+                'rows' => implode('، ', array_slice($missing, 0, 20)).(count($missing) > 20 ? '، …' : ''),
                 'count' => count($missing),
             ]);
         }
     }
-
 
     private function insertRows(ImportBatch $batch, SheetData $sheet, RowParser $parser): void
     {
@@ -150,7 +147,7 @@ class UploadImportBatch
                 'import_batch_id' => $batch->id,
                 'row_number' => $row['number'],
                 // As displayed, shortened for the record (the full value went through the parser).
-                'raw' => json_encode(array_map(fn($cell) => mb_substr($cell->display, 0, 1000), $row['cells']), JSON_UNESCAPED_UNICODE),
+                'raw' => json_encode(array_map(fn ($cell) => mb_substr($cell->display, 0, 1000), $row['cells']), JSON_UNESCAPED_UNICODE),
                 'data' => json_encode($parsed['data'], JSON_UNESCAPED_UNICODE),
                 'parse_issues' => json_encode((object) $parsed['parse_issues'], JSON_UNESCAPED_UNICODE),
                 'issues' => '[]',

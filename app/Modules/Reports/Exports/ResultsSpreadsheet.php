@@ -24,7 +24,7 @@ final class ResultsSpreadsheet
      */
     public static function write(array $results, array $totals, ReportHeader $header): string
     {
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle(mb_substr($header->title, 0, 31));
         $sheet->setRightToLeft(true);

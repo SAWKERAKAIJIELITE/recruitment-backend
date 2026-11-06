@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Date;
  * one attempt may be given more on its own.
  *
  * @property string $id
- * @property \Carbon\CarbonInterface $starts_at
+ * @property CarbonInterface $starts_at
  * @property string $location
  * @property int $duration_minutes
  * @property int $late_minutes

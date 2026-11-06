@@ -6,11 +6,15 @@ use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Imports\Models\ImportBatch;
 use App\Modules\Imports\Models\ImportRow;
+use App\Modules\Recruitment\Models\District;
 use App\Modules\Recruitment\Models\HealthCondition;
 use App\Modules\Recruitment\Models\JobPosition;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Shared\Date;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\LegacyWorkbook;
 use Tests\Support\RecruitmentTestHelpers;
@@ -20,7 +24,7 @@ use Tests\TestCase;
 /** Reading cells into values, checking rows, and what staff do with rows before approval (§09 steps 3-5). */
 class ImportRowsTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private const URL = '/api/v1/staff/imports';
 
@@ -48,7 +52,7 @@ class ImportRowsTest extends TestCase
     {
         $id = $this->uploadRows([LegacyWorkbook::row($overrides)]);
 
-        return $this->asStaff($this->staff)->getJson(self::URL . "/{$id}/rows")->assertOk()->json('data.0') + ['batch_id' => $id];
+        return $this->asStaff($this->staff)->getJson(self::URL."/{$id}/rows")->assertOk()->json('data.0') + ['batch_id' => $id];
     }
 
     private function codes(array $row): array
@@ -58,7 +62,7 @@ class ImportRowsTest extends TestCase
 
     private function rowUrl(array $row, string $suffix = ''): string
     {
-        return self::URL . "/{$row['batch_id']}/rows/{$row['id']}{$suffix}";
+        return self::URL."/{$row['batch_id']}/rows/{$row['id']}{$suffix}";
     }
 
     // ---- reading cells ----
@@ -118,13 +122,13 @@ class ImportRowsTest extends TestCase
     {
         // The same serial means different days in the 1900 and 1904 date systems; the reader uses the file's.
         $file = LegacyWorkbook::file([LegacyWorkbook::row(['I' => 32000])]);
-        $reader = \PhpOffice\PhpSpreadsheet\IOFactory::load($file->getRealPath());
-        $reader->setExcelCalendar(\PhpOffice\PhpSpreadsheet\Shared\Date::CALENDAR_MAC_1904);
-        (new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($reader))->save($file->getRealPath());
+        $reader = IOFactory::load($file->getRealPath());
+        $reader->setExcelCalendar(Date::CALENDAR_MAC_1904);
+        (new Xlsx($reader))->save($file->getRealPath());
 
         $id = $this->asStaff($this->staff)->post(self::URL, ['file' => $file], ['Accept' => 'application/json'])->assertCreated()->json('data.id');
 
-        $values = $this->asStaff($this->staff)->getJson(self::URL . "/{$id}/rows")->json('data.0.values');
+        $values = $this->asStaff($this->staff)->getJson(self::URL."/{$id}/rows")->json('data.0.values');
 
         $this->assertSame('1991-08-12', $values['candidate.birth_date']);   // 1987-08-11 in the 1900 system
     }
@@ -141,9 +145,13 @@ class ImportRowsTest extends TestCase
         $this->assertNull($row['values']['candidate.national_number']);
     }
 
-    public function test_an_eleven_digit_number_cell_is_fine(): void
+    public function test_a_full_length_number_cell_is_confirmed_by_staff(): void
     {
-        $this->assertSame('valid', $this->onlyRow(['J' => 98765432101])['status']);
+        // A number cell may still have lost a leading zero, and Excel keeps only 15 digits: staff confirm it.
+        $row = $this->onlyRow(['J' => 98765432101]);
+
+        $this->assertNotSame('valid', $row['status']);
+        $this->assertContains('national_number_stored_as_number', array_column($row['issues'], 'code'));
     }
 
     public function test_digits_and_separators_are_normalised(): void
@@ -243,7 +251,7 @@ class ImportRowsTest extends TestCase
 
     public function test_entries_whose_names_contain_punctuation_beat_shorter_ones(): void
     {
-        $district = \App\Modules\Recruitment\Models\District::where('name_ar', 'دمشق')->firstOrFail();
+        $district = District::where('name_ar', 'دمشق')->firstOrFail();
         $this->area($district, 'المزة-فيلات غربية');
         HealthCondition::create(['name_ar' => 'مريض']);
         HealthCondition::create(['name_ar' => 'مريض (مزمن)']);
@@ -347,7 +355,7 @@ class ImportRowsTest extends TestCase
     {
         $id = $this->uploadRows([LegacyWorkbook::row(), LegacyWorkbook::row(['F' => 'نسخة ثانية'])]);
 
-        $rows = $this->asStaff($this->staff)->getJson(self::URL . "/{$id}/rows")->json('data');
+        $rows = $this->asStaff($this->staff)->getJson(self::URL."/{$id}/rows")->json('data');
 
         $this->assertSame('valid', $rows[0]['status']);
         $this->assertSame(['duplicate_in_file'], $this->codes($rows[1]));
@@ -441,7 +449,7 @@ class ImportRowsTest extends TestCase
 
         $this->assertSame('01234567890', $response->json('data.values')['candidate.national_number']);
 
-        Log::shouldHaveReceived('notice')->withArgs(fn(string $event, array $context) => $event === 'import.row_corrected'
+        Log::shouldHaveReceived('notice')->withArgs(fn (string $event, array $context) => $event === 'import.row_corrected'
             && $context['changes']['job_position_id']['to'] === $position)->once();
     }
 
@@ -458,9 +466,9 @@ class ImportRowsTest extends TestCase
     public function test_a_correction_can_create_or_remove_a_duplicate_elsewhere_in_the_batch(): void
     {
         $id = $this->uploadRows([LegacyWorkbook::row(), LegacyWorkbook::row(['J' => '11111111111'])]);
-        $rows = $this->asStaff($this->staff)->getJson(self::URL . "/{$id}/rows")->json('data');
+        $rows = $this->asStaff($this->staff)->getJson(self::URL."/{$id}/rows")->json('data');
 
-        $this->asStaff($this->staff)->patchJson(self::URL . "/{$id}/rows/{$rows[0]['id']}", ['values' => ['candidate.national_number' => '11111111111']])
+        $this->asStaff($this->staff)->patchJson(self::URL."/{$id}/rows/{$rows[0]['id']}", ['values' => ['candidate.national_number' => '11111111111']])
             ->assertOk()->assertJsonPath('data.status', 'valid');
 
         $this->assertSame('invalid', ImportRow::findOrFail($rows[1]['id'])->status->value, 'the other row is now the duplicate');
@@ -493,7 +501,7 @@ class ImportRowsTest extends TestCase
         JobPosition::create(['name_ar' => 'مهندس']);
 
         // The cell was read as unknown; the entry now exists, but the row keeps its reading until corrected.
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$row['batch_id']}/revalidate")->assertOk()->assertJsonPath('data.counts.invalid', 1);
+        $this->asStaff($this->staff)->postJson(self::URL."/{$row['batch_id']}/revalidate")->assertOk()->assertJsonPath('data.counts.invalid', 1);
 
         $this->asStaff($this->staff)->patchJson($this->rowUrl($row), ['values' => ['job_position_id' => JobPosition::where('name_ar', 'مهندس')->value('id')]])
             ->assertJsonPath('data.status', 'valid');
@@ -504,7 +512,7 @@ class ImportRowsTest extends TestCase
         $row = $this->onlyRow();
         JobPosition::findOrFail($this->referenceIds()['job_position_id'])->delete();
 
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$row['batch_id']}/revalidate")->assertOk()->assertJsonPath('data.counts.invalid', 1);
+        $this->asStaff($this->staff)->postJson(self::URL."/{$row['batch_id']}/revalidate")->assertOk()->assertJsonPath('data.counts.invalid', 1);
     }
 
     // ---- excluding ----
@@ -512,16 +520,16 @@ class ImportRowsTest extends TestCase
     public function test_excluding_and_including_a_row(): void
     {
         $id = $this->uploadRows([LegacyWorkbook::row(), LegacyWorkbook::row(['F' => 'نسخة ثانية'])]);
-        $rows = $this->asStaff($this->staff)->getJson(self::URL . "/{$id}/rows")->json('data');
+        $rows = $this->asStaff($this->staff)->getJson(self::URL."/{$id}/rows")->json('data');
 
         // Excluding the first occurrence turns the duplicate into the valid one.
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$id}/rows/{$rows[0]['id']}/exclude", ['reason' => 'مكرر'])
+        $this->asStaff($this->staff)->postJson(self::URL."/{$id}/rows/{$rows[0]['id']}/exclude", ['reason' => 'مكرر'])
             ->assertOk()
             ->assertJsonPath('data.status', 'excluded')
             ->assertJsonPath('data.exclusion.reason', 'مكرر');
         $this->assertSame('valid', ImportRow::findOrFail($rows[1]['id'])->status->value);
 
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$id}/rows/{$rows[0]['id']}/include")
+        $this->asStaff($this->staff)->postJson(self::URL."/{$id}/rows/{$rows[0]['id']}/include")
             ->assertOk()->assertJsonPath('data.status', 'valid')->assertJsonPath('data.exclusion', null);
         $this->assertSame('invalid', ImportRow::findOrFail($rows[1]['id'])->status->value);
     }
@@ -536,17 +544,17 @@ class ImportRowsTest extends TestCase
     public function test_revalidating_a_closed_batch_is_refused(): void
     {
         $row = $this->onlyRow();
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$row['batch_id']}/cancel", ['reason' => 'ملف خاطئ'])->assertOk();
+        $this->asStaff($this->staff)->postJson(self::URL."/{$row['batch_id']}/cancel", ['reason' => 'ملف خاطئ'])->assertOk();
 
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$row['batch_id']}/revalidate")->assertStatus(422)->assertJsonValidationErrors('batch');
+        $this->asStaff($this->staff)->postJson(self::URL."/{$row['batch_id']}/revalidate")->assertStatus(422)->assertJsonValidationErrors('batch');
     }
 
     public function test_rows_can_be_filtered_by_status(): void
     {
         $id = $this->uploadRows([LegacyWorkbook::row(), LegacyWorkbook::row(['J' => 'abc']), LegacyWorkbook::row(['J' => '11111111111'])]);
 
-        $this->asStaff($this->staff)->getJson(self::URL . "/{$id}/rows?status=invalid")->assertJsonCount(1, 'data');
-        $this->asStaff($this->staff)->getJson(self::URL . "/{$id}/rows?status=valid")->assertJsonCount(2, 'data');
+        $this->asStaff($this->staff)->getJson(self::URL."/{$id}/rows?status=invalid")->assertJsonCount(1, 'data');
+        $this->asStaff($this->staff)->getJson(self::URL."/{$id}/rows?status=valid")->assertJsonCount(2, 'data');
     }
 
     public function test_a_row_is_reachable_only_through_its_own_batch(): void
@@ -554,14 +562,14 @@ class ImportRowsTest extends TestCase
         $first = $this->onlyRow();
         $other = $this->uploadRows([LegacyWorkbook::row(['J' => '33333333333'])]);
 
-        $this->asStaff($this->staff)->getJson(self::URL . "/{$other}/rows/{$first['id']}")->assertNotFound();
+        $this->asStaff($this->staff)->getJson(self::URL."/{$other}/rows/{$first['id']}")->assertNotFound();
         $this->asStaff($this->staff)->getJson($this->rowUrl($first))->assertOk();
     }
 
     public function test_nothing_in_a_cancelled_batch_can_change(): void
     {
         $row = $this->onlyRow();
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$row['batch_id']}/cancel", ['reason' => 'ملف خاطئ'])->assertOk();
+        $this->asStaff($this->staff)->postJson(self::URL."/{$row['batch_id']}/cancel", ['reason' => 'ملف خاطئ'])->assertOk();
 
         $this->asStaff($this->staff)->patchJson($this->rowUrl($row), ['values' => ['notes' => 'x']])->assertStatus(422)->assertJsonValidationErrors('batch');
         $this->asStaff($this->staff)->postJson($this->rowUrl($row, '/exclude'), ['reason' => 'لا'])->assertStatus(422);

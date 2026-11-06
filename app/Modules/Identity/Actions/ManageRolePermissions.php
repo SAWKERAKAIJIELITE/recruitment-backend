@@ -27,17 +27,18 @@ class ManageRolePermissions
 
         if ($individualOnly->isNotEmpty()) {
             throw ValidationException::withMessages([
-                'permissions' => ['These permissions can only be granted to individual users, not to roles: ' . $individualOnly->implode(', ')],
+                'permissions' => ['These permissions can only be granted to individual users, not to roles: '.$individualOnly->implode(', ')],
             ]);
         }
 
-        DB::transaction(function () use ($role, $permissions, $actor) {
+        DB::transaction(function () use ($role, $permissions, $permissionSlugs, $actor) {
+            AccessInvariants::serialize();
             $role->permissions()->syncWithoutDetaching($permissions->pluck('id')->all());
             AutomaticRoles::syncEveryone($actor);
             AccessInvariants::ensureSomeoneCanManageUsers();
-        });
 
-        AccessLog::record('role_permissions_added', $actor, ['role' => $role->slug, 'permissions' => $permissionSlugs]);
+            AccessLog::record('role_permissions_added', $actor, ['role' => $role->slug, 'permissions' => $permissionSlugs]);
+        });
 
         return $role->load('permissions');
     }
@@ -45,13 +46,13 @@ class ManageRolePermissions
     public function remove(Role $role, Permission $permission, StaffUser $actor): Role
     {
         DB::transaction(function () use ($role, $permission, $actor) {
+            AccessInvariants::serialize();
             $role->permissions()->detach($permission->id);
             AutomaticRoles::syncEveryone($actor);
-
             AccessInvariants::ensureSomeoneCanManageUsers();
-        });
 
-        AccessLog::record('role_permission_removed', $actor, ['role' => $role->slug, 'permission' => $permission->slug]);
+            AccessLog::record('role_permission_removed', $actor, ['role' => $role->slug, 'permission' => $permission->slug]);
+        });
 
         return $role->load('permissions');
     }

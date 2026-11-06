@@ -27,9 +27,7 @@ use Illuminate\Validation\ValidationException;
  */
 class ExamDecisions
 {
-    public function __construct(private readonly ApplicationLifecycle $lifecycle, private readonly ManageExamBookings $bookings)
-    {
-    }
+    public function __construct(private readonly ApplicationLifecycle $lifecycle, private readonly ManageExamBookings $bookings) {}
 
     public function acceptExcuse(Application $application, string $reason, ?CarbonInterface $occurredAt, ?string $sessionId, StaffUser $actor): ?ExamBooking
     {

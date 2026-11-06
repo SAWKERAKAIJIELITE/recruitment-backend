@@ -14,7 +14,7 @@ use Tests\TestCase;
 /** The question bank (analysis doc §05, D-055). */
 class ExamQuestionApiTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, ExamTestHelpers;
+    use ExamTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private const URL = '/api/v1/staff/exam-questions';
 
@@ -50,7 +50,7 @@ class ExamQuestionApiTest extends TestCase
             ->assertJsonPath('data.current.options', ['أ', 'ب'])
             ->assertJsonPath('data.current.correct_option', 1);
 
-        Log::shouldHaveReceived('notice')->withArgs(fn(string $event) => $event === 'exam_question.created')->once();
+        Log::shouldHaveReceived('notice')->withArgs(fn (string $event) => $event === 'exam_question.created')->once();
     }
 
     public function test_a_question_of_a_part(): void
@@ -77,7 +77,7 @@ class ExamQuestionApiTest extends TestCase
             $this->asStaff($manager)->postJson(self::URL, $this->body($bad))->assertStatus(422)->assertJsonValidationErrors($field);
         }
 
-        $this->asStaff($manager)->postJson(self::URL, $this->body(['options' => array_map(fn($i) => "خيار {$i}", range(1, 7))]))
+        $this->asStaff($manager)->postJson(self::URL, $this->body(['options' => array_map(fn ($i) => "خيار {$i}", range(1, 7))]))
             ->assertStatus(422)->assertJsonValidationErrors('options');
     }
 
@@ -86,7 +86,7 @@ class ExamQuestionApiTest extends TestCase
         $manager = $this->examManager();
         $id = $this->asStaff($manager)->postJson(self::URL, $this->body())->json('data.id');
 
-        $this->asStaff($manager)->patchJson(self::URL . "/{$id}", ['correct_option' => 2])
+        $this->asStaff($manager)->patchJson(self::URL."/{$id}", ['correct_option' => 2])
             ->assertOk()
             ->assertJsonPath('data.current.version', 2)
             ->assertJsonPath('data.current.correct_option', 2)
@@ -95,7 +95,7 @@ class ExamQuestionApiTest extends TestCase
             ->assertJsonCount(2, 'data.versions');
 
         // The same content again, or only the difficulty: no new version.
-        $this->asStaff($manager)->patchJson(self::URL . "/{$id}", ['correct_option' => 2, 'difficulty' => 'hard'])
+        $this->asStaff($manager)->patchJson(self::URL."/{$id}", ['correct_option' => 2, 'difficulty' => 'hard'])
             ->assertOk()->assertJsonPath('data.current.version', 2)->assertJsonPath('data.difficulty', 'hard');
     }
 
@@ -104,11 +104,13 @@ class ExamQuestionApiTest extends TestCase
         $manager = $this->examManager();
         $id = $this->asStaff($manager)->postJson(self::URL, $this->body())->json('data.id');
 
-        $this->asStaff($manager)->patchJson(self::URL . "/{$id}", ['options' => ['أ', 'ب']])   // the answer was option 1: still fine
+        // New options come with their answer: the old index could now point at another option.
+        $this->asStaff($manager)->patchJson(self::URL."/{$id}", ['options' => ['أ', 'ب']])->assertStatus(422)->assertJsonValidationErrors('correct_option');
+        $this->asStaff($manager)->patchJson(self::URL."/{$id}", ['options' => ['أ', 'ب'], 'correct_option' => 1])
             ->assertOk()->assertJsonPath('data.current.options', ['أ', 'ب']);
-        $this->asStaff($manager)->patchJson(self::URL . "/{$id}", ['correct_option' => 2])
+        $this->asStaff($manager)->patchJson(self::URL."/{$id}", ['correct_option' => 2])
             ->assertStatus(422)->assertJsonPath('errors.correct_option.0', __('exams.correct_option_out_of_range'));
-        $this->asStaff($manager)->patchJson(self::URL . "/{$id}", ['subject_id' => $this->subject('مادة')->id])
+        $this->asStaff($manager)->patchJson(self::URL."/{$id}", ['subject_id' => $this->subject('مادة')->id])
             ->assertStatus(422)->assertJsonValidationErrors('subject_id');
     }
 
@@ -119,11 +121,11 @@ class ExamQuestionApiTest extends TestCase
         $this->stockBank($subject, null, 2);
         $question = ExamQuestion::query()->where('difficulty', 'hard')->first();
 
-        $this->asStaff($manager)->deleteJson(self::URL . "/{$question->id}")->assertOk()->assertJsonPath('data.archived', true);
+        $this->asStaff($manager)->deleteJson(self::URL."/{$question->id}")->assertOk()->assertJsonPath('data.archived', true);
         $this->asStaff($manager)->getJson(self::URL)->assertJsonCount(5, 'data');
-        $this->asStaff($manager)->getJson(self::URL . '?include_archived=1')->assertJsonCount(6, 'data');
-        $this->asStaff($manager)->getJson(self::URL . '/stats')->assertJsonFragment(['subject_id' => $subject->id, 'part_id' => null, 'difficulty' => 'hard', 'questions' => 1]);
-        $this->asStaff($manager)->postJson(self::URL . "/{$question->id}/restore")->assertOk()->assertJsonPath('data.archived', false);
+        $this->asStaff($manager)->getJson(self::URL.'?include_archived=1')->assertJsonCount(6, 'data');
+        $this->asStaff($manager)->getJson(self::URL.'/stats')->assertJsonFragment(['subject_id' => $subject->id, 'part_id' => null, 'difficulty' => 'hard', 'questions' => 1]);
+        $this->asStaff($manager)->postJson(self::URL."/{$question->id}/restore")->assertOk()->assertJsonPath('data.archived', false);
     }
 
     public function test_questions_are_filtered(): void
@@ -136,12 +138,12 @@ class ExamQuestionApiTest extends TestCase
         $this->stockBank($quran, null, 1);
         $this->asStaff($manager)->postJson(self::URL, $this->body(['subject_id' => $hadith->id, 'prompt' => 'سؤال عن الصلاة']))->assertCreated();
 
-        $this->asStaff($manager)->getJson(self::URL . "?subject_id={$quran->id}")->assertJsonCount(6, 'data');
-        $this->asStaff($manager)->getJson(self::URL . "?subject_id={$quran->id}&part_id={$recitation->id}")->assertJsonCount(3, 'data');
-        $this->asStaff($manager)->getJson(self::URL . "?subject_id={$quran->id}&part_id=none")->assertJsonCount(3, 'data');
-        $this->asStaff($manager)->getJson(self::URL . '?difficulty=easy')->assertJsonCount(3, 'data');
-        $this->asStaff($manager)->getJson(self::URL . '?q=' . urlencode('الصلاة'))->assertJsonCount(1, 'data');
-        $this->asStaff($manager)->getJson(self::URL . '?q=' . urlencode('%'))->assertJsonCount(0, 'data');
+        $this->asStaff($manager)->getJson(self::URL."?subject_id={$quran->id}")->assertJsonCount(6, 'data');
+        $this->asStaff($manager)->getJson(self::URL."?subject_id={$quran->id}&part_id={$recitation->id}")->assertJsonCount(3, 'data');
+        $this->asStaff($manager)->getJson(self::URL."?subject_id={$quran->id}&part_id=none")->assertJsonCount(3, 'data');
+        $this->asStaff($manager)->getJson(self::URL.'?difficulty=easy')->assertJsonCount(3, 'data');
+        $this->asStaff($manager)->getJson(self::URL.'?q='.urlencode('الصلاة'))->assertJsonCount(1, 'data');
+        $this->asStaff($manager)->getJson(self::URL.'?q='.urlencode('%'))->assertJsonCount(0, 'data');
     }
 
     public function test_only_exam_bank_managers_see_the_bank(): void
@@ -152,7 +154,7 @@ class ExamQuestionApiTest extends TestCase
         foreach (['recruitment_staff', 'general_manager'] as $role) {
             $user = StaffUserFactory::new()->withRole($role)->create();
             $this->asStaff($user)->getJson(self::URL)->assertForbidden();
-            $this->asStaff($user)->getJson(self::URL . "/{$id}")->assertForbidden();
+            $this->asStaff($user)->getJson(self::URL."/{$id}")->assertForbidden();
             $this->asStaff($user)->postJson(self::URL, $this->body())->assertForbidden();
         }
     }

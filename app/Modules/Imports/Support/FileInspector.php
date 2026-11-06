@@ -10,9 +10,12 @@ use ZipArchive;
  *
  * - the content really is .xlsx (a zip) or .xls (an OLE compound file), whatever the extension says;
  * - it contains no macros, external links, embedded objects, ActiveX controls or external data connections
- *   (the original is kept and staff may download and open it later);
- * - it is not a zip bomb: no part expands abnormally, and the parts that will actually be read (the chosen
- *   sheet, shared strings, styles) stay under a size limit. Other sheets are never decompressed.
+ *   (the original is kept and staff may download and open it later). They are recognised by part name, by content
+ *   type ([Content_Types].xml) and by relationship type (every .rels part), so moving or renaming a part does not
+ *   hide it; any relationship to an outside target other than a hyperlink is refused too;
+ * - it is not a zip bomb: no part expands abnormally, none declares more than the unpacked limit, and the parts
+ *   that will actually be read (the chosen sheet, shared strings, styles, found through the workbook's
+ *   relationships as the reader finds them) stay under that limit together. Other sheets are never decompressed.
  *
  * For .xlsx it also maps sheet names to their parts, so the reader can load one sheet only.
  */
@@ -32,17 +35,27 @@ final class FileInspector
         '#\.(exe|dll|js|vbs|ps1|bat|cmd|scr)$#i',
     ];
 
+    /** Content types never accepted, whatever the part is called (matched as lower-case fragments). */
+    private const FORBIDDEN_CONTENT_TYPES = ['vbaproject', 'macrosheet', 'macroenabled', 'oleobject', 'externallink', 'connections+xml', 'activex', 'querytable'];
+
+    /** Relationship types never accepted (the last segment of the type URI). */
+    private const FORBIDDEN_RELATIONSHIPS = ['vbaProject', 'oleObject', 'package', 'externalLink', 'externalLinkPath', 'connections', 'control', 'activeXControlBinary', 'attachedTemplate', 'queryTable', 'xlMacrosheet', 'xlIntlMacrosheet'];
+
+    /** Markers of macros, auto-run names and embedded objects in an .xls (binary) file, as ASCII and UTF-16LE. */
+    private const XLS_MARKERS = ['_VBA_PROJECT', 'Auto_Open', 'Auto_Close', 'Ole10Native', 'ObjectPool', 'MBD0'];
+
     /** A part may expand at most this many times (real workbooks: under 30). */
     private const MAX_RATIO = 200;
 
     private ?ZipArchive $zip = null;
 
+    /** @var array<string, string> lower-case part name => its name in the zip (parts are found case-insensitively) */
+    private array $names = [];
+
     /** @var array<string, string> sheet name => part path inside the zip */
     private array $sheetParts = [];
 
-    private function __construct(public readonly string $format)
-    {
-    }
+    private function __construct(public readonly string $format) {}
 
     public static function inspect(string $path): self
     {
@@ -56,9 +69,14 @@ final class FileInspector
         }
 
         if ($head === "\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1") {
-            // An .xls is not compressed (its size is bounded by the upload limit). Refuse VBA projects.
-            if (str_contains((string) file_get_contents($path), "_\0V\0B\0A\0_\0P\0R\0O\0J\0E\0C\0T\0")) {
-                ImportProblem::fail('file', 'unsafe_content');
+            // An .xls is not compressed (its size is bounded by the upload limit). Refuse macros (VBA and Excel 4
+            // auto-run names) and embedded objects.
+            $content = (string) file_get_contents($path);
+
+            foreach (self::XLS_MARKERS as $marker) {
+                if (stripos($content, $marker) !== false || stripos($content, implode("\0", str_split($marker))."\0") !== false) {
+                    ImportProblem::fail('file', 'unsafe_content');
+                }
             }
 
             return new self(self::XLS);
@@ -80,11 +98,12 @@ final class FileInspector
             return;
         }
 
-        $parts = array_filter([$this->sheetParts[$sheetName] ?? null, 'xl/sharedStrings.xml', 'xl/styles.xml']);
+        // The sheet, and the shared strings and styles wherever the workbook's relationships put them.
+        $parts = array_filter([$this->sheetParts[$sheetName] ?? null, ...$this->workbookParts(['sharedStrings', 'styles'])]);
         $total = 0;
 
-        foreach ($parts as $part) {
-            $total += (int) ($this->zip->statName($part)['size'] ?? 0);
+        foreach (array_unique($parts) as $part) {
+            $total += $this->declaredSize($part);
         }
 
         $limit = (int) config('imports.max_unpacked_megabytes', 100);
@@ -96,15 +115,18 @@ final class FileInspector
 
     private function inspectZip(string $path): void
     {
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
 
         if ($zip->open($path, ZipArchive::RDONLY) !== true) {
             ImportProblem::fail('file', 'unreadable_file');
         }
 
+        $limit = (int) config('imports.max_unpacked_megabytes', 100) * 1024 * 1024;
+
         for ($index = 0; $index < $zip->numFiles; $index++) {
             $stat = $zip->statIndex($index);
             $name = (string) ($stat['name'] ?? '');
+            $this->names[strtolower($name)] = $name;
 
             foreach (self::FORBIDDEN_PARTS as $pattern) {
                 if (preg_match($pattern, $name) === 1) {
@@ -122,14 +144,90 @@ final class FileInspector
             if ($size > 1024 * 1024 && $size / $compressed > self::MAX_RATIO) {
                 ImportProblem::fail('file', 'unsafe_content');
             }
+
+            // No part may even declare more than the limit: a reader allocates what a part declares.
+            if ($size > $limit) {
+                ImportProblem::fail('file', 'too_large_unpacked', ['max' => intdiv($limit, 1024 * 1024)]);
+            }
         }
 
         $this->zip = $zip;
+        $this->assertSafeTypes();
         $this->sheetParts = $this->readSheetParts();
 
         if ($this->sheetParts === []) {
             ImportProblem::fail('file', 'unreadable_file');
         }
+    }
+
+    /**
+     * Refuses what the content types or any relationship declare as macros, links, objects or connections, and any
+     * relationship to an outside target other than a hyperlink.
+     */
+    private function assertSafeTypes(): void
+    {
+        $types = $this->xml('[Content_Types].xml');
+
+        foreach ($types?->children() ?? [] as $entry) {
+            $type = strtolower((string) $entry['ContentType']);
+
+            if (array_filter(self::FORBIDDEN_CONTENT_TYPES, fn (string $fragment) => str_contains($type, $fragment)) !== []) {
+                ImportProblem::fail('file', 'unsafe_content');
+            }
+        }
+
+        foreach ($this->names as $name) {
+            if (! str_ends_with(strtolower($name), '.rels')) {
+                continue;
+            }
+
+            foreach ($this->xml($name)?->children() ?? [] as $relation) {
+                $type = (string) $relation['Type'];
+                $external = strcasecmp((string) $relation['TargetMode'], 'External') === 0;
+
+                if (in_array(basename($type), self::FORBIDDEN_RELATIONSHIPS, true) || ($external && ! str_ends_with($type, '/hyperlink'))) {
+                    ImportProblem::fail('file', 'unsafe_content');
+                }
+            }
+        }
+    }
+
+    /** @return list<string> the parts the workbook relates by these relationship types (as the reader resolves them) */
+    private function workbookParts(array $types): array
+    {
+        $parts = [];
+
+        foreach ($this->xml('xl/_rels/workbook.xml.rels')?->children() ?? [] as $relation) {
+            if (in_array(basename((string) $relation['Type']), $types, true)) {
+                $parts[] = $this->resolve((string) $relation['Target']);
+            }
+        }
+
+        return $parts;
+    }
+
+    /** A relationship target as a part name: relative to xl/, "./" and ".." resolved, found case-insensitively. */
+    private function resolve(string $target): string
+    {
+        $path = str_starts_with($target, '/') ? ltrim($target, '/') : 'xl/'.$target;
+        $segments = [];
+
+        foreach (explode('/', $path) as $segment) {
+            match ($segment) {
+                '', '.' => null,
+                '..' => array_pop($segments),
+                default => $segments[] = $segment,
+            };
+        }
+
+        $name = implode('/', $segments);
+
+        return $this->names[strtolower($name)] ?? $name;
+    }
+
+    private function declaredSize(string $part): int
+    {
+        return (int) ($this->zip->statName($part)['size'] ?? 0);
     }
 
     /** @return array<string, string> */
@@ -145,8 +243,7 @@ final class FileInspector
         $targets = [];
 
         foreach ($relations->children() as $relation) {
-            $target = (string) $relation['Target'];
-            $targets[(string) $relation['Id']] = str_starts_with($target, '/') ? ltrim($target, '/') : 'xl/' . $target;
+            $targets[(string) $relation['Id']] = $this->resolve((string) $relation['Target']);
         }
 
         $parts = [];
@@ -162,10 +259,11 @@ final class FileInspector
         return $parts;
     }
 
-    /** Small XML parts only (workbook, relations); never expands entities or reaches the network. */
+    /** Small XML parts only (workbook, relations, content types); never expands entities or reaches the network. */
     private function xml(string $part): ?SimpleXMLElement
     {
-        $size = (int) ($this->zip->statName($part)['size'] ?? 0);
+        $part = $this->names[strtolower($part)] ?? $part;
+        $size = $this->declaredSize($part);
 
         if ($size === 0 || $size > 5 * 1024 * 1024) {
             return null;

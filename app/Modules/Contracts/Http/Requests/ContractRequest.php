@@ -2,6 +2,7 @@
 
 namespace App\Modules\Contracts\Http\Requests;
 
+use App\Support\BusinessDay;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -19,7 +20,7 @@ class ContractRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        $writtenOn = $this->input('written_on') ?? now()->toDateString();
+        $writtenOn = $this->input('written_on') ?? BusinessDay::today();
         $this->merge(['written_on' => $writtenOn, 'starts_on' => $this->input('starts_on') ?? $writtenOn]);
     }
 
@@ -36,7 +37,7 @@ class ContractRequest extends FormRequest
         return [
             'contract_type_id' => [$required, 'integer', Rule::exists('contract_types', 'id')->whereNull('deleted_at')],
             'reference_number' => [$required, 'string', 'min:1', 'max:100'],
-            'written_on' => [$required, 'date_format:Y-m-d', 'before_or_equal:today'],
+            'written_on' => [$required, 'date_format:Y-m-d', 'before_or_equal:'.BusinessDay::today()],
             'starts_on' => [$required, 'date_format:Y-m-d'],
             'ends_on' => ['sometimes', 'nullable', 'date_format:Y-m-d', ...($partial ? [] : ['after_or_equal:starts_on'])],
             'document_id' => ['sometimes', 'nullable', 'uuid'],

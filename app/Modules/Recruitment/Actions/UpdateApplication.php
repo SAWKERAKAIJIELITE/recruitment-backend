@@ -40,7 +40,7 @@ class UpdateApplication
 
                 AuditTrail::record('application.updated', $actor, [
                     'application_id' => $locked->id,
-                    'changes' => collect($dirty)->map(fn($to, $field) => ['from' => $before[$field] ?? null, 'to' => $locked->getAttribute($field)])->all(),
+                    'changes' => collect($dirty)->map(fn ($to, $field) => ['from' => $before[$field] ?? null, 'to' => $locked->getAttribute($field)])->all(),
                 ]);
             }
 

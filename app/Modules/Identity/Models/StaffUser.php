@@ -61,6 +61,7 @@ class StaffUser extends Authenticatable
             'is_active' => 'boolean',
             // 'must_change_password' => 'boolean',
             'last_login_at' => 'datetime',
+            'deactivated_at' => 'datetime',
         ];
     }
 

@@ -14,7 +14,7 @@ use Tests\TestCase;
 /** Correcting what was declared in a live application (D-049). */
 class ApplicationUpdateTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private function url(Application $application): string
     {
@@ -39,7 +39,7 @@ class ApplicationUpdateTest extends TestCase
             ->assertJsonPath('data.availability.full_commitment', true)
             ->assertJsonPath('data.job_position.name_ar', 'مدرس');
 
-        Log::shouldHaveReceived('notice')->withArgs(fn(string $event, array $context) => $event === 'application.updated'
+        Log::shouldHaveReceived('notice')->withArgs(fn (string $event, array $context) => $event === 'application.updated'
             && $context['changes']['phone_number'] === ['from' => '0912345678', 'to' => '0999888777']
             && count($context['changes']) === 2)->once();
     }

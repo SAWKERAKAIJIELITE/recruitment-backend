@@ -63,9 +63,15 @@ class ChangeCandidateActivation
 
     private function lock(Candidate $candidate): Candidate
     {
-        // The person lock as well: no application can be opened for them while this runs.
+        // The person lock first, then the row (the order every writer follows): no application can be opened for them
+        // while this runs. A number changed in the meantime means the lock was the wrong one: refused, try again.
         CreateApplication::lockPeople([$candidate->national_number]);
+        $locked = Candidate::query()->whereKey($candidate->getKey())->lockForUpdate()->firstOrFail();
 
-        return Candidate::query()->whereKey($candidate->getKey())->lockForUpdate()->firstOrFail();
+        if ($locked->national_number !== $candidate->national_number) {
+            throw ValidationException::withMessages(['candidate' => [__('recruitment.changed_meanwhile')]]);
+        }
+
+        return $locked;
     }
 }

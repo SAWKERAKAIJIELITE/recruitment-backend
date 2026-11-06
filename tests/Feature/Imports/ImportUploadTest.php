@@ -6,6 +6,7 @@ use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Imports\Models\ImportBatch;
+use App\Modules\Imports\Models\ImportRow;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -18,7 +19,7 @@ use Tests\TestCase;
 /** Uploading a file: reading the legacy layout, refusing what cannot be imported (analysis doc §09, §23). */
 class ImportUploadTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private const URL = '/api/v1/staff/imports';
 
@@ -159,7 +160,7 @@ class ImportUploadTest extends TestCase
     /** Adds a part to a generated workbook. */
     private function withPart(UploadedFile $file, string $name, string $content): UploadedFile
     {
-        $zip = new \ZipArchive();
+        $zip = new \ZipArchive;
         $zip->open($file->getRealPath());
         $zip->addFromString($name, $content);
         $zip->close();
@@ -188,6 +189,35 @@ class ImportUploadTest extends TestCase
         $this->assertSame([], Storage::disk('local')->allFiles());
     }
 
+    /** Renamed or moved parts are still recognised by their relationship or content type. */
+    public static function disguisedParts(): array
+    {
+        $rels = fn (string $type, string $target, string $mode = '') => '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            ."<Relationship Id=\"rId9\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/{$type}\" Target=\"{$target}\"{$mode}/></Relationships>";
+
+        return [
+            'an object moved out of embeddings' => ['xl/worksheets/_rels/sheet9.xml.rels', $rels('oleObject', '../media/object.bin')],
+            'a link to another workbook renamed' => ['xl/_rels/other.xml.rels', $rels('externalLinkPath', 'file:///c:/x.xlsx', ' TargetMode="External"')],
+            'any outside target but a hyperlink' => ['xl/worksheets/_rels/sheet8.xml.rels', $rels('image', 'http://example.com/x.png', ' TargetMode="External"')],
+        ];
+    }
+
+    #[DataProvider('disguisedParts')]
+    public function test_disguised_unsafe_parts_are_refused(string $part, string $content): void
+    {
+        $file = $this->withPart(LegacyWorkbook::file([LegacyWorkbook::row()]), $part, $content);
+
+        $this->upload($file)->assertStatus(422)->assertJsonPath('errors.file.0', __('imports.unsafe_content'));
+    }
+
+    public function test_an_outside_hyperlink_is_accepted(): void
+    {
+        $rels = '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            .'<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/></Relationships>';
+
+        $this->upload($this->withPart(LegacyWorkbook::file([LegacyWorkbook::row()]), 'xl/worksheets/_rels/sheet7.xml.rels', $rels))->assertCreated();
+    }
+
     public function test_a_zip_bomb_is_refused_before_anything_is_parsed(): void
     {
         $file = $this->withPart(LegacyWorkbook::file([LegacyWorkbook::row()]), 'xl/media/padding.bin', str_repeat("\0", 8 * 1024 * 1024));
@@ -214,10 +244,10 @@ class ImportUploadTest extends TestCase
     public function test_formulas_that_reach_outside_the_workbook_are_refused(string $formula): void
     {
         $file = LegacyWorkbook::file([LegacyWorkbook::row(['W' => 'PLACEHOLDER'])]);
-        $zip = new \ZipArchive();
+        $zip = new \ZipArchive;
         $zip->open($file->getRealPath());
         $part = 'xl/worksheets/sheet2.xml';
-        $xml = preg_replace('#<c r="W6"[^>]*>.*?</c>#s', '<c r="W6"><f>' . htmlspecialchars($formula, ENT_XML1) . '</f></c>', $zip->getFromName($part), 1);
+        $xml = preg_replace('#<c r="W6"[^>]*>.*?</c>#s', '<c r="W6"><f>'.htmlspecialchars($formula, ENT_XML1).'</f></c>', $zip->getFromName($part), 1);
         $zip->addFromString($part, $xml);
         $zip->close();
 
@@ -251,7 +281,7 @@ class ImportUploadTest extends TestCase
     {
         $id = $this->upload(LegacyWorkbook::file([LegacyWorkbook::row(['W' => str_repeat('ن', 10000)])]))->assertCreated()->json('data.id');
 
-        $row = \App\Modules\Imports\Models\ImportRow::where('import_batch_id', $id)->sole();
+        $row = ImportRow::where('import_batch_id', $id)->sole();
         $this->assertSame(1000, mb_strlen($row->raw['W']));
         $this->assertSame('text_too_long', $row->issues[0]['code']);   // still refused, not silently cut
     }
@@ -260,9 +290,9 @@ class ImportUploadTest extends TestCase
     {
         $id = $this->upload(LegacyWorkbook::file([LegacyWorkbook::row()]))->json('data.id');
 
-        $this->asStaff($this->staff)->get(self::URL . "/{$id}/original")->assertHeader('X-Content-Type-Options', 'nosniff')
+        $this->asStaff($this->staff)->get(self::URL."/{$id}/original")->assertHeader('X-Content-Type-Options', 'nosniff')
             ->assertHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        $this->asStaff($this->staff)->get(self::URL . "/{$id}/report")->assertHeader('X-Content-Type-Options', 'nosniff');
+        $this->asStaff($this->staff)->get(self::URL."/{$id}/report")->assertHeader('X-Content-Type-Options', 'nosniff');
     }
 
     public function test_uploads_are_rate_limited(): void
@@ -283,7 +313,7 @@ class ImportUploadTest extends TestCase
         $id = $this->upload($file)->assertCreated()->json('data.id');
         $this->upload($copy)->assertStatus(422)->assertJsonValidationErrors('file');
 
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$id}/cancel", ['reason' => 'ملف خاطئ'])->assertOk()
+        $this->asStaff($this->staff)->postJson(self::URL."/{$id}/cancel", ['reason' => 'ملف خاطئ'])->assertOk()
             ->assertJsonPath('data.status', 'cancelled');
 
         $this->upload(new UploadedFile($file->getRealPath(), 'again.xlsx', null, null, true))->assertCreated();
@@ -311,7 +341,7 @@ class ImportUploadTest extends TestCase
         $id = $this->upload(LegacyWorkbook::file([LegacyWorkbook::row(['B' => null])]), ['nominating_entity_id' => $ids['nominating_entity_id']])
             ->assertCreated()->assertJsonPath('data.counts.valid', 1)->json('data.id');
 
-        $this->asStaff($this->staff)->getJson(self::URL . "/{$id}/rows")
+        $this->asStaff($this->staff)->getJson(self::URL."/{$id}/rows")
             ->assertJsonPath('data.0.values.nominating_entity_id.id', $ids['nominating_entity_id']);
     }
 
@@ -337,7 +367,7 @@ class ImportUploadTest extends TestCase
             ->assertJsonPath('data.0.original_filename', 'second.xlsx')
             ->assertJsonPath('data.0.counts.invalid', 1)
             ->assertJsonPath('data.1.counts.valid', 1);
-        $this->asStaff($this->staff)->getJson(self::URL . '?status=approved')->assertJsonCount(0, 'data');
+        $this->asStaff($this->staff)->getJson(self::URL.'?status=approved')->assertJsonCount(0, 'data');
     }
 
     public function test_the_original_file_can_be_downloaded_unchanged(): void
@@ -345,7 +375,7 @@ class ImportUploadTest extends TestCase
         $file = LegacyWorkbook::file([LegacyWorkbook::row()], [], 'كشف دمشق.xlsx');
         $id = $this->upload($file)->json('data.id');
 
-        $response = $this->asStaff($this->staff)->get(self::URL . "/{$id}/original")->assertOk();
+        $response = $this->asStaff($this->staff)->get(self::URL."/{$id}/original")->assertOk();
 
         $this->assertSame(hash_file('sha256', $file->getRealPath()), hash('sha256', $response->streamedContent()));
     }

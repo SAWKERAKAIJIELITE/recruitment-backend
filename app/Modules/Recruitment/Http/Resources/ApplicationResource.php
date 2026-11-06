@@ -2,13 +2,14 @@
 
 namespace App\Modules\Recruitment\Http\Resources;
 
+use App\Modules\Recruitment\Models\Application;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * The full application file: the application, the person, and the history in order.
  *
- * @mixin \App\Modules\Recruitment\Models\Application
+ * @mixin Application
  */
 class ApplicationResource extends JsonResource
 {

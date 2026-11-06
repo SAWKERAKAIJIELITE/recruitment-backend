@@ -50,7 +50,7 @@ class ExamSessionResource extends JsonResource
             'questions_count' => $this->whenCounted('questions'),
             'bookings_count' => $this->whenCounted('bookings'),
             /** Time added for everyone (one session only). */
-            'extensions' => $this->whenLoaded('extensions', fn() => $this->extensions->map(fn(ExamSessionExtension $extension) => [
+            'extensions' => $this->whenLoaded('extensions', fn () => $this->extensions->map(fn (ExamSessionExtension $extension) => [
                 'minutes' => $extension->minutes,
                 'reason' => $extension->reason,
                 'by' => $extension->author?->full_name,

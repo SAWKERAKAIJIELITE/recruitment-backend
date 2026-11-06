@@ -57,18 +57,17 @@ class ImportsDemoSeeder extends Seeder
         private readonly UploadImportBatch $upload,
         private readonly ApproveImportBatch $approve,
         private readonly CancelImportBatch $cancel,
-    ) {
-    }
+    ) {}
 
     public function run(): void
     {
-        if (ImportBatch::query()->where('notes', 'like', self::NOTE . '%')->exists()) {
+        if (ImportBatch::query()->where('notes', 'like', self::NOTE.'%')->exists()) {
             $this->command?->info('Import demo data is already there: skipped.');
 
             return;
         }
 
-        $references = new DemoReferences();
+        $references = new DemoReferences;
         $staff = StaffUser::query()->where('username', 'staff')->firstOrFail();
         $manager = StaffUser::query()->where('username', 'manager')->firstOrFail();   // holds imports.approve
         $now = CarbonImmutable::now();
@@ -76,22 +75,22 @@ class ImportsDemoSeeder extends Seeder
         try {
             // Approved twenty days ago.
             Date::setTestNow($now->subDays(21)->setTime(10, 15));
-            $rows = array_map(fn(int $i) => $this->row($references, self::FIRST_INDEX + $i), range(0, 5));
-            $approved = $this->upload->execute($this->file($rows, 'ترشيحات الإدارة العامة.xlsx'), $staff, null, null, self::NOTE . ': معتمدة');
+            $rows = array_map(fn (int $i) => $this->row($references, self::FIRST_INDEX + $i), range(0, 5));
+            $approved = $this->upload->execute($this->file($rows, 'ترشيحات الإدارة العامة.xlsx'), $staff, null, null, self::NOTE.': معتمدة');
 
             Date::setTestNow($now->subDays(20)->setTime(12, 40));
-            $this->approve->execute($approved, $manager);
+            $this->approve->execute($approved, $manager, (int) $approved->fresh()->revision);
 
             // Uploaded by mistake (wrong file), cancelled the same day.
             Date::setTestNow($now->subDays(9)->setTime(9, 5));
-            $wrong = $this->upload->execute($this->file([$this->row($references, self::FIRST_INDEX + 20)], 'نسخة قديمة.xlsx'), $staff, null, null, self::NOTE . ': ملغاة');
+            $wrong = $this->upload->execute($this->file([$this->row($references, self::FIRST_INDEX + 20)], 'نسخة قديمة.xlsx'), $staff, null, null, self::NOTE.': ملغاة');
 
             Date::setTestNow($now->subDays(9)->setTime(9, 20));
             $this->cancel->execute($wrong, $staff, 'رُفع الملف الخطأ، والنسخة الصحيحة سترفع لاحقًا');
 
             // Waiting for review.
             Date::setTestNow($now->subDays(2)->setTime(11, 30));
-            $this->upload->execute($this->file($this->pendingRows($references), 'ترشيحات مديرية الأوقاف.xlsx'), $staff, null, null, self::NOTE . ': بانتظار المراجعة');
+            $this->upload->execute($this->file($this->pendingRows($references), 'ترشيحات مديرية الأوقاف.xlsx'), $staff, null, null, self::NOTE.': بانتظار المراجعة');
         } finally {
             Date::setTestNow();
 
@@ -121,7 +120,7 @@ class ImportsDemoSeeder extends Seeder
         $ended = Candidate::query()
             ->where('national_number', 'like', '09%')
             ->where('is_active', true)
-            ->whereDoesntHave('applications', fn($query) => $query->live())
+            ->whereDoesntHave('applications', fn ($query) => $query->live())
             ->orderBy('national_number')
             ->first();
 
@@ -133,7 +132,7 @@ class ImportsDemoSeeder extends Seeder
         $other = Candidate::query()
             ->where('national_number', 'like', '09%')
             ->where('is_active', true)
-            ->whereDoesntHave('applications', fn($query) => $query->live())
+            ->whereDoesntHave('applications', fn ($query) => $query->live())
             ->orderByDesc('national_number')
             ->first();
 
@@ -155,11 +154,11 @@ class ImportsDemoSeeder extends Seeder
     private function row(DemoReferences $references, int $index, array $overrides = []): array
     {
         $input = $references->applicationInput($index);
-        $name = fn(string $field) => $references->entry($field, $index)->name_ar;
+        $name = fn (string $field) => $references->entry($field, $index)->name_ar;
         $district = $references->entry('residence_district_id', $index);
         $area = $references->area($district, $index);
         $years = $input['studying_years'];
-        $yesNo = fn(bool $value) => $value ? 'نعم' : 'لا';
+        $yesNo = fn (bool $value) => $value ? 'نعم' : 'لا';
 
         return array_replace([
             'B' => $name('nominating_entity_id'),
@@ -190,7 +189,7 @@ class ImportsDemoSeeder extends Seeder
     /** A workbook in the legacy layout: title rows, headers on row 5, data from row 6, text cells kept as text. */
     private function file(array $rows, string $filename): UploadedFile
     {
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('بيانات المرشحين');
         $sheet->setRightToLeft(true);
@@ -217,7 +216,7 @@ class ImportsDemoSeeder extends Seeder
             }
         }
 
-        $path = tempnam(sys_get_temp_dir(), 'demo-import-') . '.xlsx';
+        $path = tempnam(sys_get_temp_dir(), 'demo-import-').'.xlsx';
         (new Xlsx($spreadsheet))->save($path);
         $this->files[] = $path;
 

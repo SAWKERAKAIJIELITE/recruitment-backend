@@ -13,7 +13,7 @@ use Tests\TestCase;
 /** Subjects and parts (analysis doc §05). */
 class ExamSubjectApiTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, ExamTestHelpers;
+    use ExamTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private const URL = '/api/v1/staff/exam-subjects';
 
@@ -39,7 +39,7 @@ class ExamSubjectApiTest extends TestCase
             ->assertJsonPath('data.parts.1.default_weight', '40.50')
             ->assertJsonPath('data.parts.1.default_assessment', 'manual');
 
-        Log::shouldHaveReceived('notice')->withArgs(fn(string $event) => $event === 'exam_subject.created')->once();
+        Log::shouldHaveReceived('notice')->withArgs(fn (string $event) => $event === 'exam_subject.created')->once();
     }
 
     public function test_names_are_unique_in_any_spelling_and_parts_within_their_subject(): void
@@ -51,7 +51,7 @@ class ExamSubjectApiTest extends TestCase
         $this->asStaff($manager)->postJson(self::URL, ['name_ar' => 'الحديث النبوى'])->assertStatus(422)->assertJsonPath('errors.name_ar.0', __('recruitment.name_taken'));
         $this->asStaff($manager)->postJson(self::URL, ['name_ar' => 'مادة', 'parts' => [['name_ar' => 'جزء', 'default_weight' => 1], ['name_ar' => 'جزء', 'default_weight' => 2]]])
             ->assertStatus(422)->assertJsonValidationErrors('parts.1.name_ar');
-        $this->asStaff($manager)->postJson(self::URL . "/{$quran->id}/parts", ['name_ar' => 'التلاوه', 'default_weight' => 10])
+        $this->asStaff($manager)->postJson(self::URL."/{$quran->id}/parts", ['name_ar' => 'التلاوه', 'default_weight' => 10])
             ->assertStatus(422)->assertJsonValidationErrors('name_ar');
 
         // The same part name in another subject is fine.
@@ -63,11 +63,11 @@ class ExamSubjectApiTest extends TestCase
         $manager = $this->examManager();
         $subject = $this->subject('السيرة النبوية');
 
-        $this->asStaff($manager)->deleteJson(self::URL . "/{$subject->id}")->assertOk()->assertJsonPath('data.archived', true);
+        $this->asStaff($manager)->deleteJson(self::URL."/{$subject->id}")->assertOk()->assertJsonPath('data.archived', true);
         $this->asStaff($manager)->getJson(self::URL)->assertJsonCount(0, 'data');
-        $this->asStaff($manager)->getJson(self::URL . '?include_archived=true')->assertJsonCount(1, 'data');
+        $this->asStaff($manager)->getJson(self::URL.'?include_archived=true')->assertJsonCount(1, 'data');
         $this->asStaff($manager)->postJson(self::URL, ['name_ar' => 'السيرة النبوية'])->assertStatus(422)->assertJsonPath('errors.name_ar.0', __('recruitment.name_archived'));
-        $this->asStaff($manager)->postJson(self::URL . "/{$subject->id}/restore")->assertOk()->assertJsonPath('data.archived', false);
+        $this->asStaff($manager)->postJson(self::URL."/{$subject->id}/restore")->assertOk()->assertJsonPath('data.archived', false);
     }
 
     public function test_parts_are_renamed_reweighted_archived_and_restored(): void
@@ -91,7 +91,7 @@ class ExamSubjectApiTest extends TestCase
         $subject = $this->subject();
 
         foreach ([0, -5, '1.234', 'abc', 100000] as $weight) {
-            $this->asStaff($manager)->postJson(self::URL . "/{$subject->id}/parts", ['name_ar' => 'جزء', 'default_weight' => $weight])
+            $this->asStaff($manager)->postJson(self::URL."/{$subject->id}/parts", ['name_ar' => 'جزء', 'default_weight' => $weight])
                 ->assertStatus(422)->assertJsonValidationErrors('default_weight');
         }
     }
@@ -100,9 +100,9 @@ class ExamSubjectApiTest extends TestCase
     {
         $subject = $this->subject();
 
-        $this->asStaff($this->examManager())->putJson(self::URL . "/{$subject->id}", ['name_ar' => 'الحديث الشريف', 'parts' => [['name_ar' => 'جزء', 'default_weight' => 1]]])
+        $this->asStaff($this->examManager())->putJson(self::URL."/{$subject->id}", ['name_ar' => 'الحديث الشريف', 'parts' => [['name_ar' => 'جزء', 'default_weight' => 1]]])
             ->assertStatus(422)->assertJsonValidationErrors('parts');
-        $this->asStaff($this->examManager())->putJson(self::URL . "/{$subject->id}", ['name_ar' => 'الحديث الشريف'])
+        $this->asStaff($this->examManager())->putJson(self::URL."/{$subject->id}", ['name_ar' => 'الحديث الشريف'])
             ->assertOk()->assertJsonPath('data.name_ar', 'الحديث الشريف');
     }
 
@@ -114,7 +114,7 @@ class ExamSubjectApiTest extends TestCase
             $user = StaffUserFactory::new()->withRole($role)->create();
             $this->asStaff($user)->getJson(self::URL)->assertOk();
             $this->asStaff($user)->postJson(self::URL, ['name_ar' => 'مادة'])->assertForbidden();
-            $this->asStaff($user)->deleteJson(self::URL . "/{$subject->id}")->assertForbidden();
+            $this->asStaff($user)->deleteJson(self::URL."/{$subject->id}")->assertForbidden();
         }
 
         $this->asStaff(StaffUserFactory::new()->create())->getJson(self::URL)->assertForbidden();

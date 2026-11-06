@@ -2,13 +2,14 @@
 
 namespace App\Modules\Recruitment\Http\Resources;
 
+use App\Modules\Recruitment\Models\Application;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * One row of the applications list.
  *
- * @mixin \App\Modules\Recruitment\Models\Application
+ * @mixin Application
  */
 class ApplicationSummaryResource extends JsonResource
 {

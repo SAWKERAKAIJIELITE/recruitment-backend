@@ -2,17 +2,21 @@
 
 namespace Tests\Feature\Exams;
 
+use App\Modules\Exams\Actions\ManageExamPlans;
 use App\Modules\Exams\Models\ExamPlanVersion;
-use App\Modules\Exams\Models\ExamSubjectPart;
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Enums\ApplicationStatus as S;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Models\JobPosition;
+use App\Modules\Reports\Queries\CandidateResults;
+use App\Modules\Reports\Support\ReportPeriod;
+use App\Modules\Reports\Tables\RecruitmentTables;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Tests\Support\ExamTestHelpers;
 use Tests\Support\RecruitmentTestHelpers;
@@ -26,7 +30,7 @@ use Tests\TestCase;
  */
 class ExamSessionApiTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers, ExamTestHelpers;
+    use ExamTestHelpers, RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private const URL = '/api/v1/staff/exam-sessions';
 
@@ -68,7 +72,7 @@ class ExamSessionApiTest extends TestCase
 
     private function book(string $session, Application ...$applications): TestResponse
     {
-        return $this->asStaff($this->staff)->postJson(self::URL . "/{$session}/bookings", ['application_ids' => array_map(fn(Application $a) => $a->id, $applications)]);
+        return $this->asStaff($this->staff)->postJson(self::URL."/{$session}/bookings", ['application_ids' => array_map(fn (Application $a) => $a->id, $applications)]);
     }
 
     private function login(string $number = '01234567890', string $password = self::PASSWORD): TestResponse
@@ -102,7 +106,7 @@ class ExamSessionApiTest extends TestCase
         $questions = $this->asCandidate($token)->getJson('/api/v1/candidate/exam/questions')->assertOk()->json('data');
         $subjects = DB::table('exam_attempt_items as i')->join('exam_session_questions as q', 'q.id', '=', 'i.session_question_id')
             ->join('exam_plan_subjects as s', 's.id', '=', 'q.plan_subject_id')->join('exam_subjects as e', 'e.id', '=', 's.subject_id')
-            ->where('i.attempt_id', DB::table('exam_attempts')->latest('started_at')->value('id'))->pluck('e.name_ar', 'i.position');
+            ->where('i.attempt_id', $this->attemptOf($token))->pluck('e.name_ar', 'i.position');
         $given = [];
 
         foreach ($questions as $question) {
@@ -111,6 +115,14 @@ class ExamSessionApiTest extends TestCase
             $right = $given[$subject] <= ($correct[$subject] ?? PHP_INT_MAX);
             $this->asCandidate($token)->putJson("/api/v1/candidate/exam/answers/{$question['position']}", ['option' => $right ? 0 : 1])->assertOk();
         }
+    }
+
+    /** The attempt of the booking a candidate's token belongs to. */
+    private function attemptOf(string $token): string
+    {
+        $booking = DB::table('personal_access_tokens')->where('id', (int) explode('|', $token)[0])->value('exam_booking_id');
+
+        return DB::table('exam_attempts')->where('booking_id', $booking)->value('id');
     }
 
     private function booking(Application $application): array
@@ -150,26 +162,26 @@ class ExamSessionApiTest extends TestCase
         $session = $response->json('data.id');
 
         // The answers are seen only by who manages the bank.
-        $this->asStaff($this->staff)->getJson(self::URL . "/{$session}/questions")->assertForbidden();
-        $questions = $this->asStaff($this->planner)->getJson(self::URL . "/{$session}/questions")->assertOk()->json('data');
+        $this->asStaff($this->staff)->getJson(self::URL."/{$session}/questions")->assertForbidden();
+        $questions = $this->asStaff($this->planner)->getJson(self::URL."/{$session}/questions")->assertOk()->json('data');
         $this->assertCount(10, $questions);
         $this->assertSame(0, $questions[0]['correct_option']);
         $this->assertSame(['الحديث النبوي' => 5, 'القرآن الكريم' => 5], collect($questions)->countBy('subject')->all());
 
         // Drawn again, or moved, until it starts.
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$session}/draw")->assertOk()->assertJsonPath('data.questions_count', 10);
-        $this->asStaff($this->staff)->patchJson(self::URL . "/{$session}", ['location' => 'قاعة 2', 'late_minutes' => 10])->assertOk()->assertJsonPath('data.late_until', '2026-11-10T08:10:00+00:00');
+        $this->asStaff($this->staff)->postJson(self::URL."/{$session}/draw")->assertOk()->assertJsonPath('data.questions_count', 10);
+        $this->asStaff($this->staff)->patchJson(self::URL."/{$session}", ['location' => 'قاعة 2', 'late_minutes' => 10])->assertOk()->assertJsonPath('data.late_until', '2026-11-10T08:10:00+00:00');
         $this->travelTo('2026-11-10 08:01:00');
-        $this->asStaff($this->staff)->patchJson(self::URL . "/{$session}", ['location' => 'قاعة 3'])->assertStatus(422)->assertJsonPath('errors.session.0', __('exams.sessions.started'));
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$session}/draw")->assertStatus(422);
-        $this->asStaff($this->staff)->patchJson(self::URL . "/{$session}", ['password' => 'new-pass-1'])->assertOk();          // the password at any time
-        $this->asStaff($this->staff)->patchJson(self::URL . "/{$session}", ['plan_version_id' => $this->plan->id])->assertStatus(422)->assertJsonValidationErrors('plan_version_id');
+        $this->asStaff($this->staff)->patchJson(self::URL."/{$session}", ['location' => 'قاعة 3'])->assertStatus(422)->assertJsonPath('errors.session.0', __('exams.sessions.started'));
+        $this->asStaff($this->staff)->postJson(self::URL."/{$session}/draw")->assertStatus(422);
+        $this->asStaff($this->staff)->patchJson(self::URL."/{$session}", ['password' => 'new-pass-1'])->assertOk();          // the password at any time
+        $this->asStaff($this->staff)->patchJson(self::URL."/{$session}", ['plan_version_id' => $this->plan->id])->assertStatus(422)->assertJsonValidationErrors('plan_version_id');
     }
 
     public function test_a_session_needs_a_published_plan_and_a_late_window_shorter_than_the_exam(): void
     {
         $body = ['starts_at' => '2026-11-10T08:00:00Z', 'location' => 'قاعة 1', 'password' => self::PASSWORD];
-        $draft = app(\App\Modules\Exams\Actions\ManageExamPlans::class)->createDraft(JobPosition::query()->findOrFail($this->plan->job_position_id), $this->planner, $this->plan);
+        $draft = app(ManageExamPlans::class)->createDraft(JobPosition::query()->findOrFail($this->plan->job_position_id), $this->planner, $this->plan);
 
         $this->asStaff($this->staff)->postJson(self::URL, ['plan_version_id' => $draft->id] + $body)
             ->assertStatus(422)->assertJsonPath('errors.plan_version_id.0', __('exams.sessions.plan_not_published', ['status' => __('exams.statuses.draft')]));
@@ -187,13 +199,13 @@ class ExamSessionApiTest extends TestCase
     public function test_a_session_nobody_was_booked_into_can_be_deleted(): void
     {
         $empty = $this->examSession();
-        $this->asStaff($this->staff)->deleteJson(self::URL . "/{$empty}")->assertNoContent();
+        $this->asStaff($this->staff)->deleteJson(self::URL."/{$empty}")->assertNoContent();
         $this->assertSame(0, DB::table('exam_session_questions')->count());
 
         $session = $this->examSession();
         $booking = $this->book($session, $this->applicant())->assertCreated()->json('data.0.id');
         $this->asStaff($this->staff)->postJson("/api/v1/staff/exam-bookings/{$booking}/cancel", ['reason' => 'خطأ في الحجز'])->assertOk()->assertJsonPath('data.status', 'cancelled');
-        $this->asStaff($this->staff)->deleteJson(self::URL . "/{$session}")->assertStatus(422)->assertJsonPath('errors.session.0', __('exams.sessions.in_use'));
+        $this->asStaff($this->staff)->deleteJson(self::URL."/{$session}")->assertStatus(422)->assertJsonPath('errors.session.0', __('exams.sessions.in_use'));
     }
 
     // ---- bookings ----
@@ -257,6 +269,43 @@ class ExamSessionApiTest extends TestCase
         DB::table('candidates')->where('id', $application->candidate_id)->update(['is_active' => false, 'deactivated_at' => now(), 'deactivated_by' => $this->staff->id, 'deactivation_reason' => 'وفاة']);
         $this->login()->assertStatus(422);
         $this->asCandidate($second)->getJson('/api/v1/candidate/exam')->assertUnauthorized();
+    }
+
+    public function test_candidates_reach_the_exam_only_from_the_venue_network(): void
+    {
+        $session = $this->examSession();
+        $this->book($session, $this->applicant())->assertCreated();
+        $this->travelTo('2026-11-10 07:30:00');
+        config(['exams.candidate_networks' => ['10.20.0.0/16', '192.168.5.7']]);
+
+        $this->login()->assertForbidden()->assertJsonPath('message', __('exams.candidate.outside_venue'));   // 127.0.0.1
+        $this->withServerVariables(['REMOTE_ADDR' => '10.20.4.9']);
+        $token = $this->login()->assertOk()->json('token');
+        $this->asCandidate($token)->getJson('/api/v1/candidate/exam')->assertOk();
+
+        // The token alone is not enough elsewhere.
+        $this->withServerVariables(['REMOTE_ADDR' => '172.16.0.3']);
+        $this->asCandidate($token)->getJson('/api/v1/candidate/exam')->assertForbidden();
+
+        // None configured: refused outside the local and testing environments.
+        config(['exams.candidate_networks' => []]);
+        $this->app['env'] = 'production';
+        $this->asCandidate($token)->getJson('/api/v1/candidate/exam')->assertForbidden();
+        $this->app['env'] = 'testing';
+        $this->asCandidate($token)->getJson('/api/v1/candidate/exam')->assertOk();
+    }
+
+    public function test_logins_in_arabic_digits_from_one_hall_are_limited_per_person(): void
+    {
+        // Each person has their own limit (5 a minute), whatever digits they type; the hall shares one address.
+        foreach (['٠١١١١١١١١١١', '٠٢٢٢٢٢٢٢٢٢٢', '٠٣٣٣٣٣٣٣٣٣٣', '٠٤٤٤٤٤٤٤٤٤٤', '٠٥٥٥٥٥٥٥٥٥٥', '٠٦٦٦٦٦٦٦٦٦٦'] as $number) {
+            $this->login($number)->assertStatus(422);   // unknown, but not throttled
+        }
+
+        foreach (range(1, 5) as $try) {
+            $this->login('٠٧٧٧٧٧٧٧٧٧٧')->assertStatus(422);
+        }
+        $this->login('07777777777')->assertStatus(429);   // the same person in other digits
     }
 
     // ---- taking the exam ----
@@ -339,11 +388,11 @@ class ExamSessionApiTest extends TestCase
         $this->book($session, $application)->assertCreated();
 
         $this->travelTo('2026-11-10 08:14:59');
-        $this->asStaff($this->staff)->getJson(self::URL . "/{$session}/bookings")->assertJsonPath('data.0.status', 'booked');
+        $this->asStaff($this->staff)->getJson(self::URL."/{$session}/bookings")->assertJsonPath('data.0.status', 'booked');
         $this->travelTo('2026-11-10 08:15:00');
         $this->login()->assertStatus(422)->assertJsonPath('errors.national_number.0', __('exams.candidate.too_late', ['time' => '2026-11-10T08:15:00+00:00']));
 
-        $this->asStaff($this->staff)->getJson(self::URL . "/{$session}/bookings")->assertOk()->assertJsonPath('data.0.status', 'absent');
+        $this->asStaff($this->staff)->getJson(self::URL."/{$session}/bookings")->assertOk()->assertJsonPath('data.0.status', 'absent');
         $this->assertSame(S::ExamAbsent, $application->fresh()->current_status);
         $event = $this->latestEvent($application);
         $this->assertSame($this->booking($application)['id'], $event->exam_booking_id);
@@ -363,22 +412,22 @@ class ExamSessionApiTest extends TestCase
         $onTime = $this->started($session, '22222222222');
         $done = $this->started($session, '33333333333');
         $this->asCandidate($done)->postJson('/api/v1/candidate/exam/submit')->assertOk();
-        $attempt = fn(string $number) => DB::table('exam_attempts')->join('exam_bookings as b', 'b.id', '=', 'exam_attempts.booking_id')->join('applications as a', 'a.id', '=', 'b.application_id')
+        $attempt = fn (string $number) => DB::table('exam_attempts')->join('exam_bookings as b', 'b.id', '=', 'exam_attempts.booking_id')->join('applications as a', 'a.id', '=', 'b.application_id')
             ->join('candidates as c', 'c.id', '=', 'a.candidate_id')->where('c.national_number', $number)->select('exam_attempts.*')->first();
 
-        $this->asStaff($this->staff)->postJson('/api/v1/staff/exam-attempts/' . $attempt('01234567890')->id . '/extend', ['minutes' => 10, 'reason' => 'تأخر بعذر'])->assertForbidden();
+        $this->asStaff($this->staff)->postJson('/api/v1/staff/exam-attempts/'.$attempt('01234567890')->id.'/extend', ['minutes' => 10, 'reason' => 'تأخر بعذر'])->assertForbidden();
         $manager = $this->allow($this->hiringStaff(), 'attempts.extend');
 
-        $this->asStaff($manager)->postJson('/api/v1/staff/exam-attempts/' . $attempt('01234567890')->id . '/extend', ['minutes' => 10, 'reason' => 'تأخر بعذر'])
+        $this->asStaff($manager)->postJson('/api/v1/staff/exam-attempts/'.$attempt('01234567890')->id.'/extend', ['minutes' => 10, 'reason' => 'تأخر بعذر'])
             ->assertOk()
             ->assertJsonPath('data.attempt.deadline_at', '2026-11-10T10:10:00+00:00')
             ->assertJsonPath('data.attempt.extensions.0.previous_deadline', '2026-11-10T10:00:00+00:00')
             ->assertJsonPath('data.attempt.extensions.0.for_everyone', false);
-        $this->asStaff($manager)->postJson('/api/v1/staff/exam-attempts/' . $attempt('33333333333')->id . '/extend', ['minutes' => 10, 'reason' => 'x x x'])
+        $this->asStaff($manager)->postJson('/api/v1/staff/exam-attempts/'.$attempt('33333333333')->id.'/extend', ['minutes' => 10, 'reason' => 'x x x'])
             ->assertStatus(422)->assertJsonPath('errors.attempt.0', __('exams.attempts.not_running'));
-        $this->asStaff($manager)->postJson('/api/v1/staff/exam-attempts/' . $attempt('01234567890')->id . '/extend', ['minutes' => 0, 'reason' => 'x x x'])->assertStatus(422);
+        $this->asStaff($manager)->postJson('/api/v1/staff/exam-attempts/'.$attempt('01234567890')->id.'/extend', ['minutes' => 0, 'reason' => 'x x x'])->assertStatus(422);
 
-        $this->asStaff($manager)->postJson(self::URL . "/{$session}/extend", ['minutes' => 15, 'reason' => 'انقطاع الكهرباء'])
+        $this->asStaff($manager)->postJson(self::URL."/{$session}/extend", ['minutes' => 15, 'reason' => 'انقطاع الكهرباء'])
             ->assertOk()->assertJsonPath('data.ends_at', '2026-11-10T10:15:00+00:00')->assertJsonPath('data.extensions.0.minutes', 15);
         $this->assertSame('2026-11-10 10:25:00+00', $attempt('01234567890')->deadline_at);
         $this->assertSame('2026-11-10 10:15:00+00', $attempt('22222222222')->deadline_at);
@@ -389,7 +438,7 @@ class ExamSessionApiTest extends TestCase
         // Saving within the extended time works; after the session ends, no more extensions.
         $this->travelTo('2026-11-10 10:20:00');
         $this->asCandidate($late)->putJson('/api/v1/candidate/exam/answers/1', ['option' => 0])->assertOk();
-        $this->asStaff($manager)->postJson(self::URL . "/{$session}/extend", ['minutes' => 5, 'reason' => 'x x x'])->assertStatus(422)->assertJsonPath('errors.session.0', __('exams.sessions.ended'));
+        $this->asStaff($manager)->postJson(self::URL."/{$session}/extend", ['minutes' => 5, 'reason' => 'x x x'])->assertStatus(422)->assertJsonPath('errors.session.0', __('exams.sessions.ended'));
     }
 
     // ---- results ----
@@ -484,6 +533,10 @@ class ExamSessionApiTest extends TestCase
         $event = $this->latestEvent($application);
         $this->assertSame(['correction', $booking], [$event->decision_type, $event->exam_booking_id]);
         $this->assertSame(2, DB::table('exam_results')->count());
+
+        // The candidates' statement follows the correction.
+        $results = CandidateResults::of(Application::query()->with(CandidateResults::RELATIONS)->whereKey($application->id)->get());
+        $this->assertSame('passed', $results[0]['exam']['result']);
     }
 
     public function test_a_plan_without_hand_marked_parts_is_decided_at_submission(): void
@@ -527,10 +580,96 @@ class ExamSessionApiTest extends TestCase
         $reader = $this->allow(StaffUserFactory::new()->create(), 'reports.view');
 
         $this->asStaff($reader)->getJson(self::URL)->assertOk()->assertJsonCount(1, 'data');
-        $this->asStaff($reader)->getJson(self::URL . "/{$session}")->assertOk();
+        $this->asStaff($reader)->getJson(self::URL."/{$session}")->assertOk();
         $this->asStaff($reader)->postJson(self::URL, [])->assertForbidden();
         $this->asStaff(StaffUserFactory::new()->create())->getJson(self::URL)->assertForbidden();
-        $this->asStaff($reader)->getJson(self::URL . '?from=2026-11-11')->assertJsonCount(0, 'data');
+        $this->asStaff($reader)->getJson(self::URL.'?from=2026-11-11')->assertJsonCount(0, 'data');
+    }
+
+    public function test_the_marks_appear_in_the_exams_report_and_the_answer_sheet(): void
+    {
+        $session = $this->examSession();
+        $passed = $this->applicant();
+        $failed = $this->applicant('22222222222');
+        $this->book($session, $passed, $failed)->assertCreated();
+        $first = $this->started($session);
+        $this->answer($first);
+        $this->asCandidate($first)->postJson('/api/v1/candidate/exam/submit')->assertOk();
+        $second = $this->started($session, '22222222222');
+        $this->answer($second, ['الحديث النبوي' => 2, 'القرآن الكريم' => 5]);
+        $this->asCandidate($second)->postJson('/api/v1/candidate/exam/submit')->assertOk();
+        $this->marks($this->booking($passed)['id'], '36')->assertOk();
+        $this->marks($this->booking($failed)['id'], '30')->assertOk();
+
+        $applications = Application::query()->with(RecruitmentTables::RELATIONS)->orderBy('nomination_number')->get();
+        $table = RecruitmentTables::exams($applications, ReportPeriod::from([]), 'all');
+        $labels = array_column($table->columns, 0);
+        $this->assertSame(['الحديث النبوي', 'القرآن الكريم', 'المجموع', 'المعدل', 'سبب الرسوب'], array_slice($labels, 9, 5));
+        $this->assertTrue($table->wide);
+        $this->assertSame(['100.00', '96.00', '196.00', '98.00', null], array_slice($table->rows[0], 9, 5));
+        $this->assertSame(['40.00', '90.00', '130.00', '65.00', 'دون الحد الأدنى (58) في: الحديث النبوي — المعدل لا يتجاوز 70'], array_slice($table->rows[1], 9, 5));
+        $this->asStaff($this->staff)->get('/api/v1/staff/reports/exams-failed')->assertOk();
+
+        // The answer sheet: the candidate's order, the key, every save; only for who manages the bank.
+        $attempt = $this->booking($failed)['attempt']['id'];
+        $this->asStaff($this->staff)->getJson("/api/v1/staff/exam-attempts/{$attempt}/answers")->assertForbidden();
+        $sheet = $this->asStaff($this->planner)->getJson("/api/v1/staff/exam-attempts/{$attempt}/answers")->assertOk()->json('data');
+        $this->assertCount(10, $sheet);
+        $this->assertSame(7, count(array_filter($sheet, fn (array $item) => $item['is_correct'])));
+        $this->assertSame(0, $sheet[0]['correct_option']);
+        $this->assertCount(1, $sheet[0]['history']);
+    }
+
+    public function test_the_interview_queue_can_put_the_best_exam_first(): void
+    {
+        $session = $this->examSession();
+        $weaker = $this->applicant();
+        $stronger = $this->applicant('22222222222');
+        $this->book($session, $weaker, $stronger)->assertCreated();
+        foreach ([[$weaker, '01234567890', 4], [$stronger, '22222222222', 5]] as [$application, $number, $right]) {
+            $token = $this->started($session, $number);
+            $this->answer($token, ['الحديث النبوي' => $right]);
+            $this->asCandidate($token)->postJson('/api/v1/candidate/exam/submit')->assertOk();
+            $this->marks($this->booking($application)['id'], '40')->assertOk();
+        }
+
+        $interviewer = $this->hiringStaff();
+        $ids = fn (string $rule) => array_column($this->asStaff($interviewer)->getJson('/api/v1/staff/interviews/queue?priority[]='.$rule)->assertOk()->json('data'), 'id');
+        $this->assertSame([$stronger->id, $weaker->id], $ids('exam_average'));
+        $this->assertSame([$weaker->id, $stronger->id], $ids('exam_average:asc'));
+    }
+
+    public function test_times_with_an_offset_and_the_late_window_edges(): void
+    {
+        // 11:00 Damascus is 08:00 UTC, stored as such (D-081).
+        $session = $this->examSession(['starts_at' => '2026-11-10T11:00:00+03:00']);
+        $this->assertSame('2026-11-10 08:00:00+00', DB::table('exam_sessions')->where('id', $session)->value('starts_at'));
+
+        // A late window of at least a minute: with none, nobody could ever start.
+        $this->asStaff($this->staff)->postJson(self::URL, ['plan_version_id' => $this->plan->id, 'starts_at' => '2026-11-10T08:00:00Z', 'location' => 'قاعة', 'password' => self::PASSWORD, 'late_minutes' => 0])
+            ->assertStatus(422)->assertJsonValidationErrors('late_minutes');
+
+        // A booking not started when the window closed is an absence, not something to cancel.
+        $application = $this->applicant();
+        $booking = $this->book($session, $application)->assertCreated()->json('data.0.id');
+        $this->travelTo('2026-11-10 08:15:00');
+        $this->asStaff($this->staff)->postJson("/api/v1/staff/exam-bookings/{$booking}/cancel", ['reason' => 'لم يحضر'])
+            ->assertStatus(422)->assertJsonPath('errors.booking.0', __('exams.bookings.window_closed'));
+
+        // An application closed after its booking cannot sit the exam.
+        $other = $this->examSession(['starts_at' => '2026-11-10T09:00:00Z', 'location' => 'قاعة 9']);
+        $closed = $this->applicant('22222222222');
+        $this->book($other, $closed)->assertCreated();
+        $token = $this->login('22222222222')->assertOk()->json('token');
+        $this->closeApplication($closed);
+        $this->travelTo('2026-11-10 09:01:00');
+        $this->asCandidate($token)->postJson('/api/v1/candidate/exam/start')->assertStatus(422)->assertJsonPath('errors.booking.0', __('exams.candidate.application_moved'));
+
+        // A session given more time is no longer "never used".
+        $unused = $this->examSession(['starts_at' => '2026-11-11T08:00:00Z', 'location' => 'قاعة 4']);
+        $this->travelTo('2026-11-11 08:30:00');
+        $this->asStaff($this->allow($this->hiringStaff(), 'attempts.extend'))->postJson(self::URL."/{$unused}/extend", ['minutes' => 5, 'reason' => 'تأخر البدء'])->assertOk();
+        $this->asStaff($this->staff)->deleteJson(self::URL."/{$unused}")->assertStatus(422)->assertJsonPath('errors.session.0', __('exams.sessions.in_use'));
     }
 
     // ---- the database ----
@@ -551,17 +690,17 @@ class ExamSessionApiTest extends TestCase
             }
         };
 
-        $refused('changing the questions after a start', fn() => DB::table('exam_session_questions')->where('session_id', $session)->delete(), 'questions of a session that has started are frozen');
-        $refused('moving a started session', fn() => DB::table('exam_sessions')->where('id', $session)->update(['starts_at' => '2026-11-10 09:00:00']), 'keeps its plan, start');
-        $refused('deleting a booking', fn() => DB::table('exam_bookings')->delete(), 'never deleted');
-        $refused('shortening an attempt', fn() => DB::table('exam_attempts')->update(['deadline_at' => '2026-11-10 09:00:00']), 'deadline only moves later');
-        $refused('a hand mark above its scale', fn() => DB::table('exam_manual_marks')->insert(['attempt_id' => DB::table('exam_attempts')->value('id'), 'plan_part_id' => $this->tajweed, 'revision' => 1, 'mark' => 41, 'entered_by' => $this->staff->id, 'created_at' => now()]), 'cannot exceed');
-        $refused('a second undecided booking', fn() => DB::table('exam_bookings')->insert(['id' => (string) \Illuminate\Support\Str::uuid7(), 'session_id' => $session, 'application_id' => $application->id, 'round' => 2, 'created_by' => $this->staff->id]), 'exam_bookings_one_open');
+        $refused('changing the questions after a start', fn () => DB::table('exam_session_questions')->where('session_id', $session)->delete(), 'questions of a session that has started are frozen');
+        $refused('moving a started session', fn () => DB::table('exam_sessions')->where('id', $session)->update(['starts_at' => '2026-11-10 09:00:00']), 'keeps its plan, start');
+        $refused('deleting a booking', fn () => DB::table('exam_bookings')->delete(), 'never deleted');
+        $refused('shortening an attempt', fn () => DB::table('exam_attempts')->update(['deadline_at' => '2026-11-10 09:00:00']), 'deadline only moves later');
+        $refused('a hand mark above its scale', fn () => DB::table('exam_manual_marks')->insert(['attempt_id' => DB::table('exam_attempts')->value('id'), 'plan_part_id' => $this->tajweed, 'revision' => 1, 'mark' => 41, 'entered_by' => $this->staff->id, 'created_at' => now()]), 'cannot exceed');
+        $refused('a second undecided booking', fn () => DB::table('exam_bookings')->insert(['id' => (string) Str::uuid7(), 'session_id' => $session, 'application_id' => $application->id, 'round' => 2, 'created_by' => $this->staff->id]), 'exam_bookings_one_open');
 
         $this->asCandidate($token)->postJson('/api/v1/candidate/exam/submit')->assertOk();
-        $refused('reopening an attempt', fn() => DB::table('exam_attempts')->update(['status' => 'in_progress', 'submitted_at' => null, 'closed_by' => null]), 'never reopened');
-        $refused('changing an answer after closing', fn() => DB::table('exam_attempt_items')->where('position', 1)->update(['selected_option' => 2]), 'closed attempt do not change');
-        $refused('rewriting an answer history', fn() => DB::table('exam_answer_revisions')->update(['selected_option' => 2]), 'append-only');
-        $refused('remarking an answer', fn() => DB::table('exam_attempt_items')->where('position', 1)->update(['is_correct' => false]), 'marked once');
+        $refused('reopening an attempt', fn () => DB::table('exam_attempts')->update(['status' => 'in_progress', 'submitted_at' => null, 'closed_by' => null]), 'never reopened');
+        $refused('changing an answer after closing', fn () => DB::table('exam_attempt_items')->where('position', 1)->update(['selected_option' => 2]), 'closed attempt do not change');
+        $refused('rewriting an answer history', fn () => DB::table('exam_answer_revisions')->update(['selected_option' => 2]), 'append-only');
+        $refused('remarking an answer', fn () => DB::table('exam_attempt_items')->where('position', 1)->update(['is_correct' => false]), 'marked once');
     }
 }

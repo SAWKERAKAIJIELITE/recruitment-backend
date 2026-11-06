@@ -23,7 +23,7 @@ class UpdateExamSessionRequest extends FormRequest
             'plan_version_id' => ['prohibited'],
             'starts_at' => ['sometimes', 'date', 'after:now'],
             'location' => ['sometimes', 'string', 'min:2', 'max:300'],
-            'late_minutes' => ['sometimes', 'integer', 'min:0', 'max:600'],
+            'late_minutes' => ['sometimes', 'integer', 'min:1', 'max:600'],
             /** A new password (for example when the old one leaked); at any time. */
             'password' => ['sometimes', 'string', 'min:6', 'max:64'],
             'notes' => ['sometimes', 'nullable', 'string', 'max:2000'],

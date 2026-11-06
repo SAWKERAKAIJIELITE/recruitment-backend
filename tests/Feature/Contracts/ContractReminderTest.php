@@ -22,7 +22,7 @@ use Tests\TestCase;
 /** Reminders two weeks before a contract ends, and the staff notifications API (D-065). */
 class ContractReminderTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private StaffUser $writer;
 

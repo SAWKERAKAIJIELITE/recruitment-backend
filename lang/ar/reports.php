@@ -28,6 +28,12 @@ return [
     'no' => 'لا',
     'navigation' => 'التنقل بين الصفحات',
     'corrected' => '(مصحَّحة)',
+    // Why an exam failed (the pass rules, D-052).
+    'failure_causes' => [
+        'subject_below_floor' => 'دون الحد الأدنى (:floor) في: :subjects',
+        'too_many_below_pass_mark' => 'أكثر من مادة دون علامة النجاح (:mark): :subjects',
+        'average_not_above' => 'المعدل لا يتجاوز :average',
+    ],
     'then_excepted' => '(ثم استثناء)',
     'excepted_on' => 'قُبل باستثناء في :date',
     'excused_on' => 'قُبل العذر في :date',
@@ -129,6 +135,9 @@ return [
         'committee_note' => 'ملاحظة اللجنة',
         'absence_reason' => 'سبب الغياب (ملاحظة اللجنة)',
         'exam_result' => 'نتيجة الاختبار',
+        'exam_total' => 'المجموع',
+        'exam_average' => 'المعدل',
+        'failure_cause' => 'سبب الرسوب',
         'admitted_by_exception' => 'قُبل للمقابلة بقرار استثناء',
         'interview_result' => 'نتيجة المقابلة',
         'interview_held_on' => 'تاريخ المقابلة',

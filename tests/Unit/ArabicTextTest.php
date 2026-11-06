@@ -15,7 +15,7 @@ class ArabicTextTest extends TestCase
             'harakat removed' => ['مُحَمَّد', 'محمد'],
             'ta marbuta and ha merge' => ['فاطمة', 'فاطمه'],
             'alef maqsura and ya merge' => ['عيسى', 'عيسي'],
-            'whitespace collapses' => ["  أحمد   علي  ", 'احمد علي'],
+            'whitespace collapses' => ['  أحمد   علي  ', 'احمد علي'],
             'latin lowercased' => ['Ahmad ALI', 'ahmad ali'],
         ];
     }

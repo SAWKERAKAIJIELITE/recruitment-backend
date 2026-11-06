@@ -11,7 +11,8 @@ use Illuminate\Support\Facades\Schema;
  * Keys are bigint auto-increment, not UUID: the lists are small and readable by every staff user,
  * so a guess-proof key protects nothing (D-034). Entries are archived (soft deleted), never removed.
  */
-return new class extends Migration {
+return new class extends Migration
+{
     /** Lists whose names are unique across the whole list. */
     private const FLAT_LISTS = [
         'districts',                  // المحافظات

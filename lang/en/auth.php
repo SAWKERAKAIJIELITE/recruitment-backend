@@ -18,4 +18,7 @@ return [
     'throttle' => 'Too many login attempts. Please try again in :seconds seconds.',
 
     'role_beyond_own' => 'You cannot give a role with permissions you do not hold: :permissions.',
+    'cannot_deactivate_self' => 'You cannot deactivate your own account.',
+    'already_inactive' => 'The account is already inactive.',
+    'already_active' => 'The account is already active.',
 ];

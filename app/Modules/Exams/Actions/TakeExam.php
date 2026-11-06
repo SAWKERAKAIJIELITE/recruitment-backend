@@ -9,6 +9,8 @@ use App\Modules\Exams\Models\ExamAttempt;
 use App\Modules\Exams\Models\ExamAttemptItem;
 use App\Modules\Exams\Models\ExamBooking;
 use App\Modules\Exams\Models\ExamSession;
+use App\Modules\Recruitment\Enums\ApplicationStatus;
+use App\Modules\Recruitment\Models\Application;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -26,19 +28,20 @@ use Random\Randomizer;
  */
 class TakeExam
 {
-    public function __construct(private readonly ExamResults $results, private readonly Randomizer $random = new Randomizer())
-    {
-    }
+    public function __construct(private readonly ExamResults $results, private readonly Randomizer $random = new Randomizer) {}
 
     public function start(ExamBooking $booking, ?string $ip): ExamAttempt
     {
-        return DB::transaction(function () use ($booking, $ip) {
+        $attempt = DB::transaction(function () use ($booking, $ip) {
+            // The session first (shared): an extension for everyone, a change or a new draw waits for this start, and
+            // this start sees their result (D-073). Then the booking, then the application: the order every exam
+            // write follows, so two of them never wait for each other.
+            $session = ExamSession::query()->whereKey($booking->session_id)->sharedLock()->firstOrFail();
             $booking = ExamBooking::query()->whereKey($booking->id)->lockForUpdate()->firstOrFail();
-            $session = ExamSession::query()->findOrFail($booking->session_id);
             $now = Date::now();
 
             if ($booking->status === BookingStatus::Attended) {
-                return $this->closeIfExpired(ExamAttempt::query()->where('booking_id', $booking->id)->firstOrFail());   // started already: the same attempt
+                return ExamAttempt::query()->where('booking_id', $booking->id)->firstOrFail();   // started already: the same attempt
             }
 
             if ($booking->status !== BookingStatus::Booked) {
@@ -53,7 +56,13 @@ class TakeExam
                 $this->fail('booking', 'exams.candidate.too_late', ['time' => $session->lateUntil()->toIso8601String()]);
             }
 
-            $attempt = new ExamAttempt();
+            $application = Application::query()->whereKey($booking->application_id)->sharedLock()->firstOrFail();
+
+            if ($application->current_status !== ApplicationStatus::AwaitingExam) {
+                $this->fail('booking', 'exams.candidate.application_moved');
+            }
+
+            $attempt = new ExamAttempt;
             $attempt->forceFill([
                 'booking_id' => $booking->id,
                 'session_id' => $session->id,
@@ -63,17 +72,19 @@ class TakeExam
             ])->save();
 
             $questions = $this->random->shuffleArray($session->questions()->pluck('id')->all());
-
-            foreach ($questions as $index => $questionId) {
-                ExamAttemptItem::query()->forceCreate(['attempt_id' => $attempt->id, 'session_id' => $session->id, 'position' => $index + 1, 'session_question_id' => $questionId]);
-            }
+            ExamAttemptItem::query()->insert(array_map(fn (int $questionId, int $index) => [
+                'attempt_id' => $attempt->id, 'session_id' => $session->id, 'position' => $index + 1, 'session_question_id' => $questionId,
+            ], $questions, array_keys($questions)));
 
             $booking->forceFill(['status' => BookingStatus::Attended])->save();
 
-            AuditTrail::record('exam_attempt.started', null, ['attempt_id' => $attempt->id, 'booking_id' => $booking->id, 'ip' => $ip, 'deadline' => $attempt->deadline_at->toIso8601String()]);
+            AuditTrail::record('exam_attempt.started', null, ['attempt_id' => $attempt->id, 'booking_id' => $booking->id, 'ip' => $ip, 'deadline' => $attempt->deadline_at->toIso8601String()], $application->candidate_id);
 
             return $attempt;
         });
+
+        // Started already and past its deadline: closed now, outside the booking's lock.
+        return $this->closeIfExpired($attempt);
     }
 
     /** @param ?int $option an index of the question's options (from 0), or null to clear the answer */

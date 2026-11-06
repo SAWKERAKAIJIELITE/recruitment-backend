@@ -17,6 +17,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -107,7 +108,7 @@ class CandidateExamController extends Controller
         return response()->json([
             'position' => $item->position,
             'selected_option' => $item->selected_option,
-            'saved_at' => $item->revisions()->max('saved_at') === null ? null : \Illuminate\Support\Carbon::parse($item->revisions()->max('saved_at'))->toIso8601String(),
+            'saved_at' => $item->revisions()->max('saved_at') === null ? null : Carbon::parse($item->revisions()->max('saved_at'))->toIso8601String(),
             'deadline_at' => $attempt->deadline_at->toIso8601String(),
         ]);
     }
@@ -132,7 +133,7 @@ class CandidateExamController extends Controller
         $bookingId = $candidate instanceof Candidate ? $candidate->currentAccessToken()?->exam_booking_id : null;
 
         if ($bookingId === null || ! $candidate->is_active) {
-            throw new AuthenticationException();
+            throw new AuthenticationException;
         }
 
         return ExamBooking::query()->with(['session', 'attempt', 'application.candidate', 'application.jobPosition'])->findOrFail($bookingId);

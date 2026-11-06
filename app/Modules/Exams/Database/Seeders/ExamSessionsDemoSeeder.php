@@ -19,6 +19,7 @@ use App\Modules\Recruitment\Database\Seeders\Demo\DemoReferences;
 use App\Modules\Recruitment\Models\Application;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Date;
 
 /**
@@ -43,8 +44,7 @@ class ExamSessionsDemoSeeder extends Seeder
         private readonly ExamResults $results,
         private readonly SweepExamSessions $sweep,
         private readonly CreateApplication $create,
-    ) {
-    }
+    ) {}
 
     public function run(): void
     {
@@ -95,10 +95,10 @@ class ExamSessionsDemoSeeder extends Seeder
         $this->command?->info(sprintf('Exam sessions demo: one held yesterday (1 sat, 1 absent), one tomorrow at 09:00 with %d candidates (password "%s").', count($booked), self::DEMO_PASSWORD));
     }
 
-    /** @return \Illuminate\Support\Collection<int, Application> six new applications for the plan's job position */
-    private function nominate(ExamPlanVersion $plan, CarbonImmutable $at, StaffUser $staff): \Illuminate\Support\Collection
+    /** @return Collection<int, Application> six new applications for the plan's job position */
+    private function nominate(ExamPlanVersion $plan, CarbonImmutable $at, StaffUser $staff): Collection
     {
-        $references = new DemoReferences();
+        $references = new DemoReferences;
         $applications = collect();
 
         foreach (range(self::FIRST_PERSON, self::FIRST_PERSON + 5) as $offset => $index) {

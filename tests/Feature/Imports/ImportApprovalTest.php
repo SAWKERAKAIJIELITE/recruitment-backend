@@ -2,16 +2,18 @@
 
 namespace Tests\Feature\Imports;
 
+use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use App\Modules\Identity\Models\StaffUser;
-use App\Modules\Imports\Models\ImportRow;
 use App\Modules\Recruitment\Actions\CreateApplication;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Models\Candidate;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use Tests\Support\LegacyWorkbook;
 use Tests\Support\RecruitmentTestHelpers;
@@ -21,7 +23,7 @@ use Tests\TestCase;
 /** Approving a batch: rows become people, applications and nomination numbers (§09 steps 6-7). */
 class ImportApprovalTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private const URL = '/api/v1/staff/imports';
 
@@ -50,12 +52,18 @@ class ImportApprovalTest extends TestCase
 
     private function rows(string $batch): array
     {
-        return $this->asStaff($this->staff)->getJson(self::URL . "/{$batch}/rows")->json('data');
+        return $this->asStaff($this->staff)->getJson(self::URL."/{$batch}/rows")->json('data');
+    }
+
+    /** The revision a reviewer sees on the batch. */
+    private function revision(string $batch): int
+    {
+        return (int) DB::table('import_batches')->where('id', $batch)->value('revision');
     }
 
     private function approve(string $batch)
     {
-        return $this->asStaff($this->approver)->postJson(self::URL . "/{$batch}/approve");
+        return $this->asStaff($this->approver)->postJson(self::URL."/{$batch}/approve", ['revision' => $this->revision($batch)]);
     }
 
     /** Three valid people, one invalid row, one excluded row. */
@@ -70,7 +78,7 @@ class ImportApprovalTest extends TestCase
         ]);
 
         $excluded = $this->rows($batch)[4]['id'];
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$batch}/rows/{$excluded}/exclude", ['reason' => 'انسحبت'])->assertOk();
+        $this->asStaff($this->staff)->postJson(self::URL."/{$batch}/rows/{$excluded}/exclude", ['reason' => 'انسحبت'])->assertOk();
 
         return $batch;
     }
@@ -106,7 +114,7 @@ class ImportApprovalTest extends TestCase
         $batch = $this->mixedBatch();
         $this->approve($batch)->assertOk();
 
-        $numbers = collect($this->rows($batch))->pluck('application.nomination_number')->filter()->map(fn($n) => (int) $n)->values()->all();
+        $numbers = collect($this->rows($batch))->pluck('application.nomination_number')->filter()->map(fn ($n) => (int) $n)->values()->all();
 
         $this->assertSame([$numbers[0], $numbers[0] + 1, $numbers[0] + 2], $numbers);
     }
@@ -115,7 +123,7 @@ class ImportApprovalTest extends TestCase
     {
         $batch = $this->uploadRows([LegacyWorkbook::row()]);
 
-        $this->asStaff($this->hiringStaff())->postJson(self::URL . "/{$batch}/approve")->assertForbidden();
+        $this->asStaff($this->hiringStaff())->postJson(self::URL."/{$batch}/approve", ['revision' => $this->revision($batch)])->assertForbidden();
         $this->assertDatabaseCount('applications', 0);
     }
 
@@ -124,7 +132,7 @@ class ImportApprovalTest extends TestCase
         $this->allow($this->staff, 'imports.approve');
         $batch = $this->uploadRows([LegacyWorkbook::row()]);
 
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$batch}/approve")
+        $this->asStaff($this->staff)->postJson(self::URL."/{$batch}/approve", ['revision' => $this->revision($batch)])
             ->assertForbidden()
             ->assertJsonPath('message', __('imports.own_batch'));
         $this->assertDatabaseCount('applications', 0);
@@ -134,17 +142,17 @@ class ImportApprovalTest extends TestCase
 
     public function test_an_approver_without_imports_manage_can_read_but_not_change_the_batch(): void
     {
-        $approver = $this->allow(\App\Modules\Identity\Database\Factories\StaffUserFactory::new()->create(), 'imports.approve');
+        $approver = $this->allow(StaffUserFactory::new()->create(), 'imports.approve');
         $batch = $this->uploadRows([LegacyWorkbook::row()]);
         $row = $this->rows($batch)[0]['id'];
 
-        $this->asStaff($approver)->getJson(self::URL . "/{$batch}")->assertOk();
-        $this->asStaff($approver)->getJson(self::URL . "/{$batch}/rows")->assertOk();
-        $this->asStaff($approver)->get(self::URL . "/{$batch}/report")->assertOk();
-        $this->asStaff($approver)->patchJson(self::URL . "/{$batch}/rows/{$row}", ['values' => ['notes' => 'x']])->assertForbidden();
-        $this->asStaff($approver)->postJson(self::URL . "/{$batch}/cancel", ['reason' => 'لا'])->assertForbidden();
+        $this->asStaff($approver)->getJson(self::URL."/{$batch}")->assertOk();
+        $this->asStaff($approver)->getJson(self::URL."/{$batch}/rows")->assertOk();
+        $this->asStaff($approver)->get(self::URL."/{$batch}/report")->assertOk();
+        $this->asStaff($approver)->patchJson(self::URL."/{$batch}/rows/{$row}", ['values' => ['notes' => 'x']])->assertForbidden();
+        $this->asStaff($approver)->postJson(self::URL."/{$batch}/cancel", ['reason' => 'لا'])->assertForbidden();
 
-        $this->asStaff($approver)->postJson(self::URL . "/{$batch}/approve")->assertOk();
+        $this->asStaff($approver)->postJson(self::URL."/{$batch}/approve", ['revision' => $this->revision($batch)])->assertOk();
     }
 
     public function test_the_application_carries_every_value_of_the_row(): void
@@ -177,16 +185,37 @@ class ImportApprovalTest extends TestCase
         $this->assertDatabaseCount('applications', 1);   // only the closed one from before
 
         $review = $this->rows($batch)[0]['id'];
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$batch}/rows/{$review}/confirm-person")->assertOk();
+        $this->asStaff($this->staff)->postJson(self::URL."/{$batch}/rows/{$review}/confirm-person")->assertOk();
 
         $this->approve($batch)->assertOk()->assertJsonPath('data.counts.imported', 2);
+    }
+
+    public function test_the_approval_is_of_the_revision_reviewed_by_someone_who_changed_nothing(): void
+    {
+        $batch = $this->uploadRows([LegacyWorkbook::row(['F' => 'أحمد محمد علي']), LegacyWorkbook::row(['J' => '11111111111', 'F' => 'سارة خالد عمر'])]);
+        $reviewed = $this->asStaff($this->approver)->getJson(self::URL."/{$batch}")->assertOk()->json('data.revision');
+        $row = $this->rows($batch)[1]['id'];
+
+        // The uploader changes a row after the approver looked: the approval is refused with the new revision.
+        $this->asStaff($this->staff)->patchJson(self::URL."/{$batch}/rows/{$row}", ['values' => ['candidate.full_name' => 'سارة خالد العمر']])->assertOk();
+        $this->asStaff($this->approver)->postJson(self::URL."/{$batch}/approve", ['revision' => $reviewed])
+            ->assertStatus(422)->assertJsonPath('errors.revision.0', __('imports.batch_changed', ['revision' => $reviewed + 1]));
+        $this->asStaff($this->approver)->postJson(self::URL."/{$batch}/approve", [])->assertStatus(422)->assertJsonValidationErrors('revision');
+
+        // Whoever changed the rows does not approve them: another person reviews those changes.
+        $editor = $this->allow($this->allow($this->hiringStaff(), 'imports.approve'), 'imports.manage');
+        $this->asStaff($editor)->patchJson(self::URL."/{$batch}/rows/{$row}", ['values' => ['notes' => 'مراجعة']])->assertOk();
+        $this->asStaff($editor)->postJson(self::URL."/{$batch}/approve", ['revision' => $this->revision($batch)])->assertForbidden();
+
+        $this->approve($batch)->assertOk()->assertJsonPath('data.counts.imported', 2);
+        $this->assertSame('سارة خالد العمر', DB::table('candidates')->where('national_number', '11111111111')->value('full_name'));
     }
 
     public function test_a_confirmed_person_keeps_the_data_on_file(): void
     {
         $this->closeApplication($this->openApplication());
         $batch = $this->uploadRows([LegacyWorkbook::row(['F' => 'محمود محمد علي'])]);
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$batch}/rows/{$this->rows($batch)[0]['id']}/confirm-person")->assertOk();
+        $this->asStaff($this->staff)->postJson(self::URL."/{$batch}/rows/{$this->rows($batch)[0]['id']}/confirm-person")->assertOk();
 
         $this->approve($batch)->assertOk();
 
@@ -208,7 +237,7 @@ class ImportApprovalTest extends TestCase
 
         $again = $this->uploadRows(array_reverse($rows), 'reordered.xlsx');
 
-        $this->asStaff($this->staff)->getJson(self::URL . "/{$again}")->assertJsonPath('data.counts.invalid', 2);
+        $this->asStaff($this->staff)->getJson(self::URL."/{$again}")->assertJsonPath('data.counts.invalid', 2);
         $this->assertSame(['live_application'], array_column($this->rows($again)[0]['issues'], 'code'));
 
         $this->approve($again)->assertOk()->assertJsonPath('data.counts.imported', 0);
@@ -239,7 +268,7 @@ class ImportApprovalTest extends TestCase
         $this->assertDatabaseCount('applications', 0);
         $this->assertDatabaseCount('nomination_counters', 0);   // the reserved numbers were given back
         $this->assertSame(['valid', 'valid'], array_column($this->rows($batch), 'status'));
-        $this->asStaff($this->staff)->getJson(self::URL . "/{$batch}")->assertJsonPath('data.status', 'pending');
+        $this->asStaff($this->staff)->getJson(self::URL."/{$batch}")->assertJsonPath('data.status', 'pending');
     }
 
     public function test_approval_reserves_the_numbers_in_one_step_without_gaps(): void
@@ -250,7 +279,7 @@ class ImportApprovalTest extends TestCase
         $this->approve($batch)->assertOk();
 
         $sequences = Application::query()->orderBy('nomination_number')->pluck('nomination_number')
-            ->map(fn(string $number) => (int) substr($number, -6))->all();
+            ->map(fn (string $number) => (int) substr($number, -6))->all();
         $this->assertSame([1, 2, 3, 4], $sequences);
     }
 
@@ -266,7 +295,7 @@ class ImportApprovalTest extends TestCase
         $this->assertDatabaseCount('applications', 1);   // only the API one
 
         // Staff look again: the row now says why; approving imports the other row.
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$batch}/revalidate")->assertJsonPath('data.counts.invalid', 1);
+        $this->asStaff($this->staff)->postJson(self::URL."/{$batch}/revalidate")->assertJsonPath('data.counts.invalid', 1);
         $this->approve($batch)->assertOk()->assertJsonPath('data.counts.imported', 1);
     }
 
@@ -277,8 +306,8 @@ class ImportApprovalTest extends TestCase
         $invalid = $this->rows($batch)[1]['id'];
 
         $this->approve($batch)->assertStatus(422)->assertJsonValidationErrors('batch');
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$batch}/cancel", ['reason' => 'متأخر'])->assertStatus(422);
-        $this->asStaff($this->staff)->patchJson(self::URL . "/{$batch}/rows/{$invalid}", ['values' => ['candidate.national_number' => '44444444444']])
+        $this->asStaff($this->staff)->postJson(self::URL."/{$batch}/cancel", ['reason' => 'متأخر'])->assertStatus(422);
+        $this->asStaff($this->staff)->patchJson(self::URL."/{$batch}/rows/{$invalid}", ['values' => ['candidate.national_number' => '44444444444']])
             ->assertStatus(422);
         $this->assertDatabaseCount('applications', 1);
     }
@@ -286,7 +315,7 @@ class ImportApprovalTest extends TestCase
     public function test_a_cancelled_batch_cannot_be_approved(): void
     {
         $batch = $this->uploadRows([LegacyWorkbook::row()]);
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$batch}/cancel", ['reason' => 'ملف خاطئ'])
+        $this->asStaff($this->staff)->postJson(self::URL."/{$batch}/cancel", ['reason' => 'ملف خاطئ'])
             ->assertOk()->assertJsonPath('data.cancel_reason', 'ملف خاطئ')->assertJsonPath('data.cancelled_by.id', $this->staff->id);
 
         $this->approve($batch)->assertStatus(422);
@@ -298,10 +327,10 @@ class ImportApprovalTest extends TestCase
         $batch = $this->uploadRows([LegacyWorkbook::row(['F' => ['text' => '=HYPERLINK("http://example.invalid","احمد")']])]);
         $this->approve($batch)->assertOk();
 
-        $response = $this->asStaff($this->staff)->get(self::URL . "/{$batch}/report")->assertOk();
+        $response = $this->asStaff($this->staff)->get(self::URL."/{$batch}/report")->assertOk();
         $sheet = IOFactory::load($response->baseResponse->getFile()->getPathname())->getActiveSheet();
 
-        $this->assertSame(\PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING, $sheet->getCell('D2')->getDataType());
+        $this->assertSame(DataType::TYPE_STRING, $sheet->getCell('D2')->getDataType());
         $this->assertSame('=HYPERLINK("http://example.invalid","احمد")', $sheet->getCell('D2')->getValue());
     }
 
@@ -309,7 +338,7 @@ class ImportApprovalTest extends TestCase
     {
         $batch = $this->uploadRows([LegacyWorkbook::row()]);
 
-        $this->asStaff($this->staff)->postJson(self::URL . "/{$batch}/cancel", [])->assertStatus(422)->assertJsonValidationErrors('reason');
+        $this->asStaff($this->staff)->postJson(self::URL."/{$batch}/cancel", [])->assertStatus(422)->assertJsonValidationErrors('reason');
     }
 
     public function test_approval_is_audited(): void
@@ -319,7 +348,7 @@ class ImportApprovalTest extends TestCase
 
         $this->approve($batch)->assertOk();
 
-        Log::shouldHaveReceived('notice')->withArgs(fn(string $event, array $context) => $event === 'import.approved'
+        Log::shouldHaveReceived('notice')->withArgs(fn (string $event, array $context) => $event === 'import.approved'
             && $context['batch_id'] === $batch && $context['imported'] === 3)->once();
     }
 
@@ -328,7 +357,7 @@ class ImportApprovalTest extends TestCase
         $batch = $this->mixedBatch();
         $this->approve($batch)->assertOk();
 
-        $response = $this->asStaff($this->staff)->get(self::URL . "/{$batch}/report")->assertOk();
+        $response = $this->asStaff($this->staff)->get(self::URL."/{$batch}/report")->assertOk();
 
         $path = $response->baseResponse->getFile()->getPathname();
         $sheet = IOFactory::load($path)->getActiveSheet();

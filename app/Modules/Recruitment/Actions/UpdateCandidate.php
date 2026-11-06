@@ -19,13 +19,24 @@ class UpdateCandidate
     public function execute(Candidate $candidate, array $changes, StaffUser $actor): Candidate
     {
         return DB::transaction(function () use ($candidate, $changes, $actor) {
-            $candidate = Candidate::query()->whereKey($candidate->getKey())->lockForUpdate()->firstOrFail();
+            // The person locks first, then the row (the order every writer follows, so none waits for another): both
+            // numbers when it changes, so nobody creates a person or an application with them meanwhile.
+            $numbers = [$candidate->national_number];
 
             if (array_key_exists('national_number', $changes)) {
                 $changes['national_number'] = NationalNumber::normalize((string) $changes['national_number']);
+                $numbers[] = $changes['national_number'];
+            }
 
-                // Both numbers are locked: nobody can create a person or an application with them meanwhile.
-                CreateApplication::lockPeople([$candidate->national_number, $changes['national_number']]);
+            CreateApplication::lockPeople($numbers);
+            $current = $candidate->national_number;
+            $candidate = Candidate::query()->whereKey($candidate->getKey())->lockForUpdate()->firstOrFail();
+
+            if ($candidate->national_number !== $current) {
+                throw ValidationException::withMessages(['candidate' => [__('recruitment.changed_meanwhile')]]);
+            }
+
+            if (array_key_exists('national_number', $changes)) {
 
                 $taken = Candidate::query()
                     ->where('national_number', $changes['national_number'])
@@ -48,7 +59,7 @@ class UpdateCandidate
                     'candidate_id' => $candidate->id,
                     'changes' => collect($dirty)
                         ->except('name_search_key')
-                        ->map(fn($to, $field) => ['from' => self::plain($before[$field] ?? null), 'to' => self::plain($candidate->getAttribute($field))])
+                        ->map(fn ($to, $field) => ['from' => self::plain($before[$field] ?? null), 'to' => self::plain($candidate->getAttribute($field))])
                         ->all(),
                 ]);
             }

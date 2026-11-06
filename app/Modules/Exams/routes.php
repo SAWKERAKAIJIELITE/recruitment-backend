@@ -8,6 +8,7 @@ use App\Modules\Exams\Http\Controllers\ExamQuestionController;
 use App\Modules\Exams\Http\Controllers\ExamSessionController;
 use App\Modules\Exams\Http\Controllers\ExamSubjectController;
 use App\Modules\Exams\Http\Controllers\PassPolicyController;
+use App\Modules\Exams\Http\Middleware\EnsureVenueNetwork;
 use App\Modules\Identity\Http\Middleware\EnsureStaffIsActive;
 use App\Modules\Identity\Http\Middleware\RequireAnyPermission;
 use Illuminate\Support\Facades\Route;
@@ -74,7 +75,10 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
     });
 
     // The questions with their answers: only who manages the bank.
-    Route::get('exam-sessions/{session}/questions', [ExamSessionController::class, 'questions'])->whereUuid('session')->middleware('can:exam_bank.manage');
+    Route::middleware('can:exam_bank.manage')->group(function () {
+        Route::get('exam-sessions/{session}/questions', [ExamSessionController::class, 'questions'])->whereUuid('session');
+        Route::get('exam-attempts/{attempt}/answers', [ExamBookingController::class, 'answers'])->whereUuid('attempt');
+    });
 
     // Individual permissions (never given by a role).
     Route::middleware('can:attempts.extend')->group(function () {
@@ -88,8 +92,9 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
     });
 });
 
-// The candidate's exam page (D-072): a token for one booking, from the national number and the session's password.
-Route::middleware('api')->prefix('api/v1/candidate')->group(function () {
+// The candidate's exam page (D-072): a token for one booking, from the national number and the session's password,
+// only from the venue's network (D-077).
+Route::middleware(['api', EnsureVenueNetwork::class])->prefix('api/v1/candidate')->group(function () {
     Route::post('auth/login', [CandidateExamController::class, 'login'])->middleware('throttle:candidate-login');
 
     Route::middleware('auth:candidate')->group(function () {

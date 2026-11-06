@@ -6,6 +6,7 @@ use App\Modules\Contracts\Models\Contract;
 use App\Modules\Contracts\Notifications\ContractEndingSoon;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
+use App\Support\BusinessDay;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
@@ -23,7 +24,7 @@ class RemindExpiringContracts
     /** @return int how many contracts were reminded */
     public function run(): int
     {
-        $today = Date::today();
+        $today = BusinessDay::todayDate();
         $managers = $this->contractManagers();
         $count = 0;
 
@@ -31,20 +32,28 @@ class RemindExpiringContracts
             ->latestInChain()
             ->whereNull('expiry_reminded_at')
             ->whereBetween('ends_on', [$today->toDateString(), $today->copy()->addDays(Contract::reminderDays())->toDateString()])
-            ->whereHas('application', fn($application) => $application->where('current_status', ApplicationStatus::ContractWritten))
+            ->whereHas('application', fn ($application) => $application->where('current_status', ApplicationStatus::ContractWritten))
             ->orderBy('ends_on')
             ->pluck('id');
 
         foreach ($due as $id) {
-            $count += DB::transaction(function () use ($id, $managers) {
-                // Another run may have taken it: skip it rather than wait, and never remind twice.
-                $contract = Contract::query()->whereKey($id)->whereNull('expiry_reminded_at')->lock('for update skip locked')->first();
+            $count += DB::transaction(function () use ($id, $managers, $today) {
+                // Another run may have taken it: skip it rather than wait, and never remind twice. Still due, read
+                // again under the lock: renewed, ended or given a later end in the meantime, it is not reminded.
+                $contract = Contract::query()
+                    ->whereKey($id)
+                    ->latestInChain()
+                    ->whereNull('expiry_reminded_at')
+                    ->whereBetween('ends_on', [$today->toDateString(), $today->copy()->addDays(Contract::reminderDays())->toDateString()])
+                    ->whereHas('application', fn ($application) => $application->where('current_status', ApplicationStatus::ContractWritten))
+                    ->lock('for update skip locked')
+                    ->first();
 
                 if ($contract === null) {
                     return 0;
                 }
 
-                $recipients = $managers->concat([$contract->creator])->filter(fn(?StaffUser $user) => $user?->is_active === true)->unique('id')->values();
+                $recipients = $managers->concat([$contract->creator])->filter(fn (?StaffUser $user) => $user?->is_active === true)->unique('id')->values();
                 Notification::send($recipients, new ContractEndingSoon($contract->load('application.candidate')));
                 $contract->forceFill(['expiry_reminded_at' => Date::now()])->save();
 
@@ -60,6 +69,6 @@ class RemindExpiringContracts
     /** @return Collection<int, StaffUser> active staff holding contracts.manage (through a role or a grant, minus denials) */
     private function contractManagers(): Collection
     {
-        return StaffUser::query()->where('is_active', true)->get()->filter(fn(StaffUser $user) => $user->hasPermission('contracts.manage'))->values();
+        return StaffUser::query()->where('is_active', true)->get()->filter(fn (StaffUser $user) => $user->hasPermission('contracts.manage'))->values();
     }
 }

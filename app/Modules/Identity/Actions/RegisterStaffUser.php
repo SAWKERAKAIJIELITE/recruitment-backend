@@ -30,11 +30,10 @@ class RegisterStaffUser
         $user = DB::transaction(function () use ($data, $role, $actor) {
             $user = StaffUser::create($data);
             $user->roles()->attach($role->id, ['assigned_by' => $actor->id, 'created_at' => now()]);
+            AccessLog::record('user_created', $actor, ['user_id' => $user->id, 'username' => $user->username, 'role' => $role->slug]);
 
             return $user;
         });
-
-        AccessLog::record('user_created', $actor, ['user_id' => $user->id, 'username' => $user->username, 'role' => $role->slug]);
 
         return $user->load('roles', 'permissions');
     }

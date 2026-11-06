@@ -21,7 +21,7 @@ use Tests\TestCase;
 
 class ApplicationApiTest extends TestCase
 {
-    use RefreshDatabase, StaffTestHelpers, RecruitmentTestHelpers;
+    use RecruitmentTestHelpers, RefreshDatabase, StaffTestHelpers;
 
     private const URL = '/api/v1/staff/applications';
 
@@ -62,7 +62,7 @@ class ApplicationApiTest extends TestCase
     {
         $response = $this->asStaff($this->hiringStaff())->postJson(self::URL, $this->applicationPayload())->assertCreated();
 
-        $this->assertMatchesRegularExpression('/^' . now()->format('Y') . '\d{6}$/', $response->json('data.nomination_number'));
+        $this->assertMatchesRegularExpression('/^'.now()->format('Y').'\d{6}$/', $response->json('data.nomination_number'));
     }
 
     public function test_numbers_increase_with_each_application(): void
@@ -88,7 +88,7 @@ class ApplicationApiTest extends TestCase
         $staff = $this->hiringStaff();
 
         foreach (['01234567890', '12345678901234567890'] as $number) {
-            $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload(['candidate' => ['national_number' => $number]] + ['phone_number' => '09' . substr($number, -8)]))
+            $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload(['candidate' => ['national_number' => $number]] + ['phone_number' => '09'.substr($number, -8)]))
                 ->assertCreated()->assertJsonPath('data.candidate.national_number', $number);
         }
     }
@@ -102,6 +102,22 @@ class ApplicationApiTest extends TestCase
 
         $this->assertSame('01234567890', Candidate::firstOrFail()->national_number);
         $this->assertSame('0912345678', Application::firstOrFail()->phone_number);
+    }
+
+    public function test_a_letter_in_a_national_number_is_refused_not_dropped(): void
+    {
+        // "O" typed for a zero must not quietly become another person's number.
+        $this->asStaff($this->hiringStaff())->postJson(self::URL, $this->applicationPayload(['candidate' => ['national_number' => '0123456789O1']]))
+            ->assertStatus(422)->assertJsonValidationErrors('candidate.national_number');
+        $this->assertSame(0, Candidate::query()->count());
+    }
+
+    public function test_an_employee_number_in_arabic_digits_is_found(): void
+    {
+        $staff = $this->hiringStaff();
+        $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload(['existing_employee_number' => '١٢٣٤٥']))->assertCreated();
+
+        $this->assertSame('12345', Application::firstOrFail()->existing_employee_number);
     }
 
     public function test_the_same_person_is_recognised_by_national_number_and_their_file_is_not_overwritten(): void
@@ -242,7 +258,7 @@ class ApplicationApiTest extends TestCase
     {
         $application = $this->openApplication();
 
-        $this->asStaff($this->hiringStaff())->postJson(self::URL . "/{$application->id}/close", ['reason' => 'انسحب المرشح'])
+        $this->asStaff($this->hiringStaff())->postJson(self::URL."/{$application->id}/close", ['reason' => 'انسحب المرشح'])
             ->assertForbidden();
         $this->assertSame(S::AwaitingExam, $application->fresh()->current_status);
     }
@@ -252,7 +268,7 @@ class ApplicationApiTest extends TestCase
         $closer = $this->closer();
         $application = $this->openApplication();
 
-        $this->asStaff($closer)->postJson(self::URL . "/{$application->id}/close", ['reason' => 'انسحب المرشح'])
+        $this->asStaff($closer)->postJson(self::URL."/{$application->id}/close", ['reason' => 'انسحب المرشح'])
             ->assertOk()
             ->assertJsonPath('data.status', 'closed')
             ->assertJsonPath('data.history.1.decision_type', 'closure')
@@ -265,7 +281,7 @@ class ApplicationApiTest extends TestCase
     {
         $application = $this->openApplication();
 
-        $this->asStaff($this->closer())->postJson(self::URL . "/{$application->id}/close", ['reason' => ' '])
+        $this->asStaff($this->closer())->postJson(self::URL."/{$application->id}/close", ['reason' => ' '])
             ->assertStatus(422)
             ->assertJsonValidationErrors('reason');
     }
@@ -277,12 +293,12 @@ class ApplicationApiTest extends TestCase
         $application = $this->openApplication();
         $this->travelBack();
 
-        $this->asStaff($closer)->postJson(self::URL . "/{$application->id}/close", ['reason' => 'قرار ورقي', 'occurred_at' => now()->addDay()->toDateString()])
+        $this->asStaff($closer)->postJson(self::URL."/{$application->id}/close", ['reason' => 'قرار ورقي', 'occurred_at' => now()->addDay()->toDateString()])
             ->assertStatus(422)->assertJsonValidationErrors('occurred_at');
-        $this->asStaff($closer)->postJson(self::URL . "/{$application->id}/close", ['reason' => 'قرار ورقي', 'occurred_at' => '2026-02-01'])
+        $this->asStaff($closer)->postJson(self::URL."/{$application->id}/close", ['reason' => 'قرار ورقي', 'occurred_at' => '2026-02-01'])
             ->assertStatus(422)->assertJsonValidationErrors('occurred_at');   // before the application was opened
 
-        $this->asStaff($closer)->postJson(self::URL . "/{$application->id}/close", ['reason' => 'قرار ورقي', 'occurred_at' => '2026-03-05 10:30:00'])
+        $this->asStaff($closer)->postJson(self::URL."/{$application->id}/close", ['reason' => 'قرار ورقي', 'occurred_at' => '2026-03-05 10:30:00'])
             ->assertOk()
             ->assertJsonPath('data.history.1.occurred_at', '2026-03-05T10:30:00.000000Z');
     }
@@ -291,7 +307,7 @@ class ApplicationApiTest extends TestCase
     {
         $application = $this->openApplication();
 
-        $this->asStaff($this->closer())->postJson(self::URL . "/{$application->id}/close", ['reason' => 'قرار اليوم', 'occurred_at' => now()->toDateString()])
+        $this->asStaff($this->closer())->postJson(self::URL."/{$application->id}/close", ['reason' => 'قرار اليوم', 'occurred_at' => now()->toDateString()])
             ->assertOk()
             ->assertJsonPath('data.status', 'closed');
     }
@@ -302,7 +318,7 @@ class ApplicationApiTest extends TestCase
         $closed = $this->openApplication();
         $this->closeApplication($closed);
 
-        $this->asStaff($closer)->postJson(self::URL . "/{$closed->id}/close", ['reason' => 'مرة ثانية'])
+        $this->asStaff($closer)->postJson(self::URL."/{$closed->id}/close", ['reason' => 'مرة ثانية'])
             ->assertStatus(422)->assertJsonValidationErrors('status');
 
         $hired = $this->openApplication(null, ['candidate' => ['national_number' => '55555555555']]);
@@ -310,7 +326,7 @@ class ApplicationApiTest extends TestCase
             app(ApplicationLifecycle::class)->move($hired, $to, D::Outcome);
         }
 
-        $this->asStaff($closer)->postJson(self::URL . "/{$hired->id}/close", ['reason' => 'خطأ'])
+        $this->asStaff($closer)->postJson(self::URL."/{$hired->id}/close", ['reason' => 'خطأ'])
             ->assertStatus(422)
             ->assertJsonPath('errors.status.0', __('recruitment.illegal_transition', ['status' => S::ContractWritten->labelAr()]));
     }
@@ -454,7 +470,7 @@ class ApplicationApiTest extends TestCase
         $application = $this->openApplication($staff);
         JobPosition::findOrFail($application->job_position_id)->delete();
 
-        $this->asStaff($staff)->getJson(self::URL . "/{$application->id}")
+        $this->asStaff($staff)->getJson(self::URL."/{$application->id}")
             ->assertOk()
             ->assertJsonPath('data.job_position.name_ar', 'مدرس')
             ->assertJsonPath('data.job_position.archived', true);
@@ -495,9 +511,9 @@ class ApplicationApiTest extends TestCase
         $this->openApplication($staff, ['candidate' => ['full_name' => 'احمد حسن', 'national_number' => '22222222222']]);
         $this->openApplication($staff, ['candidate' => ['full_name' => 'سارة خالد', 'national_number' => '33333333333']]);
 
-        $this->asStaff($staff)->getJson(self::URL . '?q=' . urlencode('احمد'))->assertOk()->assertJsonCount(2, 'data');
-        $this->asStaff($staff)->getJson(self::URL . '?q=' . urlencode('أحمد'))->assertJsonCount(2, 'data');
-        $this->asStaff($staff)->getJson(self::URL . '?q=' . urlencode('ساره'))->assertJsonCount(1, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?q='.urlencode('احمد'))->assertOk()->assertJsonCount(2, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?q='.urlencode('أحمد'))->assertJsonCount(2, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?q='.urlencode('ساره'))->assertJsonCount(1, 'data');
     }
 
     public function test_search_by_nomination_number_is_exact(): void
@@ -505,10 +521,10 @@ class ApplicationApiTest extends TestCase
         $staff = $this->hiringStaff();
         $application = $this->openApplication($staff);
 
-        $this->asStaff($staff)->getJson(self::URL . '?q=' . $application->nomination_number)
+        $this->asStaff($staff)->getJson(self::URL.'?q='.$application->nomination_number)
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.id', $application->id);
-        $this->asStaff($staff)->getJson(self::URL . '?q=' . substr($application->nomination_number, 0, 6))
+        $this->asStaff($staff)->getJson(self::URL.'?q='.substr($application->nomination_number, 0, 6))
             ->assertJsonCount(0, 'data');
     }
 
@@ -517,8 +533,8 @@ class ApplicationApiTest extends TestCase
         $staff = $this->hiringStaff();
         $this->openApplication($staff);
 
-        $this->asStaff($staff)->getJson(self::URL . '?national_number=' . urlencode('٠١٢٣٤٥٦٧٨٩٠'))->assertJsonCount(1, 'data');
-        $this->asStaff($staff)->getJson(self::URL . '?national_number=00000000000')->assertJsonCount(0, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?national_number='.urlencode('٠١٢٣٤٥٦٧٨٩٠'))->assertJsonCount(1, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?national_number=00000000000')->assertJsonCount(0, 'data');
     }
 
     public function test_filters(): void
@@ -529,12 +545,12 @@ class ApplicationApiTest extends TestCase
         $b = $this->openApplication($staff, ['job_position_id' => $otherPosition->id, 'candidate' => ['national_number' => '44444444444']]);
         app(ApplicationLifecycle::class)->move($b, S::ExamFailed, D::Outcome);
 
-        $this->asStaff($staff)->getJson(self::URL . '?status=exam_failed')->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $b->id);
-        $this->asStaff($staff)->getJson(self::URL . '?status=awaiting_exam')->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $a->id);
-        $this->asStaff($staff)->getJson(self::URL . '?job_position_id=' . $otherPosition->id)->assertJsonCount(1, 'data');
-        $this->asStaff($staff)->getJson(self::URL . '?nominating_entity_id=' . $a->nominating_entity_id)->assertJsonCount(2, 'data');
-        $this->asStaff($staff)->getJson(self::URL . '?residence_district_id=' . $a->residence_district_id)->assertJsonCount(2, 'data');
-        $this->asStaff($staff)->getJson(self::URL . '?status=nonsense')->assertStatus(422);
+        $this->asStaff($staff)->getJson(self::URL.'?status=exam_failed')->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $b->id);
+        $this->asStaff($staff)->getJson(self::URL.'?status=awaiting_exam')->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $a->id);
+        $this->asStaff($staff)->getJson(self::URL.'?job_position_id='.$otherPosition->id)->assertJsonCount(1, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?nominating_entity_id='.$a->nominating_entity_id)->assertJsonCount(2, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?residence_district_id='.$a->residence_district_id)->assertJsonCount(2, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?status=nonsense')->assertStatus(422);
     }
 
     public function test_date_filters_include_the_whole_last_day(): void
@@ -544,9 +560,9 @@ class ApplicationApiTest extends TestCase
         $this->openApplication($staff);
         $this->travelBack();
 
-        $this->asStaff($staff)->getJson(self::URL . '?from=2026-03-10&to=2026-03-10')->assertJsonCount(1, 'data');
-        $this->asStaff($staff)->getJson(self::URL . '?from=2026-03-11')->assertJsonCount(0, 'data');
-        $this->asStaff($staff)->getJson(self::URL . '?to=2026-03-09')->assertJsonCount(0, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?from=2026-03-10&to=2026-03-10')->assertJsonCount(1, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?from=2026-03-11')->assertJsonCount(0, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?to=2026-03-09')->assertJsonCount(0, 'data');
     }
 
     public function test_the_list_is_paginated(): void
@@ -566,7 +582,7 @@ class ApplicationApiTest extends TestCase
         app(ApplicationLifecycle::class)->move($application, S::ExamAbsent, D::Outcome);
         app(ApplicationLifecycle::class)->move($application, S::AwaitingExam, D::ExcuseAccepted, $staff, 'Medical certificate');
 
-        $response = $this->asStaff($staff)->getJson(self::URL . "/{$application->id}")->assertOk();
+        $response = $this->asStaff($staff)->getJson(self::URL."/{$application->id}")->assertOk();
 
         $this->assertSame(['awaiting_exam', 'exam_absent', 'awaiting_exam'], collect($response->json('data.history'))->pluck('to_status')->all());
         $this->assertSame([null, 'awaiting_exam', 'exam_absent'], collect($response->json('data.history'))->pluck('from_status')->all());
@@ -578,7 +594,7 @@ class ApplicationApiTest extends TestCase
     {
         $staff = $this->hiringStaff();
 
-        $this->asStaff($staff)->getJson(self::URL . '/' . Str::uuid())->assertNotFound();
-        $this->asStaff($staff)->getJson(self::URL . '/not-a-uuid')->assertNotFound();
+        $this->asStaff($staff)->getJson(self::URL.'/'.Str::uuid())->assertNotFound();
+        $this->asStaff($staff)->getJson(self::URL.'/not-a-uuid')->assertNotFound();
     }
 }

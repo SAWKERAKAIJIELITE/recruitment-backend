@@ -67,6 +67,10 @@ return [
 
     'timezone' => 'UTC',
 
+    // Reverse proxies in front of the application (addresses or CIDR ranges, comma-separated; "*" trusts any): their
+    // X-Forwarded-For gives the client's real address, which login throttling and the venue check rely on.
+    'trusted_proxies' => array_values(array_filter(array_map('trim', explode(',', (string) env('TRUSTED_PROXIES', ''))))),
+
     /*
     |--------------------------------------------------------------------------
     | Application Locale Configuration
