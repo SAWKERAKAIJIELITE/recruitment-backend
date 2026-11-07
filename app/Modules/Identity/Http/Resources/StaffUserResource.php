@@ -13,7 +13,6 @@ class StaffUserResource extends JsonResource
     {
         return [
             'id' => $this->id,
-            // 'type' => $this->type,
             'username' => $this->username,
             'full_name' => $this->full_name,
             'roles' => $this->roles->pluck('slug')->values(),

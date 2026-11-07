@@ -68,7 +68,7 @@ class AppServiceProvider extends ServiceProvider
         // Candidates log in on the exam day, often from one hall's address: generous per address, strict per person.
         RateLimiter::for('candidate-login', fn (Request $request) => [
             Limit::perMinute(120)->by('ip:'.$request->ip()),
-            // Normalised like the login (Arabic digits are the same number), so typing them never shares one bucket.
+            // Normalized like the login (Arabic digits are the same number), so typing them never shares one bucket.
             Limit::perMinute(5)->by('candidate:'.NationalNumber::normalize((string) $request->input('national_number')).'|'.$request->ip()),
         ]);
 

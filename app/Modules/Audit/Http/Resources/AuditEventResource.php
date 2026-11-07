@@ -3,6 +3,7 @@
 namespace App\Modules\Audit\Http\Resources;
 
 use App\Modules\Audit\Models\AuditEvent;
+use App\Modules\Identity\Http\Resources\StaffUserAccessResource;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -18,7 +19,16 @@ class AuditEventResource extends JsonResource
             /** operations, or security (access, devices, logins: audit.view only). */
             'category' => $this->category,
             /** The staff user who acted; null for the system (sweeps, reminders) or a candidate. */
-            'actor' => $this->actor === null ? null : ['id' => $this->actor->id, 'username' => $this->actor->username, 'full_name' => $this->actor->full_name],
+            'actor' => $this->actor === null ?
+                null :
+                new StaffUserAccessResource($this->whenLoaded('actor')),
+            // [
+            //     'id' => $this->actor->id,
+            //     'personal_number' => $this->personal_number,
+            //     'username' => $this->actor->username,
+            //     'full_name' => $this->actor->full_name,
+            //     'is_active' => $this->actor->is_active,
+            // ],
             /** A candidate's own action (exam login, start). */
             'candidate_id' => $this->candidate_id,
             /** What the action was about: the records' ids and the values that changed. */

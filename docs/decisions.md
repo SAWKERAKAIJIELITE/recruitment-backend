@@ -627,7 +627,7 @@ A living record of the design decisions made while building the backend and data
 
 - **Status:** Accepted (owner: "إداري التوظيف can export an Excel file like what I attach; شعبة التجنيد must be the birth_place and الجهة المرشحة is التوجيه المعنوي"; default rows: "passed interview"; permission: "the recruitment role's permissions")
 - **Decision:** `GET /reports/conscription-list` writes the template's layout: the header block on rows 1 to 3, the column titles on row 4 (الاسم الثلاثي في الهوية، اسم الام والنسبة، تاريخ الميلاد، الحالة الاجتماعية، التحصيل العلمي، شعبة التجنيد، مسمى العمل، الجهة العسكرية، ملاحظات), one person per row. شعبة التجنيد is the place of birth; الجهة العسكرية is the same for every row (`reports.military_entity`, "التوجيه المعنوي"); the birth date is day/month/year as the template asks; notes are left empty. By default the applications awaiting their contract (passed the interview); any filter of the applications list changes that. Needs `candidates.manage` (recruitment staff, system administrator).
-- **Consequences:** the system stores the mother's name only, so "اسم الام والنسبة" holds the mother's name as entered (with her family name only when staff typed it).
+- **Consequences:** "اسم الام والنسبة" is the stored `mother_name`, which holds the mother's name and family name together (owner, Step 11: confirmed, as is "التوجيه المعنوي" under الجهة العسكرية).
 
 ### D-070 Roles follow the direct permissions
 
@@ -692,6 +692,97 @@ A living record of the design decisions made while building the backend and data
   - Inside one sitting (`GET /interview-sittings/{id}`), the interviews no longer repeat the sitting, place, committee name and members; they carry `sitting_id`. `GET /interview-sittings?member={staff user id}` lists the sittings a staff user sits on. The staff user model has the relations to what they did (sittings, interviews, applications, imports, documents, plans, contracts, exam sessions, bookings, extensions, marks).
   - Create and change have their own request classes, so the API documentation shows `kind` on creation only. A parameter refused by `prohibited` is hidden from the documentation with `@ignoreParam`. Scramble does not understand `prohibited` and would show it as a string.
 
+### D-077 Candidates sit their exam only from the venue's network
+
+- **Status:** Accepted (owner, Step 11: "the candidates will login only through venue's network"). Narrows the risk noted in D-072.
+- **Decision:** every candidate route, the login included, is reachable only from the networks in `exams.candidate_networks` (`EXAMS_CANDIDATE_NETWORKS`: addresses or CIDR ranges, comma-separated); any other address gets 403 and a log line. With none configured, candidates are refused everywhere except in the local and testing environments, so a forgotten setting never opens the exam. The check uses the client's address: behind a reverse proxy, `TRUSTED_PROXIES` (config `app.trusted_proxies`) must name the proxy, or every candidate would appear as the proxy.
+- **Consequences:** a token taken outside the hall is useless there. One venue list serves every session; a list per session can be added if exams are held in several places with different networks.
+
+### D-078 The audit log is a table
+
+- **Status:** Accepted (analysis doc §07, §17: the audit trail cannot be erased from the interface; ideas table "reject UPDATE and DELETE on audit_events")
+- **Decision:** `AuditTrail::record()` writes a row of `audit_events` (event, category, actor, candidate for a candidate's own action, context as jsonb, address, time) in the transaction of the action, so a rolled-back action leaves none and a kept action always has one, and keeps the log line. Rows are append-only (trigger). Events starting with `access.`, `device.` or `auth.` are **security** events; the others are **operations**. `GET /api/v1/staff/audit-events` lists them newest first with filters (event or its beginning, actor, a record id found in the context, category, dates): `audit.view` reads everything, `audit.view_related` the operations only (analysis doc §02 ✓**). Staff logins, device approvals and revocations are recorded too (they were only implicit before).
+- **Consequences:** failed logins stay in the application log only (a flood of failures must not fill the table). The table grows with use; archiving old rows belongs to the deployment's retention policy.
+
+### D-079 Deactivating staff users
+
+- **Status:** Accepted (pending work from Step 10)
+- **Decision:** `POST /users/{id}/deactivate` (`users.manage`, with a reason) and `POST /users/{id}/activate`. A deactivated user cannot log in, and every token is deleted at once (the active check on each request stops anything in flight). Roles, device and history stay, so reactivating gives the account back as it was. Who, when and why are stored (`staff_users.deactivated_*`, all or none, only on an inactive account: CHECK); an account created inactive has none. Nobody deactivates themselves.
+
+### D-080 Exam marks in the reports; exam results in the interview queue; answer sheets
+
+- **Status:** Accepted (pending work from Step 9 and 10)
+- **Decision:**
+  - The staff exams report (and its passed and failed views, and the workbook's sheets) shows, for decisions made in exam sessions, a column per subject (in the order of the plans), the total, the average and, in the all and failed views, the failure cause in the words of the pass rules ("دون الحد الأدنى (58) في: …", "أكثر من مادة دون علامة النجاح (60): …", "المعدل لا يتجاوز 70"). The values are those of the latest revision of the result. Outcomes recorded without a session have none. The candidates' results statement still shows no failure cause (D-066).
+  - The interview queue takes `exam_average` as a priority rule (best first by default; applications without a recorded result last).
+  - `GET /exam-attempts/{id}/answers` (`exam_bank.manage`) is a candidate's answer sheet: every question in the order they saw it, the key, the last answer, right or wrong, and every save with its time and address.
+
+### D-081 Dates keep their offset; business days are Damascus days
+
+- **Status:** Accepted (review of Step 11)
+- **Decision:**
+  - Laravel writes a date as `Y-m-d H:i:s` and drops its offset, so a time sent as `09:00+03:00` was stored as `09:00 UTC`, three hours late, in every timestamptz column. The pgsql connection now uses a grammar whose date format keeps the offset (`App\Database\PostgresGrammar`, `Y-m-d H:i:sP`), so the instant meant is stored, whatever zone a client sends. Values read back are unchanged.
+  - Days typed or computed for people ("today", a writing day, a contract's state, a reminder window, a results statement's dates) are days of `reports.timezone` (Asia/Damascus), through `App\Support\BusinessDay`. Between midnight and 03:00 in Damascus the UTC day is still yesterday. A decision dated a past day is placed at the end of that Damascus day.
+- **Consequences:** list date filters and the nomination-number year still use UTC days (section 17).
+
+### D-082 An import approval is of what its approver reviewed
+
+- **Status:** Accepted (review of Step 11). Amends D-047.
+- **Decision:** a batch has a `revision` that grows with every change to its rows (a correction, a confirmation, an exclusion, an inclusion, or a revalidation that changes a row's status). Approving sends the `revision` the approver reviewed; any change since gives 422 `batch_changed` with the current revision. Whoever changed rows of a batch cannot approve it (403): another person reviews those changes, as the uploader's.
+- **Consequences:** the frontend sends `revision` (from `GET /imports/{batch}`) with the approval.
+
+### D-083 Review of Step 11: concurrency and consistency fixes
+
+- **Status:** Accepted (an independent review of every module; each finding verified before the fix)
+- **Decision:**
+  - **Access:**
+    - Changes run one at a time (a transaction advisory lock), so two administrators removing each other's `users.manage` can no longer both pass the "someone can still manage users" check, and an automatic role is never computed from a role being changed.
+    - Audit rows are written in the transaction of their change.
+    - Removing a role whose permissions the user's direct grants all hold removes those grants too, otherwise the role came straight back as automatic.
+    - Device approval and revocation lock the device.
+    - A staff token is issued with the device and the user locked and re-read: a revocation, deactivation or password reset made during the login wins.
+    - The database sessions table uses Laravel's `user_id` column; the API docs page failed with database sessions.
+    - Sanctum tries no session guard first.
+    - Expired tokens are pruned daily.
+    - `DevUsersSeeder` refuses to run in production.
+  - **Candidate login:**
+    - The per-person throttle key is the normalised national number. Typed in Arabic digits it was empty, and a whole hall shared one bucket.
+    - An unknown number costs a password hash, like a known one.
+    - Two simultaneous logins keep one token.
+    - Candidate logins are security events.
+  - **Exams:**
+    - The late window is at least a minute (with 0 nobody could ever start).
+    - A booking cannot be cancelled once the late window closed; it is an absence.
+    - Starting takes the session's lock first, so an extension given for everyone at that moment is not missed. It also follows one lock order (session, booking, application), refuses an application no longer awaiting its exam, and writes the questions in one statement.
+    - A decision locks the application, and a refused move keeps the result instead of rolling back the closing.
+    - The sweep handles each item on its own.
+    - New options of a question need their `correct_option`.
+    - A session given an extension is no longer "unused".
+    - The bookings list loads every count with it.
+    - The database refuses a submission after the deadline and any change to a closed attempt.
+  - **Interviews:**
+    - A sitting's duplicate check runs before it is saved, and replacing its members resets its fingerprint.
+    - A corrected `held_at` must stay before the result was entered and after the decision it followed.
+    - An interview of an application that moved on is not rescheduled.
+    - Booking through an interview excuse needs `interviews.manage` too.
+    - Bulk bookings lock the applications in one order.
+  - **Contracts:**
+    - A corrected writing day stays after the interview was passed and before the end.
+    - A reminder re-checks that the contract is still due under its lock.
+  - **Reports:**
+    - The candidates' results follow a corrected exam outcome and show Damascus days.
+    - Exports count their own rows before loading anything.
+    - The dashboard uses subqueries instead of lists of ids.
+  - **Recruitment and imports:**
+    - Letters in a national number are refused, not dropped.
+    - `confirmed_national_number` holds 20 digits.
+    - A full-length national number stored as a number is confirmed by staff (Excel keeps 15 digits and may drop a zero).
+    - Employee numbers are stored with ASCII digits.
+    - Person locks come before row locks everywhere.
+    - The applications' numeric CHECKs refuse negatives.
+    - Documents and the audit log refuse TRUNCATE.
+    - Workbooks are checked by content type and by every relationship (renamed or moved macro, object, link and connection parts are refused, and any outside target but a hyperlink). Each part's declared size is capped. The parts read are found as the reader finds them. An .xls is refused for Excel 4 auto-run names and embedded objects as well as VBA.
+
 ---
 
 ## Resolved and deferred questions
@@ -715,6 +806,8 @@ A living record of the design decisions made while building the backend and data
 | OD-15 | The legacy exams sheet computes results differently from the analysis doc | **Resolved (owner):** the doc's rules are right (D-052): one subject from 58 tolerated, average strictly above 70. Results copied from old sheets can differ. |
 | OD-16 | One exam session for all subjects, or a session per subject? | **Resolved (owner):** one session; التجويد is oral the same day and marked by hand (D-054). |
 | OD-17 | Difficulty levels in the question distribution | **Resolved (owner):** easy, medium and hard, every exam subject or part asks all three (D-054). |
+| OD-18 | The interview evaluation form and the first contract form from management | **Resolved / waiting (owner, Step 11):** no interview evaluation form is needed (the template's three grades and the committee's summary stay, D-059); the contract form is still awaited from the client, so contract fields may grow (D-064). |
+| OD-19 | The شعبة التجنيد list's الجهة العسكرية and اسم الام والنسبة | **Resolved (owner, Step 11):** "التوجيه المعنوي" under الجهة العسكرية; the stored mother's name holds name and family name together (D-069). |
 
 ---
 
