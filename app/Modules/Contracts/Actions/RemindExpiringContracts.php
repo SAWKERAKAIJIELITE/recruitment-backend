@@ -66,9 +66,9 @@ class RemindExpiringContracts
         return $count;
     }
 
-    /** @return Collection<int, StaffUser> active staff holding contracts.manage (through a role or a grant, minus denials) */
+    /** @return Collection<int, StaffUser> active staff holding contracts.manage (through their role) */
     private function contractManagers(): Collection
     {
-        return StaffUser::query()->where('is_active', true)->get()->filter(fn (StaffUser $user) => $user->hasPermission('contracts.manage'))->values();
+        return StaffUser::query()->where('is_active', true)->with('role.permissions')->get()->filter(fn (StaffUser $user) => $user->hasPermission('contracts.manage'))->values();
     }
 }

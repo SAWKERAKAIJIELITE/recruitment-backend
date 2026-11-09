@@ -19,8 +19,8 @@ return new class extends Migration
             $table->uuid('id')->primary();
             $table->string('slug', 100)->unique();
             $table->string('label_ar', 150);
-            // true = may only be granted to individual users, never attached to a role (the ✓* cells)
-            $table->boolean('individual_only')->default(false);
+            // true = it only shows data: the only kind the general manager's role may hold (D-085)
+            $table->boolean('read_only')->default(false);
             $table->timestampsTz();
         });
 

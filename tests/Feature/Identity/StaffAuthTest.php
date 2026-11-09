@@ -30,7 +30,7 @@ class StaffAuthTest extends TestCase
     public function test_staff_logs_in_from_an_approved_device_with_case_insensitive_username(): void
     {
         $user = StaffUserFactory::new()
-            ->withRole('recruitment_staff')
+            ->withRole('recruitment')
             ->create(['username' => 'sara', 'password' => 'secret-pass']);
 
         ['device' => $device, 'key' => $key] = $this->approvedDevice($user);
@@ -38,12 +38,12 @@ class StaffAuthTest extends TestCase
         $response = $this->deviceLogin($device, $key, 'Sara', 'secret-pass')
             ->assertOk()
             ->assertJsonStructure([
-                'token', 'token_type', 'user' => ['id', 'username', 'roles', 'permissions'],
+                'token', 'token_type', 'user' => ['id', 'username', 'role', 'permissions'],
             ])
-            ->assertJsonPath('user.roles.0', 'recruitment_staff');
+            ->assertJsonPath('user.role', 'recruitment');
 
-        $this->assertContains('reports.view', $response->json('user.permissions'));
-        $this->assertNotContains('attempts.extend', $response->json('user.permissions'));
+        $this->assertContains('candidates.manage', $response->json('user.permissions'));
+        $this->assertNotContains('exams.manage', $response->json('user.permissions'));   // another office's
         $this->assertDatabaseHas('personal_access_tokens', ['staff_device_id' => $device->id]);
         $this->assertNotNull($device->fresh()->last_seen_at);
     }

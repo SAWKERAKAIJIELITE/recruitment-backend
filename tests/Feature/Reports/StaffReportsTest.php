@@ -48,7 +48,9 @@ class StaffReportsTest extends TestCase
     {
         parent::setUp();
         $this->seed(RolesAndPermissionsSeeder::class);
-        $this->staff = $this->hiringStaff();
+        $this->staff = $this->staffOf('system_admin');   // reads every section's reports
+        $this->referenceIds();
+        $this->openVacancies();
         $this->story();
     }
 
@@ -81,12 +83,12 @@ class StaffReportsTest extends TestCase
         $lifecycle->move($this->people['B'], S::AwaitingExam, D::ExcuseAccepted, $this->staff, 'مرض موثق', null, $this->at('2026-03-15 09:00:00'));
 
         $this->at('2026-03-31 23:00:00');
-        $late = $sittings->create(['starts_at' => '2026-03-31 22:00:00', 'location' => 'القاعة 1', 'committee_name' => 'لجنة آذار'], [['name' => 'رئيس', 'capacity' => 'chair']], $this->staff);
+        $late = $sittings->create(['starts_at' => '2026-03-31 22:00:00', 'ends_at' => '2026-04-01 02:00:00', 'location' => 'القاعة 1', 'committee_name' => 'لجنة آذار'], [['name' => 'رئيس', 'capacity' => 'chair']], $this->staff);
         $interview = $interviews->schedule($this->people['C'], ['sitting_id' => $late->id, 'scheduled_at' => '2026-03-31 22:30:00'], $this->staff);
         $interviews->record($interview, ['result' => 'failed', 'held_at' => '2026-03-31 22:30:00', 'scientific_grade' => 'weak', 'general_grade' => 'average', 'overall_grade' => 'weak', 'notes' => 'ضعف علمي'], $this->staff);
 
         $this->at('2026-04-05 12:00:00');
-        $april = $sittings->create(['starts_at' => '2026-04-05 08:00:00', 'location' => 'القاعة 2', 'committee_name' => 'لجنة نيسان'], [['name' => 'رئيس', 'capacity' => 'chair']], $this->staff);
+        $april = $sittings->create(['starts_at' => '2026-04-05 08:00:00', 'ends_at' => '2026-04-05 14:00:00', 'location' => 'القاعة 2', 'committee_name' => 'لجنة نيسان'], [['name' => 'رئيس', 'capacity' => 'chair']], $this->staff);
         $interview = $interviews->schedule($this->people['A'], ['sitting_id' => $april->id, 'scheduled_at' => '2026-04-05 09:00:00'], $this->staff);
         $interviews->record($interview, ['result' => 'passed', 'held_at' => '2026-04-05 09:00:00', 'scientific_grade' => 'good', 'general_grade' => 'good', 'overall_grade' => 'good'], $this->staff);
 
@@ -100,7 +102,7 @@ class StaffReportsTest extends TestCase
         $lifecycle->move($this->people['B'], S::AwaitingInterview, D::Outcome, null, null, null, $this->at('2026-05-03 09:00:00'));
 
         $this->at('2026-05-10 12:00:00');
-        $may = $sittings->create(['starts_at' => '2026-05-10 08:00:00', 'location' => 'القاعة 3', 'committee_name' => 'لجنة أيار'], [['name' => 'رئيس', 'capacity' => 'chair']], $this->staff);
+        $may = $sittings->create(['starts_at' => '2026-05-10 08:00:00', 'ends_at' => '2026-05-10 14:00:00', 'location' => 'القاعة 3', 'committee_name' => 'لجنة أيار'], [['name' => 'رئيس', 'capacity' => 'chair']], $this->staff);
         $interview = $interviews->schedule($this->people['B'], ['sitting_id' => $may->id], $this->staff);
         $interviews->record($interview, ['result' => 'absent', 'held_at' => '2026-05-10 08:00:00', 'notes' => 'لم يحضر'], $this->staff);
         $interviews->acceptExcuse($this->people['B'], 'حادث سير', $this->at('2026-05-12 09:00:00'), null, $this->staff);
@@ -337,11 +339,25 @@ class StaffReportsTest extends TestCase
 
     public function test_permissions(): void
     {
-        $manager = StaffUserFactory::new()->withRole('general_manager')->create();   // reports.view
+        $manager = StaffUserFactory::new()->withRole('general_manager')->create();   // every view
+        $recruitment = $this->hiringStaff();
+        $exams = $this->examsStaff();
 
         $this->asStaff($manager)->getJson('/api/v1/staff/reports/summary')->assertOk();
         $this->asStaff($manager)->get('/api/v1/staff/reports/exams')->assertOk();
+        $this->asStaff($manager)->get('/api/v1/staff/reports/workbook')->assertOk();
         $this->asStaff($manager)->getJson('/api/v1/staff/reports/conscription-list')->assertForbidden();
         $this->asStaff(StaffUserFactory::new()->create())->getJson('/api/v1/staff/reports/summary')->assertForbidden();
+
+        // Each report its section's (D-086).
+        $this->asStaff($recruitment)->get('/api/v1/staff/reports/applications')->assertOk();
+        $this->asStaff($recruitment)->get('/api/v1/staff/reports/conscription-list')->assertOk();
+        $this->asStaff($recruitment)->get('/api/v1/staff/reports/exams')->assertForbidden();
+        $this->asStaff($recruitment)->getJson('/api/v1/staff/reports/summary')->assertForbidden();
+        $this->asStaff($exams)->get('/api/v1/staff/reports/exams-failed')->assertOk();
+        $this->asStaff($exams)->get('/api/v1/staff/reports/interviews')->assertOk();
+        $this->asStaff($exams)->get('/api/v1/staff/reports/applications')->assertForbidden();
+        $this->asStaff($exams)->get('/api/v1/staff/reports/dashboard')->assertForbidden();
+        $this->asStaff($this->contractsStaff())->get('/api/v1/staff/reports/interviews')->assertForbidden();
     }
 }

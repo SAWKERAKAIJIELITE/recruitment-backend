@@ -4,13 +4,13 @@ namespace Tests\Feature\Identity;
 
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
+use App\Modules\Identity\Models\Permission;
 use App\Modules\Identity\Models\Role;
 use App\Modules\Identity\Models\StaffUser;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
-use Illuminate\Testing\TestResponse;
 use Tests\Support\StaffTestHelpers;
 use Tests\TestCase;
 
@@ -31,61 +31,126 @@ class AccessManagementTest extends TestCase
 
     private function rolePermissions(string $slug): array
     {
-        return Role::where('slug', $slug)->firstOrFail()->permissions()->pluck('slug')->all();
+        return Role::where('slug', $slug)->firstOrFail()->permissions()->pluck('slug')->sort()->values()->all();
     }
 
     // ---- who may manage access ----
 
     public function test_only_holders_of_users_manage_can_use_access_management(): void
     {
-        $staff = StaffUserFactory::new()->withRole('recruitment_staff')->create();
+        $staff = StaffUserFactory::new()->withRole('recruitment')->create();
 
         $this->asStaff($staff)->getJson(self::BASE.'/roles')->assertForbidden();
         $this->asStaff($staff)->getJson(self::BASE.'/permissions')->assertForbidden();
         $this->asStaff($this->admin)->getJson(self::BASE.'/roles')->assertOk();
     }
 
-    public function test_permission_catalogue_marks_individual_only_permissions(): void
+    public function test_permission_catalogue_marks_read_only_permissions(): void
     {
         $response = $this->asStaff($this->admin)->getJson(self::BASE.'/permissions')->assertOk();
 
         $bySlug = collect($response->json('data'))->keyBy('slug');
 
-        $this->assertTrue($bySlug['attempts.extend']['individual_only']);
-        $this->assertTrue($bySlug['exceptions.approve']['individual_only']);
-        $this->assertFalse($bySlug['reports.view']['individual_only']);
+        $this->assertTrue($bySlug['reports.view']['read_only']);
+        $this->assertTrue($bySlug['exams.view']['read_only']);
+        $this->assertFalse($bySlug['exceptions.approve']['read_only']);
+        $this->assertArrayNotHasKey('individual_only', $bySlug['reports.view']);
+    }
+
+    // ---- the offices (D-085) ----
+
+    public function test_each_office_controls_its_own_section_only(): void
+    {
+        $sections = [
+            'recruitment' => ['candidates.manage', 'applications.start', 'applications.close', 'imports.manage', 'imports.approve'],
+            'exams_interviews' => ['exams.manage', 'exam_bank.manage', 'interviews.manage', 'exceptions.approve', 'attempts.extend', 'interviews.correct', 'exam_results.correct', 'pass_policies.manage'],
+            'contracts' => ['contracts.manage'],
+            'documenting' => ['documents.manage'],
+        ];
+
+        foreach ($sections as $office => $own) {
+            $user = StaffUserFactory::new()->withRole($office)->create();
+            $others = collect($sections)->except($office)->flatten()->all();
+
+            foreach ($own as $permission) {
+                $this->assertTrue($user->hasPermission($permission), "{$office} holds {$permission}");
+            }
+
+            foreach ([...$others, 'users.manage', 'vacancies.manage', 'reports.view', 'audit.view'] as $permission) {
+                $this->assertFalse($user->hasPermission($permission), "{$office} does not hold {$permission}");
+            }
+        }
+
+        // Recruitment sees the full file; the other offices do not.
+        $this->assertTrue(StaffUserFactory::new()->withRole('recruitment')->create()->hasPermission('applications.view'));
+        $this->assertFalse(StaffUserFactory::new()->withRole('exams_interviews')->create()->hasPermission('applications.view'));
+    }
+
+    public function test_the_general_manager_only_views_and_the_administrator_holds_everything(): void
+    {
+        $manager = StaffUserFactory::new()->withRole('general_manager')->create();
+        $readOnly = Permission::query()->where('read_only', true)->pluck('slug');
+
+        $this->assertSame([], $manager->permissionSlugs()->diff($readOnly)->values()->all());
+        foreach (['applications.view', 'exams.view', 'interviews.view', 'contracts.view', 'documents.view', 'imports.view', 'reports.view', 'audit.view'] as $permission) {
+            $this->assertTrue($manager->hasPermission($permission), $permission);
+        }
+        $this->assertFalse($manager->hasPermission('exam_bank.manage'));   // the question bank holds the answers
+
+        $this->assertSame(Permission::query()->orderBy('slug')->pluck('slug')->all(), $this->admin->permissionSlugs()->all());
+
+        // A permission added later is the administrator's at once.
+        Permission::query()->create(['slug' => 'later.added', 'label_ar' => 'لاحقًا', 'read_only' => false]);
+        $this->assertTrue($this->admin->fresh()->hasPermission('later.added'));
+
+        $roles = collect($this->asStaff($this->admin)->getJson(self::BASE.'/roles')->assertOk()->json('data'))->keyBy('slug');
+        $this->assertTrue($roles['system_admin']['administrator']);
+        $this->assertCount(Permission::query()->count(), $roles['system_admin']['permissions']);
+        $this->assertTrue($roles['contracts']['office']);
+        $this->assertFalse($roles['general_manager']['office']);
     }
 
     // ---- roles ----
 
     public function test_adding_a_permission_to_a_role_affects_its_members(): void
     {
-        $staff = StaffUserFactory::new()->withRole('recruitment_staff')->create();
+        $staff = StaffUserFactory::new()->withRole('recruitment')->create();
         $this->assertFalse($staff->can('devices.approve'));
 
         $this->asStaff($this->admin)
-            ->postJson(self::BASE.'/roles/recruitment_staff/permissions', ['permissions' => ['devices.approve']])
+            ->postJson(self::BASE.'/roles/recruitment/permissions', ['permissions' => ['devices.approve']])
             ->assertOk()
-            ->assertJsonPath('role.slug', 'recruitment_staff');
+            ->assertJsonPath('role.slug', 'recruitment');
 
-        $this->assertContains('devices.approve', $this->rolePermissions('recruitment_staff'));
+        $this->assertContains('devices.approve', $this->rolePermissions('recruitment'));
         $this->assertTrue($staff->fresh()->can('devices.approve'));
     }
 
-    public function test_individual_only_permissions_cannot_be_given_to_a_role(): void
+    public function test_the_general_manager_gets_read_only_permissions_only(): void
     {
         $this->asStaff($this->admin)
-            ->postJson(self::BASE.'/roles/recruitment_staff/permissions', ['permissions' => ['attempts.extend']])
+            ->postJson(self::BASE.'/roles/general_manager/permissions', ['permissions' => ['exams.view', 'contracts.manage']])
             ->assertStatus(422)
             ->assertJsonValidationErrors('permissions');
+        $this->assertNotContains('contracts.manage', $this->rolePermissions('general_manager'));
 
-        $this->assertNotContains('attempts.extend', $this->rolePermissions('recruitment_staff'));
+        $this->asStaff($this->admin)->deleteJson(self::BASE.'/roles/general_manager/permissions/audit.view')->assertOk();
+        $this->asStaff($this->admin)->postJson(self::BASE.'/roles/general_manager/permissions', ['permissions' => ['audit.view']])->assertOk();
+    }
+
+    public function test_the_administrators_role_is_not_edited(): void
+    {
+        $this->asStaff($this->admin)
+            ->postJson(self::BASE.'/roles/system_admin/permissions', ['permissions' => ['reports.view']])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('role');
+        $this->assertSame([], $this->rolePermissions('system_admin'));   // none stored: it holds all
     }
 
     public function test_unknown_permission_slug_is_rejected(): void
     {
         $this->asStaff($this->admin)
-            ->postJson(self::BASE.'/roles/recruitment_staff/permissions', ['permissions' => ['does.not.exist']])
+            ->postJson(self::BASE.'/roles/recruitment/permissions', ['permissions' => ['does.not.exist']])
             ->assertStatus(422)
             ->assertJsonValidationErrors('permissions.0');
     }
@@ -111,13 +176,17 @@ class AccessManagementTest extends TestCase
 
     public function test_the_last_way_to_manage_users_cannot_be_removed_from_a_role(): void
     {
+        $this->asStaff($this->admin)->postJson(self::BASE.'/roles/contracts/permissions', ['permissions' => ['users.manage']])->assertOk();
+        $this->asStaff($this->admin)->putJson(self::BASE."/users/{$this->admin->id}/role", ['role' => 'contracts'])->assertOk();
+
+        // The one user left able to manage users holds it through the Contracts role now.
         $this->asStaff($this->admin)
-            ->deleteJson(self::BASE.'/roles/system_admin/permissions/users.manage')
+            ->deleteJson(self::BASE.'/roles/contracts/permissions/users.manage')
             ->assertStatus(422)
             ->assertJsonValidationErrors('permission');
 
         // The failed change was rolled back.
-        $this->assertContains('users.manage', $this->rolePermissions('system_admin'));
+        $this->assertContains('users.manage', $this->rolePermissions('contracts'));
     }
 
     public function test_reseeding_does_not_overwrite_changes_made_through_the_api(): void
@@ -131,148 +200,58 @@ class AccessManagementTest extends TestCase
         $this->assertNotContains('reports.view', $this->rolePermissions('general_manager'));
     }
 
-    // ---- one staff user ----
+    // ---- one role per staff user ----
 
-    public function test_granting_an_individual_only_permission_to_one_user(): void
+    public function test_changing_a_users_role_replaces_it(): void
     {
-        $staff = StaffUserFactory::new()->withRole('recruitment_staff')->create();
+        $staff = StaffUserFactory::new()->withRole('recruitment')->create();
 
         $response = $this->asStaff($this->admin)
-            ->postJson(self::BASE."/users/{$staff->id}/permissions", ['permission' => 'attempts.extend', 'effect' => 'grant'])
-            ->assertOk();
-
-        $this->assertContains('attempts.extend', $response->json('user.effective_permissions'));
-        $this->assertTrue($staff->fresh()->can('attempts.extend'));
-        $this->assertDatabaseHas('permission_staff_user', [
-            'staff_user_id' => $staff->id,
-            'is_granted' => true,
-            'granted_by' => $this->admin->id,
-        ]);
-    }
-
-    public function test_denying_a_permission_overrides_the_role_and_clearing_restores_it(): void
-    {
-        $staff = StaffUserFactory::new()->withRole('recruitment_staff')->create();
-        $this->assertTrue($staff->can('reports.view'));
-
-        $this->asStaff($this->admin)
-            ->postJson(self::BASE."/users/{$staff->id}/permissions", ['permission' => 'reports.view', 'effect' => 'deny'])
+            ->putJson(self::BASE."/users/{$staff->id}/role", ['role' => 'contracts'])
             ->assertOk()
-            ->assertJsonPath('user.overrides.0', ['permission' => 'reports.view', 'effect' => 'deny', 'note' => null]);
-        $this->assertFalse($staff->fresh()->can('reports.view'));
+            ->assertJsonPath('user.role.slug', 'contracts')
+            ->assertJsonPath('user.role.office', true);
 
+        $this->assertContains('contracts.manage', $response->json('user.effective_permissions'));
+        $this->assertNotContains('candidates.manage', $response->json('user.effective_permissions'));
+        $this->assertFalse($staff->fresh()->can('candidates.manage'));
+        $this->assertSame($this->admin->id, $staff->fresh()->role_assigned_by);
+        $context = json_decode(DB::table('audit_events')->where('event', 'access.role_changed')->value('context'), true);
+        $this->assertSame(['recruitment', 'contracts', $staff->id], [$context['from'], $context['to'], $context['user_id']]);
+
+        $this->asStaff($this->admin)->putJson(self::BASE."/users/{$staff->id}/role", ['role' => 'nope'])->assertStatus(422)->assertJsonValidationErrors('role');
+        $this->asStaff($staff)->putJson(self::BASE."/users/{$staff->id}/role", ['role' => 'system_admin'])->assertForbidden();
+    }
+
+    public function test_personal_grants_are_gone(): void
+    {
+        $staff = StaffUserFactory::new()->withRole('recruitment')->create();
+
+        $this->asStaff($this->admin)->postJson(self::BASE."/users/{$staff->id}/permissions", ['permission' => 'reports.view', 'effect' => 'grant'])->assertNotFound();
+        $this->asStaff($this->admin)->postJson(self::BASE."/users/{$staff->id}/roles", ['role' => 'contracts'])->assertNotFound();
+        $this->assertFalse(DB::getSchemaBuilder()->hasTable('permission_staff_user'));
+        $this->assertFalse(DB::getSchemaBuilder()->hasTable('role_staff_user'));
+    }
+
+    public function test_the_last_administrator_cannot_lose_the_admin_role(): void
+    {
         $this->asStaff($this->admin)
-            ->deleteJson(self::BASE."/users/{$staff->id}/permissions/reports.view")
-            ->assertOk()
-            ->assertJsonPath('user.overrides', []);
-        $this->assertTrue($staff->fresh()->can('reports.view'));
-    }
+            ->putJson(self::BASE."/users/{$this->admin->id}/role", ['role' => 'general_manager'])
+            ->assertStatus(422);
 
-    // ---- roles follow the direct permissions (D-070) ----
+        $this->assertSame('system_admin', $this->admin->fresh()->role->slug);
 
-    private function override(StaffUser $user, string $permission, string $effect): TestResponse
-    {
-        return $this->asStaff($this->admin)->postJson(self::BASE."/users/{$user->id}/permissions", ['permission' => $permission, 'effect' => $effect])->assertOk();
-    }
-
-    private function assignment(TestResponse $response, string $role): ?array
-    {
-        return collect($response->json('user.role_assignments'))->firstWhere('role', $role);
-    }
-
-    public function test_granting_every_permission_of_a_role_adds_it_automatically(): void
-    {
-        $staff = StaffUserFactory::new()->withRole('general_manager')->create();
-        $recruitment = $this->rolePermissions('recruitment_staff');
-
-        foreach (array_slice($recruitment, 0, -1) as $permission) {
-            $response = $this->override($staff, $permission, 'grant');
-        }
-        $this->assertNull($this->assignment($response, 'recruitment_staff'));
-
-        $response = $this->override($staff, end($recruitment), 'grant');
-        $this->assertSame(['general_manager', 'recruitment_staff'], collect($response->json('user.roles'))->sort()->values()->all());
-        $this->assertTrue($this->assignment($response, 'recruitment_staff')['automatic']);
-        $this->assertSame(__('access.notes.role_added', ['role' => 'مدير/إداري التوظيف'], 'ar'), $this->assignment($response, 'recruitment_staff')['note']);
-        $this->assertFalse($this->assignment($response, 'general_manager')['automatic']);
-        $this->assertCount(count($recruitment), $response->json('user.overrides'));   // the grants stay direct
-
-        // It stays only while all its permissions are granted directly.
-        $response = $this->asStaff($this->admin)->deleteJson(self::BASE."/users/{$staff->id}/permissions/".$recruitment[0])->assertOk();
-        $this->assertNull($this->assignment($response, 'recruitment_staff'));
-        $response = $this->override($staff, $recruitment[0], 'grant');
-        $this->assertTrue($this->assignment($response, 'recruitment_staff')['automatic']);
-
-        // Taking the automatic role away takes the grants it stood for (otherwise it would come back).
-        $response = $this->asStaff($this->admin)->deleteJson(self::BASE."/users/{$staff->id}/roles/recruitment_staff")->assertOk();
-        $this->assertSame(['general_manager'], $response->json('user.roles'));
-        $this->assertSame([], $response->json('user.overrides'));
-    }
-
-    public function test_giving_a_role_by_hand_makes_its_permissions_come_from_the_role(): void
-    {
-        $staff = StaffUserFactory::new()->create();
-        $recruitment = $this->rolePermissions('recruitment_staff');
-        $this->override($staff, $recruitment[0], 'grant');
-        $this->override($staff, $recruitment[1], 'deny');
-        $this->override($staff, 'audit.view', 'grant');                 // not a permission of the role: kept
-
-        $response = $this->asStaff($this->admin)->postJson(self::BASE."/users/{$staff->id}/roles", ['role' => 'recruitment_staff'])->assertOk();
-        $this->assertFalse($this->assignment($response, 'recruitment_staff')['automatic']);
-        $this->assertSame([['permission' => 'audit.view', 'effect' => 'grant', 'note' => null]], $response->json('user.overrides'));
-        $this->assertTrue($staff->fresh()->hasPermission($recruitment[1]));
-
-        // Taken away later, the permissions go with it: nothing was left behind as a direct grant.
-        $this->asStaff($this->admin)->deleteJson(self::BASE."/users/{$staff->id}/roles/recruitment_staff")->assertOk();
-        $this->assertFalse($staff->fresh()->hasPermission($recruitment[0]));
-
-        // An automatic role given by hand becomes a role given by hand, its grants cleared.
-        foreach ($recruitment as $permission) {
-            $this->override($staff, $permission, 'grant');
-        }
-        $response = $this->asStaff($this->admin)->postJson(self::BASE."/users/{$staff->id}/roles", ['role' => 'recruitment_staff'])->assertOk();
-        $this->assertSame(['automatic' => false, 'note' => null], array_intersect_key($this->assignment($response, 'recruitment_staff'), ['automatic' => 1, 'note' => 1]));
-        $this->assertSame(['audit.view'], collect($response->json('user.overrides'))->pluck('permission')->all());
-    }
-
-    public function test_denying_every_permission_of_a_held_role_removes_it(): void
-    {
-        $staff = StaffUserFactory::new()->withRole('general_manager')->create();
-
-        $this->override($staff, 'reports.view', 'deny');
-        $response = $this->override($staff, 'audit.view', 'deny');
-
-        $this->assertSame([], $response->json('user.roles'));
-        $note = __('access.notes.role_removed', ['role' => 'المدير العام'], 'ar');
-        $this->assertSame([$note, $note], collect($response->json('user.overrides'))->pluck('note')->all());
-        $this->assertSame(['deny', 'deny'], collect($response->json('user.overrides'))->pluck('effect')->all());   // the denials stay
-
-        // Given back by hand: its permissions come from the role again.
-        $response = $this->asStaff($this->admin)->postJson(self::BASE."/users/{$staff->id}/roles", ['role' => 'general_manager'])->assertOk();
-        $this->assertSame([], $response->json('user.overrides'));
-        $this->assertTrue($staff->fresh()->hasPermission('reports.view'));
-    }
-
-    public function test_changing_a_role_rechecks_automatic_roles(): void
-    {
-        $staff = StaffUserFactory::new()->create();
-        $this->override($staff, 'reports.view', 'grant');
-        $this->override($staff, 'audit.view', 'grant');
-        $this->assertSame(['general_manager'], $staff->fresh()->roles->pluck('slug')->all());
-
-        $this->asStaff($this->admin)->postJson(self::BASE.'/roles/general_manager/permissions', ['permissions' => ['imports.manage']])->assertOk();
-        $this->assertSame([], $staff->fresh()->roles->pluck('slug')->all());          // no longer all granted directly
-        $this->assertFalse($staff->fresh()->hasPermission('imports.manage'));
-
-        $this->asStaff($this->admin)->deleteJson(self::BASE.'/roles/general_manager/permissions/imports.manage')->assertOk();
-        $this->assertSame(['general_manager'], $staff->fresh()->roles->pluck('slug')->all());
+        // With a second administrator, one may become something else.
+        StaffUserFactory::new()->withRole('system_admin')->create();
+        $this->asStaff($this->admin)->putJson(self::BASE."/users/{$this->admin->id}/role", ['role' => 'general_manager'])->assertOk();
+        $this->assertFalse($this->admin->fresh()->can('users.manage'));
     }
 
     // ---- a forgotten password (D-071) ----
 
     public function test_an_administrator_sets_a_new_password_and_ends_every_session(): void
     {
-        $staff = StaffUserFactory::new()->withRole('recruitment_staff')->create();
+        $staff = StaffUserFactory::new()->withRole('recruitment')->create();
         $staff->createToken('one');
         $staff->createToken('two');
         $url = self::BASE."/users/{$staff->id}/password";
@@ -292,7 +271,7 @@ class AccessManagementTest extends TestCase
 
     public function test_a_deactivated_staff_user_is_signed_out_and_can_be_reactivated(): void
     {
-        $staff = StaffUserFactory::new()->withRole('recruitment_staff')->create();
+        $staff = StaffUserFactory::new()->withRole('recruitment')->create();
         $staff->createToken('one');
         $url = self::BASE."/users/{$staff->id}";
 
@@ -304,7 +283,7 @@ class AccessManagementTest extends TestCase
             ->assertJsonPath('user.is_active', false)
             ->assertJsonPath('user.deactivation.reason', 'انتهاء التكليف')
             ->assertJsonPath('user.deactivation.by', $this->admin->id)
-            ->assertJsonPath('user.roles', ['recruitment_staff']);   // roles stay
+            ->assertJsonPath('user.role.slug', 'recruitment');   // the role stays
         $this->assertSame(0, $staff->tokens()->count());
         $this->asStaff($this->admin)->postJson("{$url}/deactivate", ['reason' => 'مرة ثانية'])->assertStatus(422);
 
@@ -323,110 +302,18 @@ class AccessManagementTest extends TestCase
         $this->assertTrue($other->fresh()->is_active);
     }
 
-    public function test_changing_an_existing_override_updates_it(): void
-    {
-        $staff = StaffUserFactory::new()->create();
-
-        $this->asStaff($this->admin)
-            ->postJson(self::BASE."/users/{$staff->id}/permissions", ['permission' => 'reports.view', 'effect' => 'deny'])
-            ->assertOk();
-        $this->asStaff($this->admin)
-            ->postJson(self::BASE."/users/{$staff->id}/permissions", ['permission' => 'reports.view', 'effect' => 'grant'])
-            ->assertOk()
-            ->assertJsonPath('user.overrides.0.effect', 'grant');
-
-        $this->assertDatabaseCount('permission_staff_user', 1);
-    }
-
-    public function test_clearing_an_override_that_does_not_exist_is_404(): void
-    {
-        $staff = StaffUserFactory::new()->create();
-
-        $this->asStaff($this->admin)
-            ->deleteJson(self::BASE."/users/{$staff->id}/permissions/reports.view")
-            ->assertNotFound();
-    }
-
-    public function test_an_override_needs_a_valid_effect_and_permission(): void
-    {
-        $staff = StaffUserFactory::new()->create();
-
-        $this->asStaff($this->admin)
-            ->postJson(self::BASE."/users/{$staff->id}/permissions", ['permission' => 'reports.view', 'effect' => 'maybe'])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors('effect');
-        $this->asStaff($this->admin)
-            ->postJson(self::BASE."/users/{$staff->id}/permissions", ['permission' => 'nope', 'effect' => 'grant'])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors('permission');
-    }
-
-    public function test_an_admin_cannot_deny_themselves_the_last_way_to_manage_users(): void
-    {
-        $this->asStaff($this->admin)
-            ->postJson(self::BASE."/users/{$this->admin->id}/permissions", ['permission' => 'users.manage', 'effect' => 'deny'])
-            ->assertStatus(422);
-
-        $this->assertDatabaseCount('permission_staff_user', 0);
-    }
-
-    public function test_with_a_second_administrator_one_may_lose_the_permission(): void
-    {
-        $second = StaffUserFactory::new()->withRole('system_admin')->create();
-
-        $this->asStaff($this->admin)
-            ->postJson(self::BASE."/users/{$second->id}/permissions", ['permission' => 'users.manage', 'effect' => 'deny'])
-            ->assertOk();
-
-        $this->assertFalse($second->fresh()->can('users.manage'));
-    }
-
-    public function test_assigning_and_removing_a_role(): void
-    {
-        $staff = StaffUserFactory::new()->create();
-
-        $this->asStaff($this->admin)
-            ->postJson(self::BASE."/users/{$staff->id}/roles", ['role' => 'general_manager'])
-            ->assertOk()
-            ->assertJsonPath('user.roles', ['general_manager']);
-        $this->assertTrue($staff->fresh()->can('audit.view'));
-
-        $this->asStaff($this->admin)
-            ->deleteJson(self::BASE."/users/{$staff->id}/roles/general_manager")
-            ->assertOk()
-            ->assertJsonPath('user.roles', []);
-        $this->assertFalse($staff->fresh()->can('audit.view'));
-    }
-
-    public function test_removing_a_role_the_user_does_not_hold_is_404(): void
-    {
-        $staff = StaffUserFactory::new()->create();
-
-        $this->asStaff($this->admin)
-            ->deleteJson(self::BASE."/users/{$staff->id}/roles/general_manager")
-            ->assertNotFound();
-    }
-
-    public function test_the_last_administrator_cannot_lose_the_admin_role(): void
-    {
-        $this->asStaff($this->admin)
-            ->deleteJson(self::BASE."/users/{$this->admin->id}/roles/system_admin")
-            ->assertStatus(422);
-
-        $this->assertTrue($this->admin->fresh()->roles()->where('slug', 'system_admin')->exists());
-    }
-
     public function test_staff_list_and_detail(): void
     {
-        $staff = StaffUserFactory::new()->withRole('recruitment_staff')->create();
+        $staff = StaffUserFactory::new()->withRole('recruitment')->create();
 
         $list = $this->asStaff($this->admin)->getJson(self::BASE.'/users')->assertOk();
         $this->assertCount(2, $list->json('data'));
+        $this->assertSame(['recruitment', 'system_admin'], collect($list->json('data'))->pluck('role')->sort()->values()->all());
 
         $this->asStaff($this->admin)->getJson(self::BASE."/users/{$staff->id}")
             ->assertOk()
-            ->assertJsonPath('user.roles', ['recruitment_staff'])
-            ->assertJsonStructure(['user' => ['id', 'username', 'full_name', 'is_active', 'roles', 'overrides', 'effective_permissions']]);
+            ->assertJsonPath('user.role', ['slug' => 'recruitment', 'label' => 'مكتب التوظيف', 'office' => true])
+            ->assertJsonStructure(['user' => ['id', 'username', 'full_name', 'is_active', 'role', 'role_assigned_at', 'effective_permissions']]);
 
         $this->asStaff($this->admin)->getJson(self::BASE.'/users/'.Str::uuid())->assertNotFound();
     }

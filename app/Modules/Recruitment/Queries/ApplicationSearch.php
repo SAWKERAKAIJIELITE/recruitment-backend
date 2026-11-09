@@ -9,6 +9,7 @@ use App\Support\ArabicText;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
 /**
@@ -18,17 +19,27 @@ use Illuminate\Validation\Rule;
  */
 final class ApplicationSearch
 {
-    /** Exact match on an application column holding a list entry id. */
+    /** Exact match on an application column holding a list entry id: filter => the list's table (the id must exist there; archived entries too). */
     private const LIST_FILTERS = [
-        'job_position_id', 'nominating_entity_id', 'application_category_id', 'academic_qualification_id',
-        'specialization_id', 'marital_status_id', 'health_condition_id', 'residence_district_id', 'residence_area_id',
+        'job_position_id' => 'job_positions',
+        'nominating_entity_id' => 'nominating_entities',
+        'application_category_id' => 'application_categories',
+        'academic_qualification_id' => 'academic_qualifications',
+        'specialization_id' => 'specializations',
+        'marital_status_id' => 'marital_statuses',
+        'health_condition_id' => 'health_conditions',
+        'residence_district_id' => 'districts',
+        'residence_area_id' => 'areas',
     ];
 
     /** Yes/no columns of the application. */
     private const FLAG_FILTERS = ['studies_discontinued', 'works_for_other_government_entity', 'full_commitment', 'overnight_work'];
 
-    /** Ranges on whole-number columns: filter name => column (`*_min` and `*_max`, both included). */
-    private const RANGE_FILTERS = ['studying_years' => 'studying_years', 'quran_parts' => 'quran_parts_memorized'];
+    /** Ranges on whole-number columns: filter name => [column, largest value] (`*_min` and `*_max`, both included; the columns' CHECKs). */
+    private const RANGE_FILTERS = ['studying_years' => ['studying_years', 15], 'quran_parts' => ['quran_parts_memorized', 30]];
+
+    /** The filters the offices other than Recruitment may use: who the candidate is and where the application stands (D-086). */
+    public const IDENTITY_FILTERS = ['q', 'national_number', 'status', 'status.*', 'live', 'job_position_id', 'import_batch_id', 'from', 'to', 'sort', 'direction', 'per_page'];
 
     public const SORTS = [
         'created_at' => 'applications.created_at',
@@ -53,7 +64,7 @@ final class ApplicationSearch
     {
         $flag = ['nullable', Rule::in(['0', '1', 'true', 'false'])];
         $id = ['nullable', 'integer', 'min:1'];
-        $count = ['nullable', 'integer', 'min:0', 'max:100'];
+        $age = ['nullable', 'integer', 'min:0', 'max:100'];
 
         $rules = [
             'q' => ['nullable', 'string', 'max:150'],
@@ -65,35 +76,61 @@ final class ApplicationSearch
             'status' => ['nullable', 'array', 'max:10'],
             'status.*' => [Rule::enum(ApplicationStatus::class)],
             'live' => $flag,                                  // 1: not ended yet; 0: contract ended or closed
-            'birth_place_id' => $id,
+            'birth_place_id' => [...$id, Rule::exists('districts', 'id')],
             'candidate_active' => $flag,
             'birth_date_from' => ['nullable', 'date_format:Y-m-d'],
             'birth_date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:birth_date_from'],
-            'age_min' => $count,
-            'age_max' => $count,
+            'age_min' => $age,
+            'age_max' => $age,
             'created_by' => ['nullable', 'uuid'],
+            'import_batch_id' => ['nullable', 'uuid'],
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
-            'studying_years' => $count,                       // exact (kept for existing clients)
+            'studying_years' => ['nullable', 'integer', 'min:0', 'max:15'],   // exact (kept for existing clients)
             'sort' => ['nullable', Rule::in(array_keys(self::SORTS))],
             'direction' => ['nullable', Rule::in(['asc', 'desc'])],
             'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
         ];
 
-        foreach (self::LIST_FILTERS as $filter) {
-            $rules[$filter] = $id;
+        foreach (self::LIST_FILTERS as $filter => $table) {
+            $rules[$filter] = [...$id, Rule::exists($table, 'id')];
         }
 
         foreach (self::FLAG_FILTERS as $filter) {
             $rules[$filter] = $flag;
         }
 
-        foreach (array_keys(self::RANGE_FILTERS) as $filter) {
-            $rules["{$filter}_min"] = $count;
-            $rules["{$filter}_max"] = $count;
+        foreach (self::RANGE_FILTERS as $filter => [, $max]) {
+            $rules["{$filter}_min"] = ['nullable', 'integer', 'min:0', "max:{$max}"];
+            $rules["{$filter}_max"] = ['nullable', 'integer', 'min:0', "max:{$max}"];
         }
 
         return $rules;
+    }
+
+    /**
+     * rules() for an office that sees who the candidate is only: every other filter is refused, and the list is not
+     * sorted by birth date.
+     *
+     * @return array<string, list<mixed>>
+     */
+    public static function identityRules(): array
+    {
+        $rules = [];
+
+        foreach (self::rules() as $filter => $filterRules) {
+            $rules[$filter] = in_array($filter, self::IDENTITY_FILTERS, true) ? $filterRules : ['prohibited'];
+        }
+
+        $rules['sort'] = ['nullable', Rule::in(array_values(array_diff(array_keys(self::SORTS), ['birth_date'])))];
+
+        return $rules;
+    }
+
+    /** For an office that sees who the candidate is only: 422 on any other filter (and on sorting by birth date). */
+    public static function assertIdentityOnly(Request $request): void
+    {
+        Validator::make($request->all(), self::identityRules(), ['*.prohibited' => __('recruitment.identity_only_filter')])->validate();
     }
 
     /** Filters and sorts. @param array<string, mixed> $filters validated with rules() */
@@ -141,7 +178,7 @@ final class ApplicationSearch
             $flag('live') ? $query->live() : $query->whereIn('applications.current_status', ApplicationStatus::terminalValues());
         }
 
-        foreach (self::LIST_FILTERS as $filter) {
+        foreach (array_keys(self::LIST_FILTERS) as $filter) {
             if ($has($filter)) {
                 $query->where("applications.{$filter}", (int) $filters[$filter]);
             }
@@ -157,7 +194,7 @@ final class ApplicationSearch
             $query->where('applications.studying_years', (int) $filters['studying_years']);
         }
 
-        foreach (self::RANGE_FILTERS as $filter => $column) {
+        foreach (self::RANGE_FILTERS as $filter => [$column]) {
             if ($has("{$filter}_min")) {
                 $query->where("applications.{$column}", '>=', (int) $filters["{$filter}_min"]);
             }
@@ -196,6 +233,12 @@ final class ApplicationSearch
 
         if ($has('created_by')) {
             $query->where('applications.created_by', $filters['created_by']);
+        }
+
+        if ($has('import_batch_id')) {
+            $query->whereExists(fn($row) => $row->from('import_rows')
+                ->whereColumn('import_rows.application_id', 'applications.id')
+                ->where('import_rows.import_batch_id', $filters['import_batch_id']));
         }
 
         if ($has('from')) {

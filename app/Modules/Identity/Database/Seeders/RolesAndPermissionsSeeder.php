@@ -2,109 +2,122 @@
 
 namespace App\Modules\Identity\Database\Seeders;
 
+use App\Modules\Identity\Enums\StaffRole;
 use App\Modules\Identity\Models\Permission;
 use App\Modules\Identity\Models\Role;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Default RBAC matrix (analysis doc §02).
+ * The permission catalogue and the roles (D-085): four offices, each with full control of its own section only,
+ * the general manager (every read-only permission) and the system administrator (every permission, always: not
+ * stored, see StaffUser::permissionSlugs()).
  *
- * - The permission catalogue is upserted on every run.
- * - A role receives its default permissions ONLY when it is created. After that the database is the
- *   source of truth: administrators change roles through the access-management API, and re-running this
- *   seeder never overwrites their changes.
- * - Only plain ✓ cells appear in ROLES. ✓* cells are individual-only permissions, granted per user.
+ * - The catalogue is upserted on every run.
+ * - A role receives its default permissions ONLY when it is created (D-020). After that the database is the source
+ *   of truth: administrators change roles through the access-management API, and re-running this seeder never
+ *   overwrites their changes.
  * - Candidates are not staff and have no roles.
  */
 class RolesAndPermissionsSeeder extends Seeder
 {
-    private const PERMISSIONS = [
-        'reports.view' => 'مؤشرات وتقارير مفصلة',
-        'imports.manage' => 'استيراد ملفات Excel',
-        'imports.approve' => 'اعتماد دفعات الاستيراد',
-        'candidates.manage' => 'تحرير بيانات المرشحين',
-        'exam_bank.manage' => 'بنك الأسئلة وخطط الاختبار',
-        'pass_policies.manage' => 'إضافة إصدار جديد من قواعد النجاح',
-        'exams.take' => 'تقديم الاختبار',
-        'exams.manage' => 'جدولة جلسات الاختبار وإدخال العلامات اليدوية',
-        'exam_results.correct' => 'تصحيح علامة يدوية بعد صدور نتيجة الاختبار',
-        'attempts.extend' => 'تعديل مدة محاولة نشطة',
-        'exceptions.approve' => 'استثناء الرسوب / قبول العذر',
-        'applications.close' => 'إغلاق طلب الترشيح وإنهاؤه',
-        'interviews.manage' => 'إدخال المقابلات',
-        'interviews.correct' => 'تصحيح نتيجة مقابلة مسجلة',
-        'contracts.manage' => 'إدخال العقود',
-        'users.manage' => 'إدارة المستخدمين والأدوار',
-        'users.add' => 'إضافة المستخدمين',
-        'audit.view' => 'عرض سجلات التدقيق',
-        'audit.view_related' => 'عرض تدقيق العمليات ذات الصلة فقط',
-        'devices.approve' => 'اعتماد الأجهزة الموثوقة وإلغاؤها',
+    /** slug => [label, read_only] */
+    public const PERMISSIONS = [
+        // Recruitment
+        'applications.view' => ['عرض ملفات المرشحين وطلباتهم كاملة', true],
+        'candidates.manage' => ['إدخال وتصحيح بيانات المرشحين والطلبات والقوائم', false],
+        'applications.start' => ['بدء دورة الطلبات المستلمة', false],
+        'applications.close' => ['إغلاق طلب الترشيح وإنهاؤه', false],
+        'imports.view' => ['عرض دفعات الاستيراد', true],
+        'imports.manage' => ['استيراد ملفات Excel', false],
+        'imports.approve' => ['اعتماد دفعات الاستيراد', false],
+        // Exams and interviews
+        'exams.view' => ['عرض مواد الاختبار وخططه وجلساته ونتائجه', true],
+        'exam_bank.manage' => ['بنك الأسئلة وخطط الاختبار', false],
+        'exams.manage' => ['جدولة جلسات الاختبار وإدخال العلامات اليدوية', false],
+        'attempts.extend' => ['تعديل مدة محاولة نشطة', false],
+        'exam_results.correct' => ['تصحيح علامة يدوية بعد صدور نتيجة الاختبار', false],
+        'pass_policies.manage' => ['إضافة إصدار جديد من قواعد النجاح', false],
+        'exceptions.approve' => ['استثناء الرسوب / قبول العذر', false],
+        'interviews.view' => ['عرض المقابلات ونتائجها', true],
+        'interviews.manage' => ['إدخال المقابلات', false],
+        'interviews.correct' => ['تصحيح نتيجة مقابلة مسجلة', false],
+        // Contracts
+        'contracts.view' => ['عرض العقود والشواغر', true],
+        'contracts.manage' => ['إدخال العقود', false],
+        'vacancies.manage' => ['رفع ملف الشواغر', false],
+        // Documenting
+        'documents.view' => ['عرض الوثائق', true],
+        'documents.manage' => ['رفع الوثائق وأرشفتها وأنواعها', false],
+        // Everyone's or the management's
+        'reports.view' => ['لوحة المؤشرات والتقارير الشاملة', true],
+        'audit.view' => ['عرض سجلات التدقيق', true],
+        'audit.view_related' => ['عرض تدقيق عمليات القسم فقط', true],
+        'users.manage' => ['إدارة المستخدمين والأدوار', false],
+        'users.add' => ['إضافة المستخدمين', false],
+        'devices.approve' => ['اعتماد الأجهزة الموثوقة وإلغاؤها', false],
     ];
 
-    /** The ✓* cells: may be granted to individual users, never attached to a role. */
-    private const INDIVIDUAL_ONLY = ['attempts.extend', 'exceptions.approve', 'applications.close', 'imports.approve', 'interviews.correct', 'pass_policies.manage', 'exam_results.correct'];
-
-    private const ROLES = [
+    /** The defaults of each role, given when the role is created. The administrator's are not stored (it holds all). */
+    public const ROLES = [
+        'recruitment' => [
+            'applications.view',
+            'candidates.manage',
+            'applications.start',
+            'applications.close',
+            'imports.view',
+            'imports.manage',
+            'imports.approve',
+            'audit.view_related',
+        ],
+        'exams_interviews' => [
+            'exams.view',
+            'exam_bank.manage',
+            'exams.manage',
+            'attempts.extend',
+            'exam_results.correct',
+            'pass_policies.manage',
+            'exceptions.approve',
+            'interviews.view',
+            'interviews.manage',
+            'interviews.correct',
+            'audit.view_related',
+        ],
+        'contracts' => [
+            'contracts.view',
+            'contracts.manage',
+            'audit.view_related',
+        ],
+        'documenting' => [
+            'documents.view',
+            'documents.manage',
+            'audit.view_related',
+        ],
         'general_manager' => [
-            'المدير العام',
-            [
-                'reports.view',
-                'audit.view',
-            ],
+            'applications.view',
+            'imports.view',
+            'exams.view',
+            'interviews.view',
+            'contracts.view',
+            'documents.view',
+            'reports.view',
+            'audit.view',
         ],
-        'recruitment_staff' => [
-            'مدير/إداري التوظيف',
-            [
-                'reports.view',
-                'imports.manage',
-                'candidates.manage',
-                'exams.manage',
-                'interviews.manage',
-                'contracts.manage',
-                'audit.view_related',
-            ],
-        ],
-        // 'candidate' => [
-        //     'المرشح',
-        //     [
-        //         'exams.take',
-        //     ],
-        // ],
-        'system_admin' => [
-            'مسؤول النظام',
-            [
-                'reports.view',
-                'imports.manage',
-                'candidates.manage',
-                'exam_bank.manage',
-                'exams.manage',
-                'interviews.manage',
-                'contracts.manage',
-                'users.manage',
-                'users.add',
-                'audit.view',
-                'devices.approve',
-            ],
-        ],
+        'system_admin' => [],
     ];
 
     public function run(): void
     {
         DB::transaction(function () {
-            foreach (self::PERMISSIONS as $slug => $label) {
-                Permission::updateOrCreate(
-                    ['slug' => $slug],
-                    ['label_ar' => $label, 'individual_only' => in_array($slug, self::INDIVIDUAL_ONLY, true)]
-                );
+            foreach (self::PERMISSIONS as $slug => [$label, $readOnly]) {
+                Permission::updateOrCreate(['slug' => $slug], ['label_ar' => $label, 'read_only' => $readOnly]);
             }
 
-            foreach (self::ROLES as $slug => [$label, $permissionSlugs]) {
-                $role = Role::firstOrCreate(['slug' => $slug], ['label_ar' => $label]);
+            foreach (self::ROLES as $slug => $permissionSlugs) {
+                $role = Role::firstOrCreate(['slug' => $slug], ['label_ar' => StaffRole::from($slug)->labelAr()]);
+
                 if ($role->wasRecentlyCreated) {
-                    $role->permissions()->sync(
-                        Permission::whereIn('slug', $permissionSlugs)->pluck('id')
-                    );
+                    $role->permissions()->sync(Permission::whereIn('slug', $permissionSlugs)->pluck('id'));
                 }
             }
         });

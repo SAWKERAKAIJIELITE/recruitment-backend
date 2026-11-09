@@ -4,7 +4,7 @@ namespace App\Modules\Identity\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-class AddUserRoleRequest extends FormRequest
+class SetUserRoleRequest extends FormRequest
 {
     public function authorize(): bool
     {

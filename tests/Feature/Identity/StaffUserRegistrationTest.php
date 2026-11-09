@@ -5,6 +5,7 @@ namespace Tests\Feature\Identity;
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use App\Modules\Identity\Models\Permission;
+use App\Modules\Identity\Models\Role;
 use App\Modules\Identity\Models\StaffUser;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -34,19 +35,18 @@ class StaffUserRegistrationTest extends TestCase
             'last_name' => 'الأحمد',
             'personal_number' => '004512',
             'is_active' => true,
-            'role' => 'recruitment_staff',
+            'role' => 'recruitment',
             'password' => 'Str0ng!Pass',
             'password_confirmation' => 'Str0ng!Pass',
         ];
     }
 
-    /** A user who may add users but not manage access (users.add granted on its own). */
-    private function adder(string $role = 'recruitment_staff'): StaffUser
+    /** A user who may add users but not manage access (users.add given to the role). */
+    private function adder(string $role = 'recruitment'): StaffUser
     {
-        $user = StaffUserFactory::new()->withRole($role)->create();
-        $user->permissions()->attach(Permission::where('slug', 'users.add')->value('id'), ['is_granted' => true]);
+        Role::where('slug', $role)->firstOrFail()->permissions()->attach(Permission::where('slug', 'users.add')->value('id'));
 
-        return $user;
+        return StaffUserFactory::new()->withRole($role)->create();
     }
 
     public function test_an_account_is_created_with_its_role_and_audited(): void
@@ -56,10 +56,11 @@ class StaffUserRegistrationTest extends TestCase
         $this->asStaff(StaffUserFactory::new()->withRole('system_admin')->create())->postJson(self::URL, $this->body())
             ->assertCreated()
             ->assertJsonPath('user.username', 'new.clerk')
-            ->assertJsonPath('user.roles', ['recruitment_staff']);
+            ->assertJsonPath('user.role.slug', 'recruitment');
 
         $user = StaffUser::where('username', 'new.clerk')->sole();
-        $this->assertSame(['recruitment_staff'], $user->roles->pluck('slug')->all());
+        $this->assertSame('recruitment', $user->role->slug);
+        $this->assertNotNull($user->role_assigned_at);
         $this->assertSame('004512', $user->personal_number);
         $this->assertNotSame('Str0ng!Pass', $user->password);   // hashed
         Log::shouldHaveReceived('notice')->withArgs(fn (string $event) => str_contains($event, 'user_created'))->once();
@@ -67,7 +68,7 @@ class StaffUserRegistrationTest extends TestCase
 
     public function test_without_users_manage_only_roles_within_ones_own_permissions(): void
     {
-        $adder = $this->adder();   // recruitment_staff + users.add
+        $adder = $this->adder();   // recruitment, whose role was given users.add
 
         $this->asStaff($adder)->postJson(self::URL, $this->body(['role' => 'system_admin']))->assertForbidden();
         $this->asStaff($adder)->postJson(self::URL, $this->body(['role' => 'general_manager', 'username' => 'gm.two', 'personal_number' => '7777']))->assertForbidden();   // audit.view is not the adder's
@@ -98,6 +99,6 @@ class StaffUserRegistrationTest extends TestCase
 
     public function test_adding_users_needs_users_add(): void
     {
-        $this->asStaff(StaffUserFactory::new()->withRole('recruitment_staff')->create())->postJson(self::URL, $this->body())->assertForbidden();
+        $this->asStaff(StaffUserFactory::new()->withRole('recruitment')->create())->postJson(self::URL, $this->body())->assertForbidden();
     }
 }

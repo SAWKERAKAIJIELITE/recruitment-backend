@@ -9,14 +9,14 @@ use Illuminate\Support\Facades\Route;
 /*
  * Excel import of candidates (analysis doc §09).
  * - imports.manage: upload, correct, review, exclude, cancel (D-041)
- * - imports.approve (individual permission): approve, never one's own batch (D-047)
- * - either of them: read batches, rows, the original file and the report
+ * - imports.approve: approve, never one's own batch (D-047)
+ * - imports.view, or either of them: read batches, rows, the original file and the report (the general manager reads)
  */
 Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])
     ->prefix('api/v1/staff/imports')
     ->whereUuid(['batch', 'row'])
     ->group(function () {
-        Route::middleware(RequireAnyPermission::class . ':imports.manage,imports.approve')->group(function () {
+        Route::middleware(RequireAnyPermission::class . ':imports.view,imports.manage,imports.approve')->group(function () {
             Route::get('/', [ImportBatchController::class, 'index']);
             Route::get('{batch}', [ImportBatchController::class, 'show']);
             Route::get('{batch}/original', [ImportBatchController::class, 'original']);

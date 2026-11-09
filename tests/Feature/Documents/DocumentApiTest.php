@@ -53,7 +53,7 @@ class DocumentApiTest extends TestCase
 
     private function upload(Application $application, string $type, ?UploadedFile $file = null, $user = null)
     {
-        return $this->asStaff($user ?? $this->hiringStaff())->post("/api/v1/staff/applications/{$application->id}/documents", [
+        return $this->asStaff($user ?? $this->documentsStaff())->post("/api/v1/staff/applications/{$application->id}/documents", [
             'document_type_id' => $this->type($type)->id,
             'file' => $file ?? $this->pdf(),
         ], ['Accept' => 'application/json']);
@@ -102,7 +102,7 @@ class DocumentApiTest extends TestCase
 
         $this->upload($application, 'العقد')->assertCreated()->assertJsonPath('data.application.nomination_number', $application->nomination_number);
 
-        $this->asStaff($this->hiringStaff())->post("/api/v1/staff/candidates/{$application->candidate_id}/documents", [
+        $this->asStaff($this->documentsStaff())->post("/api/v1/staff/candidates/{$application->candidate_id}/documents", [
             'document_type_id' => $this->type('العقد')->id, 'file' => $this->pdf(),
         ], ['Accept' => 'application/json'])->assertStatus(422)->assertJsonPath('errors.document_type_id.0', __('documents.needs_application'));
     }
@@ -116,18 +116,18 @@ class DocumentApiTest extends TestCase
         $this->travel(1)->minutes();
         $second = $this->openApplication();
 
-        $this->asStaff($this->hiringStaff())->getJson("/api/v1/staff/applications/{$second->id}/documents")
+        $this->asStaff($this->documentsStaff())->getJson("/api/v1/staff/applications/{$second->id}/documents")
             ->assertOk()
             ->assertJsonCount(1, 'data.documents')                         // the ID card, not the first application's contract
             ->assertJsonPath('data.documents.0.type.name_ar', 'صورة البطاقة الشخصية');
-        $this->asStaff($this->hiringStaff())->getJson("/api/v1/staff/candidates/{$second->candidate_id}/documents")
+        $this->asStaff($this->documentsStaff())->getJson("/api/v1/staff/candidates/{$second->candidate_id}/documents")
             ->assertJsonCount(2, 'data');
     }
 
     public function test_requirements_follow_the_application_status_and_show_what_is_missing(): void
     {
         $application = $this->openApplication();
-        $requirements = fn() => collect($this->asStaff($this->hiringStaff())->getJson("/api/v1/staff/applications/{$application->id}/documents")->json('data.requirements'))
+        $requirements = fn() => collect($this->asStaff($this->documentsStaff())->getJson("/api/v1/staff/applications/{$application->id}/documents")->json('data.requirements'))
             ->keyBy('type.name_ar');
 
         $now = $requirements();
@@ -179,7 +179,7 @@ class DocumentApiTest extends TestCase
     {
         $application = $this->openApplication();
         $id = $this->upload($application, 'صورة البطاقة الشخصية')->json('data.id');
-        $staff = $this->hiringStaff();
+        $staff = $this->documentsStaff();
 
         $this->asStaff($staff)->postJson("/api/v1/staff/documents/{$id}/archive", [])->assertStatus(422)->assertJsonValidationErrors('reason');
         $this->asStaff($staff)->postJson("/api/v1/staff/documents/{$id}/archive", ['reason' => 'صورة غير واضحة'])
@@ -203,7 +203,7 @@ class DocumentApiTest extends TestCase
     {
         $application = $this->openApplication();
         $id = $this->upload($application, 'صورة البطاقة الشخصية')->json('data.id');
-        $manager = StaffUserFactory::new()->withRole('general_manager')->create();   // reports.view: reads only
+        $manager = StaffUserFactory::new()->withRole('general_manager')->create();   // documents.view: reads only
         $nobody = StaffUserFactory::new()->create();
 
         $this->asStaff($manager)->getJson("/api/v1/staff/applications/{$application->id}/documents")->assertOk();
@@ -211,13 +211,43 @@ class DocumentApiTest extends TestCase
         $this->asStaff($manager)->postJson("/api/v1/staff/documents/{$id}/archive", ['reason' => 'سبب'])->assertForbidden();
         $this->asStaff($nobody)->get("/api/v1/staff/documents/{$id}/download")->assertForbidden();
         $this->asStaff($nobody)->getJson("/api/v1/staff/candidates/{$application->candidate_id}/documents")->assertForbidden();
+
+        // Documents are the Documenting office's section (D-085).
+        foreach (['recruitment', 'exams_interviews'] as $office) {
+            $this->asStaff($this->staffOf($office))->getJson("/api/v1/staff/applications/{$application->id}/documents")->assertForbidden();
+        }
+        $this->asStaff($this->hiringStaff())->postJson('/api/v1/staff/document-types', ['name_ar' => 'x', 'scope' => 'candidate', 'direction' => 'incoming'])->assertForbidden();
+    }
+
+    public function test_the_contracts_office_reaches_the_documents_of_an_application_only(): void
+    {
+        $application = $this->openApplication();
+        $this->advance($application, S::AwaitingContract);
+        $card = $this->upload($application, 'صورة البطاقة الشخصية')->assertCreated()->json('data.id');
+        $contracts = $this->contractsStaff();
+
+        $this->upload($application, 'صورة البطاقة الشخصية', null, $contracts)->assertForbidden();   // the person's
+        $contract = $this->upload($application, 'العقد', null, $contracts)->assertCreated()->json('data.id');
+
+        $response = $this->asStaff($contracts)->getJson("/api/v1/staff/applications/{$application->id}/documents")->assertOk();
+        $this->assertSame([$contract], array_column($response->json('data.documents'), 'id'));
+        $this->assertSame(['application'], array_values(array_unique(array_column(array_column($response->json('data.requirements'), 'type'), 'scope'))));
+
+        $this->asStaff($contracts)->get("/api/v1/staff/documents/{$contract}/download")->assertOk();
+        $this->asStaff($contracts)->get("/api/v1/staff/documents/{$card}/download")->assertForbidden();
+        $this->asStaff($contracts)->postJson("/api/v1/staff/documents/{$card}/archive", ['reason' => 'سبب'])->assertForbidden();
+        $this->asStaff($contracts)->getJson("/api/v1/staff/candidates/{$application->candidate_id}/documents")->assertForbidden();
+        $this->asStaff($contracts)->postJson("/api/v1/staff/documents/{$contract}/archive", ['reason' => 'نسخة خاطئة'])->assertOk();
+
+        // The Documenting office sees both.
+        $this->assertCount(2, $this->asStaff($this->documentsStaff())->getJson("/api/v1/staff/applications/{$application->id}/documents?include_archived=1")->json('data.documents'));
     }
 
     // ---- types ----
 
     public function test_document_types_are_managed(): void
     {
-        $staff = $this->hiringStaff();
+        $staff = $this->documentsStaff();
 
         $id = $this->asStaff($staff)->postJson('/api/v1/staff/document-types', ['name_ar' => 'شهادة خبرة', 'scope' => 'candidate', 'direction' => 'incoming', 'required_from_status' => 'awaiting_interview'])
             ->assertCreated()->assertJsonPath('data.required_from_status', 'awaiting_interview')->json('data.id');
@@ -249,7 +279,7 @@ class DocumentApiTest extends TestCase
         $refused(fn() => DB::table('documents')->where('id', $id)->update(['original_filename' => 'x.pdf']));
         $refused(fn() => DB::table('documents')->where('id', $id)->delete());
         $refused(fn() => DB::table('documents')->where('id', $id)->update(['archived_at' => now()]));   // no one, no reason
-        DB::table('documents')->where('id', $id)->update(['archived_at' => now(), 'archived_by' => $this->hiringStaff()->id, 'archive_reason' => 'سبب']);
+        DB::table('documents')->where('id', $id)->update(['archived_at' => now(), 'archived_by' => $this->documentsStaff()->id, 'archive_reason' => 'سبب']);
         $refused(fn() => DB::table('documents')->where('id', $id)->update(['archive_reason' => 'سبب آخر']));
     }
 
@@ -260,7 +290,7 @@ class DocumentApiTest extends TestCase
         $row = [
             'id' => (string) Str::uuid7(), 'candidate_id' => $application->candidate_id, 'original_filename' => 'a.pdf',
             'stored_path' => 'documents/a.pdf', 'mime_type' => 'application/pdf', 'size_bytes' => 10, 'sha256' => str_repeat('a', 64),
-            'uploaded_by' => $this->hiringStaff()->id, 'created_at' => now(),
+            'uploaded_by' => $this->documentsStaff()->id, 'created_at' => now(),
         ];
 
         foreach ([

@@ -78,10 +78,12 @@ class ImportBatchController extends Controller
     /**
      * Approve the batch
      *
-     * Needs the individual permission `imports.approve`; the staff member who uploaded the batch cannot
+     * Needs the permission `imports.approve`; the staff member who uploaded the batch cannot
      * approve it (403).
      *
-     * Checks the rows again, then turns every valid row into an application with a new nomination number.
+     * Checks the rows again, then turns every valid row into an application with a new nomination number; the
+     * applications wait as `received` until Recruitment starts them (POST /applications/start with
+     * `filters.import_batch_id`, D-087).
      * 422 when rows still need review (confirm or exclude them first), or when a row that was valid is no
      * longer valid (for example, the person got an application meanwhile): look at those rows, then approve
      * again. Invalid and excluded rows are not imported and keep their reasons. All or nothing. Send the batch's

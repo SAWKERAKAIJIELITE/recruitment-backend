@@ -40,7 +40,7 @@ use Illuminate\Validation\ValidationException;
  *    application moves at once: passed → awaiting_interview, failed → exam_failed, dated the day of the exam, with
  *    the booking as the cause;
  *  - a hand mark is entered once; changing it is a correction with a reason, and after the decision it needs the
- *    individual permission exam_results.correct: the result gets a new revision, and when passed/failed changes the
+ *    permission exam_results.correct: the result gets a new revision, and when passed/failed changes the
  *    application gets a correction event (only while that result is still its latest decision).
  */
 class ExamResults
@@ -71,7 +71,7 @@ class ExamResults
 
     /**
      * Enters hand marks: [plan part id => mark]. A part already marked needs a reason (a correction), and after the
-     * result is decided also the individual permission exam_results.correct.
+     * result is decided also the permission exam_results.correct.
      *
      * @param  array<int, string>  $marks
      */

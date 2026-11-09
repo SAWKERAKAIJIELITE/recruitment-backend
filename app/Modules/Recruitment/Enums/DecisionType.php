@@ -5,8 +5,11 @@ namespace App\Modules\Recruitment\Enums;
 /** Why a status change happened. The analysis doc requires the type of decision on every transition. */
 enum DecisionType: string
 {
-    /** The application was opened (first status). */
+    /** The application was opened (first status: received). */
     case Created = 'created';
+
+    /** Recruitment started a received application: it now awaits its exam (D-087). Needs the actor, not a reason. */
+    case Started = 'started';
 
     /** The status follows from a recorded result: an exam attempt, an interview, a contract record. */
     case Outcome = 'outcome';

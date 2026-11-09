@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Exams;
 
+use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -39,7 +40,7 @@ class PassPolicyApiTest extends TestCase
     public function test_a_new_version_is_used_by_plans_published_afterwards_only(): void
     {
         $before = $this->publishedPlan($this->position('مدرس'), $this->planContent([$this->subject('العقيدة')]));
-        $author = $this->allow($this->examManager(), 'pass_policies.manage');
+        $author = $this->examManager();
 
         $this->asStaff($author)->postJson(self::URL, self::RULES)
             ->assertCreated()
@@ -55,11 +56,12 @@ class PassPolicyApiTest extends TestCase
         $this->asStaff($author)->getJson(self::URL)->assertJsonPath('data.0.version', 2)->assertJsonPath('data.1.is_current', false);
     }
 
-    public function test_adding_needs_the_individual_permission_and_consistent_rules(): void
+    public function test_adding_needs_pass_policies_manage_and_consistent_rules(): void
     {
-        $this->asStaff($this->examManager())->postJson(self::URL, self::RULES)->assertForbidden();   // exam_bank.manage is not enough
+        $this->asStaff(StaffUserFactory::new()->withRole('general_manager')->create())->postJson(self::URL, self::RULES)->assertForbidden();
+        $this->asStaff(StaffUserFactory::new()->withRole('recruitment')->create())->postJson(self::URL, self::RULES)->assertForbidden();
 
-        $author = $this->allow($this->examManager(), 'pass_policies.manage');
+        $author = $this->examManager();
         $this->asStaff($author)->postJson(self::URL, ['tolerance_floor' => '70'] + self::RULES)->assertStatus(422)->assertJsonValidationErrors('tolerance_floor');
         $this->asStaff($author)->postJson(self::URL, ['average_must_exceed' => '100'] + self::RULES)->assertStatus(422)->assertJsonValidationErrors('average_must_exceed');
         $this->asStaff($author)->postJson(self::URL, ['subject_pass_mark' => '60.555'] + self::RULES)->assertStatus(422)->assertJsonValidationErrors('subject_pass_mark');

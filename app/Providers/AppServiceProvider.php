@@ -5,6 +5,7 @@ namespace App\Providers;
 use App\Database\PostgresConnection;
 use App\Modules\Identity\Models\AccessToken;
 use App\Modules\Identity\Models\StaffUser;
+use App\Modules\Recruitment\Support\LifecycleNotices;
 use App\Modules\Recruitment\Support\NationalNumber;
 use Dedoc\Scramble\Scramble;
 use Dedoc\Scramble\Support\Generator\OpenApi;
@@ -13,8 +14,10 @@ use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Events\TransactionCommitted;
 use Illuminate\Http\Middleware\TrustProxies;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -29,6 +32,9 @@ class AppServiceProvider extends ServiceProvider
     {
         // Dates keep their offset when written (D-081).
         Connection::resolverFor('pgsql', fn ($pdo, $database, $prefix, $config) => new PostgresConnection($pdo, $database, $prefix, $config));
+
+        // One per request or job: the moves of applications waiting to be told to the offices (D-089).
+        $this->app->scoped(LifecycleNotices::class);
     }
 
     /**
@@ -39,6 +45,9 @@ class AppServiceProvider extends ServiceProvider
         // Mass assignment safety net: assigning a non-fillable attribute throws instead of being silently
         // dropped (outside production). Business-controlled columns are set with forceFill() on purpose.
         Model::preventSilentlyDiscardingAttributes(app()->environment('production') === false);
+
+        // After each commit, tell the offices about the applications it moved (D-089).
+        Event::listen(TransactionCommitted::class, fn() => $this->app->make(LifecycleNotices::class)->flush());
 
         // The client's real address behind a reverse proxy (throttling, the exam venue check).
         if (($proxies = config('app.trusted_proxies')) !== []) {

@@ -22,9 +22,9 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Carbon;
 
 /**
- * Exam sessions (D-056, D-073). Reading: exams.manage, candidates.manage, reports.view or exam_bank.manage.
+ * Exam sessions (D-056, D-073). Reading: exams.view.
  * Creating, changing and booking: exams.manage. The drawn questions (with their answers): exam_bank.manage.
- * More time for everyone: the individual permission attempts.extend.
+ * More time for everyone: the permission attempts.extend.
  */
 class ExamSessionController extends Controller
 {
@@ -123,7 +123,7 @@ class ExamSessionController extends Controller
     /**
      * More time for everyone
      *
-     * Individual permission attempts.extend. The session ends `minutes` later and every attempt still running gets
+     * Permission attempts.extend. The session ends `minutes` later and every attempt still running gets
      * them on its deadline (each recorded on the attempt, with the reason). Before the session ends.
      */
     public function extend(ExtendExamRequest $request, ExamSession $session, ManageExamSessions $sessions): ExamSessionResource

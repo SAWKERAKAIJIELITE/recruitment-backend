@@ -2,15 +2,19 @@
 
 namespace App\Modules\Recruitment\Http\Requests;
 
+use App\Modules\Recruitment\Enums\EditableReferenceType;
 use App\Modules\Recruitment\Enums\ReferenceType;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class ReferenceItemRequest extends FormRequest
 {
+    /** The list's office: contract types contracts.manage, the others candidates.manage (D-085). */
     public function authorize(): bool
     {
-        return true;   // the can:candidates.manage route middleware decides
+        $type = $this->route('type');
+
+        return ! $type instanceof EditableReferenceType || $this->user()->hasPermission($type->managedBy());
     }
 
     public function rules(): array

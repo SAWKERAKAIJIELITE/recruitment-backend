@@ -11,8 +11,8 @@ use App\Modules\Interviews\Http\Requests\StoreSittingRequest;
 use App\Modules\Interviews\Http\Requests\UpdateSittingRequest;
 use App\Modules\Interviews\Http\Resources\InterviewResource;
 use App\Modules\Interviews\Http\Resources\InterviewSittingResource;
-use App\Modules\Interviews\Models\Interview;
 use App\Modules\Interviews\Models\InterviewSitting;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -22,7 +22,7 @@ use Illuminate\Support\Facades\Date;
 use Illuminate\Validation\Rule;
 
 /**
- * Sittings (D-059, D-061). Reading: interviews.manage, candidates.manage or reports.view. Changing and booking:
+ * Sittings (D-059, D-061). Reading: interviews.view. Changing and booking:
  * interviews.manage.
  */
 class InterviewSittingController extends Controller
@@ -31,8 +31,8 @@ class InterviewSittingController extends Controller
      * List sittings
      *
      * Every sitting; `kind` committee or one_off narrows it, `member` (a staff user's id) keeps the sittings that
-     * staff user sits on. `from` / `to` (YYYY-MM-DD, UTC days, included) on the starting time; soonest first; 25
-     * per page.
+     * staff user sits on, `open` 1 keeps those not ended yet (to book into; 0: the ended ones). `from` / `to`
+     * (YYYY-MM-DD, UTC days, included) on the starting time; soonest first; 25 per page.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -41,6 +41,7 @@ class InterviewSittingController extends Controller
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
             'member' => ['nullable', 'uuid'],
+            'open' => ['nullable', 'boolean'],
         ]);
 
         $sittings = InterviewSitting::query()
@@ -50,6 +51,7 @@ class InterviewSittingController extends Controller
             ->when($filters['member'] ?? null, fn($query, $id) => $query->whereHas('members', fn($members) => $members->where('staff_user_id', $id)))
             ->when($filters['from'] ?? null, fn($query, $date) => $query->where('starts_at', '>=', $date))
             ->when($filters['to'] ?? null, fn($query, $date) => $query->where('starts_at', '<', Carbon::parse($date)->addDay()->toDateString()))
+            ->when(isset($filters['open']), fn($query) => $query->where('ends_at', $request->boolean('open') ? '>' : '<=', Date::now()))
             ->orderBy('starts_at')
             ->orderBy('id')
             ->paginate(25)
@@ -71,11 +73,12 @@ class InterviewSittingController extends Controller
      * Create a sitting
      *
      * `kind`: committee (default) or one_off, a single interviewer who sees the candidates one by one (exactly one
-     * member; `committee_name` optional). `starts_at`, `location`, `committee_name`, `members` (`name`, `capacity`
-     * chair|member|secretary; at most one chair; a staff account by `staff_user_id`, whose name is then the
-     * account's, or someone else by `name`), `notes`. 422 `duplicate_sitting` when a
-     * sitting with the same start, place and members exists (the same sitting entered twice; spaces and the letter
-     * forms ا/ي/ه are ignored).
+     * member; `committee_name` optional). `starts_at`, `ends_at` (after the start, within 24 hours), `location`,
+     * `committee_name`, `members` (`name`, `capacity` chair|member|secretary; at most one chair; a staff account by
+     * `staff_user_id`, whose name is then the account's, or someone else by `name`), `notes`. 422 on `starts_at`
+     * when a sitting with the same members overlaps it (wherever it is; the same sitting entered twice, even
+     * seconds apart, is one; spaces and the letter forms ا/ي/ه are ignored), on `members` when one of its staff
+     * accounts sits in an overlapping sitting.
      */
     public function store(StoreSittingRequest $request, ManageSittings $sittings): JsonResponse
     {
@@ -90,7 +93,7 @@ class InterviewSittingController extends Controller
      *
      * Send only what changes. `members` replaces the committee, refused once a result is recorded in the sitting.
      * A one-off sitting keeps exactly one member. Booked interviews keep their own times, so `starts_at` cannot move
-     * after any of them. The kind never changes. 422 `duplicate_sitting` as when creating.
+     * after any of them, nor `ends_at` to or before one. The kind never changes. 422 on overlaps as when creating.
      */
     public function update(UpdateSittingRequest $request, InterviewSitting $sitting, ManageSittings $sittings): InterviewSittingResource
     {
@@ -117,8 +120,9 @@ class InterviewSittingController extends Controller
      * Book several applications into a sitting
      *
      * In the order given (take it from the interview queue), from `first_at` (default: the sitting's start) every
-     * `minutes_between` minutes (default 30). Each application must be awaiting its interview with none booked. All
-     * or nothing: one refused application (422 on `application_ids.N`) books none.
+     * `minutes_between` minutes (default 30), each before the sitting's end. Each application must be awaiting its
+     * interview with none booked. All or nothing: one refused application (422 on `application_ids.N`, also when
+     * its time would reach the end) books none. 422 on `sitting` once the sitting has ended.
      */
     public function book(BookSittingRequest $request, InterviewSitting $sitting, ManageInterviews $interviews): JsonResponse
     {
@@ -130,9 +134,8 @@ class InterviewSittingController extends Controller
             $request->user(),
         );
 
-        $ids = array_map(fn(Interview $interview) => $interview->id, $booked);
-
-        return InterviewResource::collection(Interview::query()->with(InterviewResource::RELATIONS)->whereIn('id', $ids)->orderBy('scheduled_at')->get())
+        // Booked in order, every minutes_between: already by time. The relations load in one query each.
+        return InterviewResource::collection((new EloquentCollection($booked))->loadMissing(InterviewResource::RELATIONS))
             ->response()->setStatusCode(201);
     }
 }

@@ -30,11 +30,12 @@ class StaffUserFactory extends Factory
         return $this->state(['is_active' => false]);
     }
 
-    /** Requires RolesAndPermissionsSeeder to have run. */
+    /** The user's one role (D-085). Requires RolesAndPermissionsSeeder to have run. */
     public function withRole(string $slug): static
     {
         return $this->afterCreating(function (StaffUser $user) use ($slug) {
-            $user->roles()->attach(Role::where('slug', $slug)->firstOrFail());
+            $user->forceFill(['role_id' => Role::where('slug', $slug)->firstOrFail()->id, 'role_assigned_at' => now()])->save();
+            $user->forgetPermissionCache();
         });
     }
 }

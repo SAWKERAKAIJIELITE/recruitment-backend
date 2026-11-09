@@ -16,12 +16,15 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property ?string $candidate_id
  * @property array $context
  * @property ?string $ip
+ * @property string $related_ids text[] literal (the related_id search; not shown)
  */
 class AuditEvent extends Model
 {
     public const UPDATED_AT = null;
 
     protected $guarded = ['*'];
+
+    protected $hidden = ['related_ids'];
 
     protected function casts(): array
     {

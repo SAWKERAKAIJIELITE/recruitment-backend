@@ -9,9 +9,11 @@ use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Exceptions\IllegalStatusTransition;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Models\ApplicationStatusEvent;
+use App\Modules\Recruitment\Support\LifecycleNotices;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * The only way an application's status changes (analysis doc §03, D-033).
@@ -19,11 +21,17 @@ use Illuminate\Support\Facades\DB;
  * The legal moves are checked here, so an illegal jump is refused even when a request reaches the API
  * directly. The change itself is one new event appended to the history chain; the database then copies
  * its status into applications.current_status. Later modules (exams, interviews, contracts) call move().
+ * Every event is handed to LifecycleNotices, which tells the offices once the transaction commits (D-089).
  */
 class ApplicationLifecycle
 {
+    /** At most this many applications are started in one request (D-087). */
+    public const START_MAX = 5000;
+
+    public function __construct(private readonly LifecycleNotices $notices) {}
+
     /**
-     * Writes the first event of a new application (status awaiting_exam). Runs inside the transaction that
+     * Writes the first event of a new application (status received). Runs inside the transaction that
      * creates the application, without a savepoint of its own (an import opens thousands in one transaction).
      */
     public function open(Application $application, ?StaffUser $actor): ApplicationStatusEvent
@@ -32,11 +40,67 @@ class ApplicationLifecycle
             throw new \LogicException('ApplicationLifecycle::open() must run in the transaction that creates the application.');
         }
 
-        $event = $this->append($application, null, ApplicationStatus::AwaitingExam, DecisionType::Created, $actor, null, null, Date::now());
+        $event = $this->append($application, null, ApplicationStatus::Received, DecisionType::Created, $actor, null, null, Date::now());
 
         $this->reload($application);
 
         return $event;
+    }
+
+    /**
+     * Starts a received application: it now awaits its exam (D-087).
+     *
+     * @throws IllegalStatusTransition when it is not received
+     */
+    public function start(Application $application, StaffUser $actor): ApplicationStatusEvent
+    {
+        return $this->move($application, ApplicationStatus::AwaitingExam, DecisionType::Started, $actor);
+    }
+
+    /**
+     * Starts many received applications in one transaction, all or none: the rows are locked together, and one
+     * insert writes their events (an import can bring thousands).
+     *
+     * @param  list<string>  $ids
+     * @return list<string> the ids of the applications that were not received (nothing was started), or [] when
+     *                      every one was started
+     */
+    public function startMany(array $ids, StaffUser $actor): array
+    {
+        $ids = array_values(array_unique($ids));
+
+        return DB::transaction(function () use ($ids, $actor) {
+            $locked = Application::query()->whereKey($ids)->orderBy('id')->lockForUpdate()->get(['id', 'current_status'])->keyBy('id');
+            $refused = array_values(array_filter($ids, fn(string $id) => $locked->get($id)?->current_status !== ApplicationStatus::Received));
+
+            if ($refused !== []) {
+                return $refused;
+            }
+
+            $now = Date::now();
+
+            foreach (array_chunk($ids, 500) as $chunk) {
+                // The latest event of a received application is the one that opened it.
+                $latest = ApplicationStatusEvent::query()->whereIn('application_id', $chunk)->whereNull('previous_event_id')->pluck('id', 'application_id');
+
+                ApplicationStatusEvent::query()->insert(array_map(fn(string $id) => [
+                    'id' => (string) Str::uuid7(),
+                    'application_id' => $id,
+                    'previous_event_id' => $latest[$id],
+                    'to_status' => ApplicationStatus::AwaitingExam->value,
+                    'decision_type' => DecisionType::Started->value,
+                    'actor_id' => $actor->id,
+                    'occurred_at' => $now,
+                    'created_at' => $now,
+                ], $chunk));
+
+                foreach ($chunk as $id) {
+                    $this->notices->recorded($id, ApplicationStatus::Received, ApplicationStatus::AwaitingExam, DecisionType::Started, $actor);
+                }
+            }
+
+            return [];
+        });
     }
 
     /**
@@ -73,6 +137,10 @@ class ApplicationLifecycle
 
             if ($type->needsReasonAndActor() && ($reason === null || $reason === '' || $actor === null)) {
                 throw new IllegalStatusTransition("A {$type->value} decision needs a reason and the staff user who made it.");
+            }
+
+            if ($type === DecisionType::Started && $actor === null) {
+                throw new IllegalStatusTransition('Starting an application needs the staff user who started it.');
             }
 
             $latest = $this->latestEvent($locked);
@@ -206,6 +274,8 @@ class ApplicationLifecycle
 
         $event = new ApplicationStatusEvent;
         $event->forceFill($attributes)->save();
+
+        $this->notices->recorded((string) $application->getKey(), $previousEventId === null ? null : $application->current_status, $to, $type, $actor);
 
         return $event;
     }

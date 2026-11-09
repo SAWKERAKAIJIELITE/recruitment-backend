@@ -17,7 +17,7 @@ class DocumentTypeRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;   // the can:candidates.manage route middleware decides
+        return true;   // the can:documents.manage route middleware decides
     }
 
     public function rules(): array

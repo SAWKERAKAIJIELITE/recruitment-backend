@@ -6,6 +6,8 @@ use App\Modules\Exams\Actions\ManageExamPlans;
 use App\Modules\Exams\Models\ExamPlanVersion;
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
+use App\Modules\Identity\Models\Permission;
+use App\Modules\Identity\Models\Role;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Enums\ApplicationStatus as S;
 use App\Modules\Recruitment\Models\Application;
@@ -49,8 +51,8 @@ class ExamSessionApiTest extends TestCase
         parent::setUp();
         $this->seed(RolesAndPermissionsSeeder::class);
         $this->travelTo('2026-11-10 07:00:00');
-        $this->staff = $this->hiringStaff();          // recruitment_staff holds exams.manage
-        $this->planner = $this->examManager();        // system_admin holds exam_bank.manage
+        $this->staff = $this->examsStaff();          // the Exams and Interviews office holds exams.manage
+        $this->planner = $this->examManager();        // so does exam_bank.manage
         $position = JobPosition::query()->findOrFail($this->referenceIds()['job_position_id']);
         $this->plan = $this->publishedPlan($position, $this->planContent([$this->subject()], $this->quran()), $this->planner);
         $this->tajweed = (int) DB::table('exam_plan_subject_parts')->where('plan_version_id', $this->plan->id)->where('assessment', 'manual')->value('id');
@@ -161,8 +163,8 @@ class ExamSessionApiTest extends TestCase
         $this->assertArrayNotHasKey('password', $response->json('data'));
         $session = $response->json('data.id');
 
-        // The answers are seen only by who manages the bank.
-        $this->asStaff($this->staff)->getJson(self::URL."/{$session}/questions")->assertForbidden();
+        // The answers are seen only by who manages the bank (the Exams and Interviews office; not the general manager).
+        $this->asStaff($this->staffOf('general_manager'))->getJson(self::URL."/{$session}/questions")->assertForbidden();
         $questions = $this->asStaff($this->planner)->getJson(self::URL."/{$session}/questions")->assertOk()->json('data');
         $this->assertCount(10, $questions);
         $this->assertSame(0, $questions[0]['correct_option']);
@@ -399,12 +401,12 @@ class ExamSessionApiTest extends TestCase
         $this->assertSame('2026-11-10 08:15:00+00', $event->occurred_at);
 
         $this->artisan('exams:sweep')->assertSuccessful();   // again: nothing more
-        $this->assertSame(2, DB::table('application_status_events')->where('application_id', $application->id)->count());
+        $this->assertSame(3, DB::table('application_status_events')->where('application_id', $application->id)->count());   // received, started, absent
     }
 
     // ---- extensions ----
 
-    public function test_more_time_for_one_attempt_or_for_everyone_needs_the_individual_permission(): void
+    public function test_more_time_for_one_attempt_or_for_everyone_needs_attempts_extend(): void
     {
         $session = $this->examSession();
         $this->book($session, $this->applicant(), $this->applicant('22222222222'), $this->applicant('33333333333'))->assertCreated();
@@ -415,8 +417,8 @@ class ExamSessionApiTest extends TestCase
         $attempt = fn (string $number) => DB::table('exam_attempts')->join('exam_bookings as b', 'b.id', '=', 'exam_attempts.booking_id')->join('applications as a', 'a.id', '=', 'b.application_id')
             ->join('candidates as c', 'c.id', '=', 'a.candidate_id')->where('c.national_number', $number)->select('exam_attempts.*')->first();
 
-        $this->asStaff($this->staff)->postJson('/api/v1/staff/exam-attempts/'.$attempt('01234567890')->id.'/extend', ['minutes' => 10, 'reason' => 'تأخر بعذر'])->assertForbidden();
-        $manager = $this->allow($this->hiringStaff(), 'attempts.extend');
+        $this->asStaff($this->staffOf('general_manager'))->postJson('/api/v1/staff/exam-attempts/'.$attempt('01234567890')->id.'/extend', ['minutes' => 10, 'reason' => 'تأخر بعذر'])->assertForbidden();
+        $manager = $this->examsStaff();
 
         $this->asStaff($manager)->postJson('/api/v1/staff/exam-attempts/'.$attempt('01234567890')->id.'/extend', ['minutes' => 10, 'reason' => 'تأخر بعذر'])
             ->assertOk()
@@ -494,8 +496,8 @@ class ExamSessionApiTest extends TestCase
         $this->assertSame(S::ExamFailed, $application->fresh()->current_status);
 
         $url = "/api/v1/staff/applications/{$application->id}/exam-exception";
-        $this->asStaff($this->staff)->postJson($url, ['reason' => 'حاجة ماسة'])->assertForbidden();
-        $approver = $this->allow($this->hiringStaff(), 'exceptions.approve');
+        $this->asStaff($this->hiringStaff())->postJson($url, ['reason' => 'حاجة ماسة'])->assertForbidden();   // Recruitment does not decide exams
+        $approver = $this->examsStaff();
         $this->asStaff($approver)->postJson($url, ['reason' => 'حاجة ماسة إلى الاختصاص'])->assertOk()->assertJsonPath('application_status', 'awaiting_interview');
         $this->assertSame('exception', $this->latestEvent($application)->decision_type);
         $this->assertFalse($this->booking($application)['attempt']['result']['passed']);   // the computed result stays failed
@@ -521,9 +523,11 @@ class ExamSessionApiTest extends TestCase
         $this->assertSame(S::ExamFailed, $application->fresh()->current_status);
         $this->assertSame('70.00', $this->booking($application)['attempt']['result']['average']);
 
-        // After it: the individual permission too; the result is revised and the application corrected.
-        $this->marks($booking, '30', 'أعيد التقييم')->assertForbidden();
-        $corrector = $this->allow($this->hiringStaff(), 'exam_results.correct');
+        // After it: exam_results.correct too; the result is revised and the application corrected. A role holding
+        // exams.manage without it (none does by default) may not.
+        Role::where('slug', 'contracts')->firstOrFail()->permissions()->attach(Permission::where('slug', 'exams.manage')->value('id'));
+        $this->marks($booking, '30', 'أعيد التقييم', $this->contractsStaff())->assertForbidden();
+        $corrector = $this->examsStaff();
         $this->marks($booking, '30', null, $corrector)->assertStatus(422);
         $response = $this->marks($booking, '30', 'أعيد تقييم التجويد بحضور اللجنة', $corrector)->assertOk();
 
@@ -564,7 +568,7 @@ class ExamSessionApiTest extends TestCase
         $this->assertSame(S::ExamAbsent, $application->fresh()->current_status);
 
         $next = $this->examSession(['starts_at' => '2026-11-17T08:00:00Z', 'location' => 'قاعة 2']);
-        $approver = $this->allow($this->hiringStaff(), 'exceptions.approve');
+        $approver = $this->examsStaff();
         $this->asStaff($approver)->postJson("/api/v1/staff/applications/{$application->id}/exam-excuse", ['reason' => 'تقرير طبي', 'session_id' => $next])
             ->assertOk()
             ->assertJsonPath('application_status', 'awaiting_exam')
@@ -577,7 +581,7 @@ class ExamSessionApiTest extends TestCase
     public function test_reading_and_managing_sessions(): void
     {
         $session = $this->examSession();
-        $reader = $this->allow(StaffUserFactory::new()->create(), 'reports.view');
+        $reader = $this->staffOf('general_manager');
 
         $this->asStaff($reader)->getJson(self::URL)->assertOk()->assertJsonCount(1, 'data');
         $this->asStaff($reader)->getJson(self::URL."/{$session}")->assertOk();
@@ -612,7 +616,7 @@ class ExamSessionApiTest extends TestCase
 
         // The answer sheet: the candidate's order, the key, every save; only for who manages the bank.
         $attempt = $this->booking($failed)['attempt']['id'];
-        $this->asStaff($this->staff)->getJson("/api/v1/staff/exam-attempts/{$attempt}/answers")->assertForbidden();
+        $this->asStaff($this->staffOf('general_manager'))->getJson("/api/v1/staff/exam-attempts/{$attempt}/answers")->assertForbidden();
         $sheet = $this->asStaff($this->planner)->getJson("/api/v1/staff/exam-attempts/{$attempt}/answers")->assertOk()->json('data');
         $this->assertCount(10, $sheet);
         $this->assertSame(7, count(array_filter($sheet, fn (array $item) => $item['is_correct'])));
@@ -633,7 +637,7 @@ class ExamSessionApiTest extends TestCase
             $this->marks($this->booking($application)['id'], '40')->assertOk();
         }
 
-        $interviewer = $this->hiringStaff();
+        $interviewer = $this->examsStaff();
         $ids = fn (string $rule) => array_column($this->asStaff($interviewer)->getJson('/api/v1/staff/interviews/queue?priority[]='.$rule)->assertOk()->json('data'), 'id');
         $this->assertSame([$stronger->id, $weaker->id], $ids('exam_average'));
         $this->assertSame([$weaker->id, $stronger->id], $ids('exam_average:asc'));
@@ -668,7 +672,7 @@ class ExamSessionApiTest extends TestCase
         // A session given more time is no longer "never used".
         $unused = $this->examSession(['starts_at' => '2026-11-11T08:00:00Z', 'location' => 'قاعة 4']);
         $this->travelTo('2026-11-11 08:30:00');
-        $this->asStaff($this->allow($this->hiringStaff(), 'attempts.extend'))->postJson(self::URL."/{$unused}/extend", ['minutes' => 5, 'reason' => 'تأخر البدء'])->assertOk();
+        $this->asStaff($this->examsStaff())->postJson(self::URL."/{$unused}/extend", ['minutes' => 5, 'reason' => 'تأخر البدء'])->assertOk();
         $this->asStaff($this->staff)->deleteJson(self::URL."/{$unused}")->assertStatus(422)->assertJsonPath('errors.session.0', __('exams.sessions.in_use'));
     }
 

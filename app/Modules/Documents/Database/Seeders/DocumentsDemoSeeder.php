@@ -28,7 +28,8 @@ class DocumentsDemoSeeder extends Seeder
             return;
         }
 
-        $staff = StaffUser::query()->where('username', 'staff')->firstOrFail();
+        $staff = StaffUser::query()->where('username', 'documents')->firstOrFail();   // the Documenting office
+        $contractsOffice = StaffUser::query()->where('username', 'contracts')->firstOrFail();   // attaches the contracts
         $types = DocumentType::query()->get()->keyBy('name_ar');
         $applications = Application::query()->with('candidate')->orderBy('created_at')->get();
         $path = tempnam(sys_get_temp_dir(), 'demo-doc-') . '.pdf';
@@ -47,7 +48,7 @@ class DocumentsDemoSeeder extends Seeder
 
             foreach ($contracts->values() as $index => $application) {
                 if ($index % 2 === 0 && isset($types['العقد'])) {
-                    $this->documents->upload($this->file($path, 'العقد'), $types['العقد'], $application->candidate, $application, 'العقد الأول', $staff);
+                    $this->documents->upload($this->file($path, 'العقد'), $types['العقد'], $application->candidate, $application, 'العقد الأول', $contractsOffice);
                 }
             }
         } finally {

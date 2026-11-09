@@ -10,20 +10,18 @@ use App\Modules\Exams\Http\Controllers\ExamSubjectController;
 use App\Modules\Exams\Http\Controllers\PassPolicyController;
 use App\Modules\Exams\Http\Middleware\EnsureVenueNetwork;
 use App\Modules\Identity\Http\Middleware\EnsureStaffIsActive;
-use App\Modules\Identity\Http\Middleware\RequireAnyPermission;
 use Illuminate\Support\Facades\Route;
 
 // Every route here needs a signed-in, active staff user.
 Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('api/v1/staff')->group(function () {
-    // Reading subjects and plans: whoever prepares exams, hiring staff and the general manager.
-    Route::middleware(RequireAnyPermission::class . ':exam_bank.manage,candidates.manage,reports.view')->group(function () {
+    // Reading subjects, plans and pass rules: the Exams and Interviews office and the general manager (D-085).
+    Route::middleware('can:exams.view')->group(function () {
         Route::get('exam-subjects', [ExamSubjectController::class, 'index']);
         Route::get('exam-plans', [ExamPlanController::class, 'index']);
         Route::get('exam-plans/{plan}', [ExamPlanController::class, 'show'])->whereUuid('plan');
         Route::get('exam-pass-policies', [PassPolicyController::class, 'index']);
     });
 
-    // Individual permission (never given by a role).
     Route::post('exam-pass-policies', [PassPolicyController::class, 'store'])->middleware('can:pass_policies.manage');
 
     Route::middleware('can:exam_bank.manage')->group(function () {
@@ -55,7 +53,7 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
 
 // Exam sessions, bookings and results (D-073 to D-075).
 Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('api/v1/staff')->group(function () {
-    Route::middleware(RequireAnyPermission::class . ':exams.manage,candidates.manage,reports.view,exam_bank.manage')->group(function () {
+    Route::middleware('can:exams.view')->group(function () {
         Route::get('exam-sessions', [ExamSessionController::class, 'index']);
         Route::get('exam-sessions/{session}', [ExamSessionController::class, 'show'])->whereUuid('session');
         Route::get('exam-sessions/{session}/bookings', [ExamSessionController::class, 'bookings'])->whereUuid('session');
@@ -80,7 +78,6 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
         Route::get('exam-attempts/{attempt}/answers', [ExamBookingController::class, 'answers'])->whereUuid('attempt');
     });
 
-    // Individual permissions (never given by a role).
     Route::middleware('can:attempts.extend')->group(function () {
         Route::post('exam-sessions/{session}/extend', [ExamSessionController::class, 'extend'])->whereUuid('session');
         Route::post('exam-attempts/{attempt}/extend', [ExamBookingController::class, 'extend'])->whereUuid('attempt');

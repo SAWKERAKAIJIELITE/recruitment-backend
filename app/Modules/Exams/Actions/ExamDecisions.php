@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * The administrative decisions after an exam (analysis doc §07; individual permission exceptions.approve). Neither
+ * The administrative decisions after an exam (analysis doc §07; permission exceptions.approve). Neither
  * changes the exam's own result:
  *
  *  - an accepted absence excuse: exam_absent → awaiting_exam, optionally booked at once into the next session (a new

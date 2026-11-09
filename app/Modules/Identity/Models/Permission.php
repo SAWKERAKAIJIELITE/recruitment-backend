@@ -10,11 +10,11 @@ class Permission extends Model
 {
     use HasUuids;
 
-    protected $fillable = ['slug', 'label_ar', 'individual_only'];
+    protected $fillable = ['slug', 'label_ar', 'read_only'];
 
     protected function casts(): array
     {
-        return ['individual_only' => 'boolean'];
+        return ['read_only' => 'boolean'];
     }
 
     public function roles(): BelongsToMany

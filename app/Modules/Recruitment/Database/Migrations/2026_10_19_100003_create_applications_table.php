@@ -17,6 +17,7 @@ return new class extends Migration
 {
     /** Same values as App\Modules\Recruitment\Enums\ApplicationStatus (written out: migrations must not change with the code). */
     private const STATUSES = [
+        'received',
         'awaiting_exam',
         'exam_failed',
         'exam_absent',
@@ -29,7 +30,7 @@ return new class extends Migration
         'closed',
     ];
 
-    private const DECISION_TYPES = ['created', 'outcome', 'exception', 'excuse_accepted', 'closure', 'correction'];
+    private const DECISION_TYPES = ['created', 'started', 'outcome', 'exception', 'excuse_accepted', 'closure', 'correction'];
 
     public function up(): void
     {
@@ -70,7 +71,7 @@ return new class extends Migration
             $table->text('notes')->nullable();
 
             // Written by the database only (see the triggers below).
-            $table->enum('current_status', self::STATUSES)->default('awaiting_exam')->index();
+            $table->enum('current_status', self::STATUSES)->default('received')->index();
             $table->foreignUuid('created_by')->index()->constrained('staff_users')->restrictOnDelete();
             $table->timestampsTz();
 
@@ -115,9 +116,11 @@ return new class extends Migration
 
         // Exactly one first event per application.
         DB::statement('CREATE UNIQUE INDEX application_status_events_one_first ON application_status_events (application_id) WHERE previous_event_id IS NULL');
-        // Only "created" has no previous status; and a chain always starts at awaiting_exam.
+        // Only "created" has no previous status; a chain always starts at received, and starting is the move from it
+        // to awaiting_exam (D-087).
         DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_first_is_created CHECK ((previous_event_id IS NULL) = (decision_type = 'created'))");
-        DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_created_awaits_exam CHECK (decision_type <> 'created' OR to_status = 'awaiting_exam')");
+        DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_created_is_received CHECK ((decision_type = 'created') = (to_status = 'received'))");
+        DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_started_awaits_exam CHECK (decision_type <> 'started' OR (to_status = 'awaiting_exam' AND actor_id IS NOT NULL))");
         // Person-made decisions need a real reason and the staff user who made them.
         DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_decisions_are_accountable CHECK (decision_type NOT IN ('exception', 'excuse_accepted', 'closure', 'correction') OR (btrim(coalesce(reason, '')) <> '' AND actor_id IS NOT NULL))");
         // A decision cannot be dated after it was recorded (D-039).
@@ -189,14 +192,14 @@ return new class extends Migration
         );
         DB::unprepared('CREATE TRIGGER application_status_events_set_current_status AFTER INSERT ON application_status_events FOR EACH ROW EXECUTE FUNCTION application_status_events_sync_status()');
 
-        // Nothing else may write current_status: a new application starts at awaiting_exam, and a direct
+        // Nothing else may write current_status: a new application starts at received, and a direct
         // UPDATE of the column is refused. (pg_trigger_depth() is 2 only when the sync trigger above runs it.)
         DB::unprepared(<<<'SQL'
             CREATE OR REPLACE FUNCTION applications_guard_current_status() RETURNS trigger AS
             $$
                 BEGIN
-                    IF TG_OP = 'INSERT' AND NEW.current_status <> 'awaiting_exam' THEN
-                        RAISE EXCEPTION 'A new application starts at awaiting_exam' USING ERRCODE = 'integrity_constraint_violation';
+                    IF TG_OP = 'INSERT' AND NEW.current_status <> 'received' THEN
+                        RAISE EXCEPTION 'A new application starts at received' USING ERRCODE = 'integrity_constraint_violation';
                     END IF;
 
                     IF TG_OP = 'UPDATE' AND NEW.current_status IS DISTINCT FROM OLD.current_status AND pg_trigger_depth() < 2 THEN

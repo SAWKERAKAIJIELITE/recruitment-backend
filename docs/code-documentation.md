@@ -21,17 +21,17 @@ Staff and candidates are separate actors with separate tables, login pipelines a
 | Module                                                         | Status  | Notes                                                                                                                                                                                                  |
 | -------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Foundation                                                     | Done    | Project, PostgreSQL, module loader, tests on PostgreSQL                                                                                                                                                |
-| Identity: staff accounts, RBAC, access management              | Done    | Roles, per-user overrides, management API (D-020)                                                                                                                                                      |
+| Identity: staff accounts, RBAC, access management              | Done    | One role per staff user: the four offices, the general manager (views only), the system administrator (everything); management API (D-020, D-085)                                                     |
 | Identity: device-bound staff login                             | Done    | Registration, approval, challenge/signature login (D-017)                                                                                                                                              |
-| Identity: user management                                      | Done    | Adding staff users (D-058); an administrator sets a new password and ends the user's sessions (D-071); roles follow the direct permissions (D-070); deactivating and reactivating (D-079)            |
+| Identity: user management                                      | Done    | Adding staff users (D-058); changing a user's role (D-085); an administrator sets a new password and ends the user's sessions (D-071); deactivating and reactivating (D-079)            |
 | Candidate login for exams                                      | Done    | National number and the session's password, a token per exam booking, only from the venue's network (D-072, D-077, section 10.8)                                                                     |
-| Recruitment                                                    | Done    | Nine managed lists (areas inside districts), candidates, applications, nomination number, chained status history with database-maintained status, one live application per person, closing, corrections, deactivating people (section 8) |
+| Recruitment                                                    | Done    | Nine managed lists (areas inside districts), candidates, applications, nomination number, chained status history with database-maintained status, received applications started by Recruitment (one, many, by filters), one live application per person, closing, corrections, deactivating people, what each office sees (section 8, D-086, D-087) |
 | Imports                                                        | Done    | Legacy Excel template: upload, column detection, row checks, corrections and review, atomic approval, report (section 9)                                                                               |
 | Exams                                                          | Done    | Subjects and parts, versioned exam plans (one session, parts marked by hand, easy/medium/hard), question bank, pass policy as versioned data (added through the API), exact scoring engine; sessions with drawn questions, bookings, candidate login, attempts with server time and saved answers, extensions, absences, hand marks, automatic results, excuses and exceptions (section 10) |
 | Documents                                                      | Done    | Document types, uploads checked by content, download, archive, missing documents per application (section 11)                                                                                       |
-| Interviews                                                     | Done    | Sittings (a committee, or one interviewer), duplicates refused, results entered by the committee moving the application, reschedules, cancellations, corrections, absence excuses, queue by staff priorities, bulk booking (section 12) |
-| Contracts                                                      | Done    | First contract, renewals, corrections, end without renewal, expiry reminders (section 13)                                                                                                             |
-| Notifications                                                  | Done    | In-system staff notifications (section 14)                                                                                                                                                             |
+| Interviews                                                     | Done    | Sittings (a committee, or one interviewer) with a start and an end, overlaps of a committee or a staff member refused, results entered by the committee moving the application, reschedules, cancellations, corrections, absence excuses, queue by staff priorities, bulk booking (section 12) |
+| Contracts                                                      | Done    | First contract within the vacancies, renewals, corrections, end without renewal, expiry reminders; vacancies files of three months (section 13, D-088)                                                |
+| Notifications                                                  | Done    | In-system staff notifications: contract expiry, and every move of an application to the offices concerned (section 14, D-089)                                                                        |
 | Reports                                                        | Done    | Dashboard indicators; staff reports after the legacy workbook (applications, exams with marks, total, average and failure cause, interviews, the whole workbook) in Excel / PDF; the list for شعبة التجنيد; results for candidates (section 15) |
 | Audit                                                          | Done    | `audit_events` table written with each action, append-only; read API by category (section 7.9, D-078)                                                                                               |
 | Integration                                                    | Planned | Outbox for the future "Mawarid" integration                                                                                                                                                            |
@@ -120,13 +120,13 @@ app/Modules/Identity/
 │                       ApproveDevice, RevokeDevice, ManageRolePermissions, ManageStaffAccess
 ├── Console/            ApproveDeviceCommand  (php artisan staff:approve-device)
 ├── Database/           Factories, Migrations, Seeders
-├── Enums/              DeviceStatus
+├── Enums/              DeviceStatus, StaffRole (the offices, the general manager, the administrator)
 ├── Http/
 │   ├── Controllers/    StaffAuthController, StaffDeviceController, PermissionController,
 │   │                   RoleController, StaffUserController
 │   ├── Middleware/     EnsureStaffIsActive, RequireAnyPermission
 │   ├── Requests/       Login, Challenge, RegisterDevice, ApproveDevice, RevokeDevice,
-│   │                   AddRolePermissions, SetUserPermission, AddUserRole
+│   │                   AddRolePermissions, SetUserRole, RegisterUser, ResetUserPassword
 │   └── Resources/      StaffUser, StaffUserSummary, StaffUserAccess, StaffDevice,
 │                       DeviceRegistration, DeviceStatus, Role, Permission
 ├── Models/             StaffUser, Role, Permission, StaffDevice, DeviceLoginChallenge, AccessToken
@@ -162,17 +162,15 @@ Both use Sanctum tokens stored in the polymorphic `personal_access_tokens` table
 
 ### 7.2 Database schema
 
-**`staff_users`**: `id` uuid PK; `personal_number` unique; `username` varchar(50) unique, CHECK allows only `a-z . _ -`, 3 to 50 characters (D-035); `first_name`, `last_name` (CHECK: at least 3 characters, no digits); `password`; `is_active` (default true); `last_login_at` timestamptz; `deactivated_at`, `deactivated_by`, `deactivation_reason` (all or none, only when inactive: CHECK, D-079); timestamps.
+**`staff_users`**: `id` uuid PK; `personal_number` unique; `username` varchar(50) unique, CHECK allows only `a-z . _ -`, 3 to 50 characters (D-035); `first_name`, `last_name` (CHECK: at least 3 characters, no digits); `password`; `is_active` (default true); `last_login_at` timestamptz; `deactivated_at`, `deactivated_by`, `deactivation_reason` (all or none, only when inactive: CHECK, D-079); `role_id` (the user's one role, D-085; null only for an account made outside the API, which then holds nothing), `role_assigned_by`, `role_assigned_at`; timestamps.
 
 **`roles`**: `id`, `slug` unique, `label_ar`, timestamps.
 
-**`permissions`**: `id`, `slug` unique, `label_ar`, `individual_only` boolean (true = can never be attached to a role), timestamps.
+**`permissions`**: `id`, `slug` unique, `label_ar`, `read_only` boolean (it only shows data: the only kind the general manager's role takes), timestamps.
 
-**`permission_role`**: composite-key link table, foreign keys `RESTRICT`.
+**`permission_role`**: composite-key link table, foreign keys `RESTRICT`. The system administrator's role has no rows: it holds every permission.
 
-**`role_staff_user`**: a user's roles: `automatic` (true when the system added the role because every permission of it is granted to the user directly, D-070), `note` (why), `assigned_by`, `created_at`.
-
-**`permission_staff_user`**: per-user override. `is_granted` true = grant, false = deny; `granted_by` = the administrator who made the change; `note` when the system acted on it (a role removed because all its permissions are denied, D-070).
+There are no per-user grants or denials (D-085).
 
 **`staff_devices`**
 
@@ -196,56 +194,38 @@ CHECK constraints: an approved device needs `approved_at` and `staff_user_id`; a
 
 **`personal_access_tokens`**: Sanctum's table with `tokenable_id` as uuid and an extra nullable `staff_device_id`.
 
-### 7.3 Permission catalogue and default RBAC matrix
+### 7.3 Offices, roles and permissions (D-085)
 
-Source: analysis doc §02. `✓` = given by the role by default. `✓*` = `individual_only`: never given by a role, granted per user. `—` = not given.
+Every staff user holds one role. `✓` = given by the role by default; `—` = not given. The system administrator holds every permission, always (computed, not stored, not editable). The general manager's role takes read-only permissions only (422 otherwise).
 
-| Permission             | General manager | Recruitment staff | System admin |
-| ---------------------- | :-------------: | :---------------: | :----------: |
-| `reports.view`       |       ✓       |        ✓        |      ✓      |
-| `imports.manage`     |       —       |        ✓        |      ✓      |
-| `candidates.manage`  |       —       |        ✓        |      ✓      |
-| `exam_bank.manage`   |       —       |  — (grantable)  |      ✓      |
-| `exams.manage`       |       —       |        ✓        |      ✓      |
-| `attempts.extend`    |       ✓*       |        ✓*        |     ✓*     |
-| `exam_results.correct` |     ✓*       |        ✓*        |     ✓*     |
-| `exceptions.approve` |       ✓*       |        ✓*        |     ✓*     |
-| `interviews.correct` |       ✓*       |        ✓*        |     ✓*     |
-| `pass_policies.manage` |     ✓*       |        ✓*        |     ✓*     |
-| `applications.close` |       ✓*       |        ✓*        |     ✓*     |
-| `imports.approve`    |       ✓*       |        ✓*        |     ✓*     |
-| `interviews.manage`  |       —       |        ✓        |      ✓      |
-| `contracts.manage`   |       —       |        ✓        |      ✓      |
-| `users.manage`       |       —       |        —        |      ✓      |
-| `users.add`          |       —       |        —        |      ✓      |
-| `devices.approve`    |       —       |        —        |      ✓      |
-| `audit.view`         |       ✓       |        —        |      ✓      |
-| `audit.view_related` |       —       |        ✓        |      —      |
-| `exams.take`         |       —       |        —        |      —      |
+| Permission | Recruitment | Exams and Interviews | Contracts | Documenting | General manager | System admin |
+| ---------- | :---------: | :------------------: | :-------: | :---------: | :-------------: | :----------: |
+| `applications.view` (the full file; read-only) | ✓ | — | — | — | ✓ | ✓ |
+| `candidates.manage` (people, applications, lists) | ✓ | — | — | — | — | ✓ |
+| `applications.start` | ✓ | — | — | — | — | ✓ |
+| `applications.close` | ✓ | — | — | — | — | ✓ |
+| `imports.view` (read-only) | ✓ | — | — | — | ✓ | ✓ |
+| `imports.manage`, `imports.approve` | ✓ | — | — | — | — | ✓ |
+| `exams.view` (read-only) | — | ✓ | — | — | ✓ | ✓ |
+| `exam_bank.manage`, `exams.manage`, `attempts.extend`, `exam_results.correct`, `pass_policies.manage`, `exceptions.approve` | — | ✓ | — | — | — | ✓ |
+| `interviews.view` (read-only) | — | ✓ | — | — | ✓ | ✓ |
+| `interviews.manage`, `interviews.correct` | — | ✓ | — | — | — | ✓ |
+| `contracts.view` (contracts and vacancies; read-only) | — | — | ✓ | — | ✓ | ✓ |
+| `contracts.manage` (and the contract types list) | — | — | ✓ | — | — | ✓ |
+| `documents.view` (read-only) | — | — | — | ✓ | ✓ | ✓ |
+| `documents.manage` (documents and their types) | — | — | — | ✓ | — | ✓ |
+| `reports.view` (dashboard, workbook; read-only) | — | — | — | — | ✓ | ✓ |
+| `audit.view` (read-only) | — | — | — | — | ✓ | ✓ |
+| `audit.view_related` (own sections' operations; read-only) | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| `vacancies.manage`, `users.manage`, `users.add`, `devices.approve` | — | — | — | — | — | ✓ |
 
-Role slugs: `general_manager`, `recruitment_staff`, `system_admin`. Candidates have no roles.
+Role slugs: `recruitment`, `exams_interviews`, `contracts`, `documenting`, `general_manager`, `system_admin` (`App\Modules\Identity\Enums\StaffRole`). Candidates have no roles.
 
-The seeder gives a role its defaults only when the role is first created; afterwards administrators own the data through the access-management API (D-020). `exams.manage` and `exam_results.correct` (Step 10) are added to an existing database by a migration of the Exams module (`exams.manage` to the recruitment staff and system administrator roles).
+The seeder (`RolesAndPermissionsSeeder::PERMISSIONS`, `ROLES`) upserts the catalogue and gives a role its defaults only when the role is first created; afterwards administrators own the data through the access-management API (D-020).
 
-### 7.4 Effective permissions
+### 7.4 Permissions of a user
 
-```
-effective = (permissions from all of the user's roles + direct grants) − direct denials
-```
-
-`StaffUser::permissionSlugs()` computes it (cached per instance for the request). `Gate::before` answers any ability named like a permission slug with `true` when the staff user holds it, otherwise `null` (never `false`), so Policies still apply. There is no super-admin bypass.
-
-Roles follow the direct permissions (`AutomaticRoles`, D-070), checked after every change of a user's roles or overrides and, for everyone, after a role's permissions change:
-
-| Change | Effect |
-| ------ | ------ |
-| The direct grants now hold every permission of a role the user does not have | the role is added, `automatic`, with a note; the grants stay direct |
-| One of those grants is cleared or denied | the automatic role is removed |
-| The direct denials now cover every permission of a role the user holds | the role is removed; the denials stay, each with a note |
-| A role is given by hand | the user's grants and denials of its permissions are cleared: they come from the role (an automatic role becomes one given by hand) |
-| An automatic role is taken away by hand | the grants it stood for are taken away too |
-
-A role without permissions is never added or removed automatically. Each automatic change is logged (`access.role_added_automatically`, `access.role_removed_automatically`, `access.role_dropped_automatically`).
+`StaffUser::permissionSlugs()` is the role's permissions (every permission for the system administrator; none without a role), cached per instance for the request. `Gate::before` answers any ability named like a permission slug with `true` when the staff user holds it, otherwise `null` (never `false`), so Policies still apply.
 
 ### 7.5 API reference
 
@@ -279,26 +259,23 @@ Base path: `/api/v1/staff`. Send `Accept: application/json`. Protected routes ne
 
 | Method | Path                                       | Purpose                                                                     |
 | ------ | ------------------------------------------ | --------------------------------------------------------------------------- |
-| GET    | `/permissions`                           | Catalogue, with the `individual_only` flag                                |
-| GET    | `/roles`                                 | Roles with their permissions                                                |
-| POST   | `/roles/{role}/permissions`              | Body `permissions: [slug]`; `individual_only` permissions refused (422) |
-| DELETE | `/roles/{role}/permissions/{permission}` | 404 if the role does not have it                                            |
-| GET    | `/users`, `/users/{user}`              | List; detail with roles, `role_assignments` (`automatic`, `note`, `assigned_at`), overrides (with `note`), effective permissions |
+| GET    | `/permissions`                           | Catalogue, with the `read_only` flag                                |
+| GET    | `/roles`                                 | Roles with their permissions, `office` and `administrator` (every permission) |
+| POST   | `/roles/{role}/permissions`              | Body `permissions: [slug]`; 422 for the administrator's role, and for a permission that is not read-only on the general manager's |
+| DELETE | `/roles/{role}/permissions/{permission}` | 404 if the role does not store it                                            |
+| GET    | `/users`, `/users/{user}`              | List (each with its `role`); detail with `role` (`slug`, `label`, `office`), `role_assigned_at`, effective permissions |
 | POST   | `/users/{user}/deactivate`, `/users/{user}/activate` | Deactivate (`reason`; every session ends; not yourself) or reactivate (D-079) |
 | PUT    | `/users/{user}/password`                 | A forgotten password (D-071): body `password` + `password_confirmation` (same rules as a new account); deletes every token of the user (signed out everywhere); the device stays approved |
-| POST   | `/users/{user}/roles`                    | Body `role`; clears the user's grants and denials of the role's permissions (D-070) |
-| DELETE | `/users/{user}/roles/{role}`             | 404 if the user does not hold it; an automatic role takes its direct grants with it |
-| POST   | `/users/{user}/permissions`              | Body `permission`, `effect` = `grant` or `deny`; may add or remove a role automatically (D-070) |
-| DELETE | `/users/{user}/permissions/{permission}` | Clear the override; 404 if none                                             |
-| POST   | `/new` (`users.add`)                    | Add a staff user with a first role (D-058): `username`, `first_name`, `last_name`, `personal_number` (4 to 50 digits), `is_active`, `role` (slug), `password` + `password_confirmation` (8+, upper and lower case, digit, symbol, not in known leaks). 201. Without `users.manage`, only a role whose permissions the caller holds (403) |
+| PUT    | `/users/{user}/role`                     | Body `role`: replaces the user's one role (D-085); logged `access.role_changed` (from, to) |
+| POST   | `/new` (`users.add`)                    | Add a staff user with their role (D-058): `username`, `first_name`, `last_name`, `personal_number` (4 to 50 digits), `is_active`, `role` (slug), `password` + `password_confirmation` (8+, upper and lower case, digit, symbol, not in known leaks). 201. Without `users.manage`, only a role whose permissions the caller holds (403) |
 
 `{role}` and `{permission}` are slugs. Any change that would leave no active staff user able to manage users is rejected with 422 and rolled back. Changes are logged as `access.*` entries.
 
 ### 7.9 Audit log (`app/Modules/Audit`, D-078)
 
-`AuditTrail::record($event, $actor, $context)` writes a row of `audit_events` in the transaction of the action (a rolled-back action leaves none) and a log line. Columns: `event` (dotted, CHECK), `category` (`security` for `access.*`, `device.*`, `auth.*`; otherwise `operations`), `actor_id` (null: the system or a candidate), `candidate_id` (a candidate's own action), `context` jsonb (GIN index), `ip` (null from the console), `created_at`. Append-only (trigger).
+`AuditTrail::record($event, $actor, $context)` writes a row of `audit_events` in the transaction of the action (a rolled-back action leaves none) and a log line. Columns: `event` (dotted, CHECK), `category` (`security` for `access.*`, `device.*`, `auth.*`; otherwise `operations`), `actor_id` (null: the system or a candidate), `candidate_id` (a candidate's own action), `context` jsonb (GIN index), `related_ids` text[] (GIN index; filled from the context's `id`, `*_id`, `*_ids` and the acting candidate, for `related_id`; not shown), `ip` (inet; null from the console), `created_at`. Append-only (trigger). Each event's `actor` is shown as id, personal number, username, full name and active.
 
-`GET /api/v1/staff/audit-events`: newest first, 50 per page; `event` (exact, or ending with `.` for every event of a kind), `actor_id`, `related_id` (any record id in the context), `category`, `from`, `to`. `audit.view` reads everything; `audit.view_related` the operations only. Failed logins stay in the application log only.
+`GET /api/v1/staff/audit-events`: newest first, 50 per page; `event` (exact, or ending with `.` for every event of a kind), `actor_id`, `related_id` (a record id the event is about: the context's `id`, `*_id`, `*_ids`, or the acting candidate; indexed), `category`, `from`, `to`. `audit.view` reads everything; `audit.view_related` the operations only. Failed logins stay in the application log only.
 
 ### 7.6 Device-bound login protocol (for the Electron team)
 
@@ -337,7 +314,7 @@ Every failure writes a `staff_login_failed` log entry with the real reason (no u
 | Seeder                        | Runs                   | Purpose                                                                                       |
 | ----------------------------- | ---------------------- | --------------------------------------------------------------------------------------------- |
 | `RolesAndPermissionsSeeder` | Every environment      | Upserts the permission catalogue; gives a role its defaults only when created                 |
-| `DevUsersSeeder`            | `APP_ENV=local` only | Creates `admin`, `manager`, `staff` (password `password`) and example per-user grants |
+| `DevUsersSeeder`            | `APP_ENV=local` only | One account per role (password `password`): `admin` (system administrator), `manager` (general manager), `staff` and `staff.two` (Recruitment), `exams` (Exams and Interviews), `contracts`, `documents` (Documenting) |
 
 Production: run migrations, then
 `php artisan db:seed --class="App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder" --force`.
@@ -421,13 +398,13 @@ Partial unique index: **one live application per person**, whatever the job posi
 | application_id    | FK `applications`                                                                                                                        |
 | previous_event_id | unique; `(application_id, previous_event_id)` is a composite FK to `(application_id, id)` of this table; null only for the first event |
 | to_status         | enum + CHECK                                                                                                                               |
-| decision_type     | `created` / `outcome` / `exception` / `excuse_accepted` / `closure`                                                              |
-| reason, actor_id  | required (non-blank reason) for `exception`, `excuse_accepted` and `closure`                                                         |
+| decision_type     | `created` / `started` / `outcome` / `exception` / `excuse_accepted` / `closure` / `correction`                                    |
+| reason, actor_id  | required (non-blank reason) for `exception`, `excuse_accepted`, `closure` and `correction`; `started` needs the actor            |
 | occurred_at       | when the decision happened (D-039): not after `created_at`, not before the previous event's `occurred_at`                              |
 | created_at        | when it was recorded                                                                                                                       |
 | *cause columns* | added by later modules, one nullable FK per cause (`interview_id`, `contract_id`, `exam_booking_id`), at most one set per event (D-038, section 8.5) |
 
-Constraints: one first event per application (partial unique index); only `created` has no previous event, and `created` always leads to `awaiting_exam`; `occurred_at <= created_at`.
+Constraints: one first event per application (partial unique index); only `created` has no previous event, and only `created` leads to `received`; `started` leads to `awaiting_exam` only, with an actor (D-087); `occurred_at <= created_at`.
 
 ### 8.3 Database triggers (D-033)
 
@@ -436,7 +413,8 @@ Constraints: one first event per application (partial unique index); only `creat
 | `application_status_events_append_only`, `_no_truncate` | events                | UPDATE, DELETE, TRUNCATE refused                                                                          |
 | `application_status_events_follow_tail`                   | events, before insert | Locks the application; refuses an event that does not follow the latest event, or that is dated before it |
 | `application_status_events_set_current_status`            | events, after insert  | Copies `to_status` into `applications.current_status`                                                 |
-| `applications_current_status_guard`                       | applications          | A new application must be `awaiting_exam`; any other write to `current_status` is refused             |
+| `applications_current_status_guard`                       | applications          | A new application must be `received`; any other write to `current_status` is refused             |
+| `applications_position_after_contract`                    | applications          | The job position of an application with a contract does not change (D-088)                         |
 | `applications_have_history` (deferred)                    | applications          | At commit, refuses an application that has no first event                                                 |
 
 So `current_status` always equals the status of the last event, whatever code writes to the database. Other application columns can still be updated normally.
@@ -444,6 +422,7 @@ So `current_status` always equals the status of the last event, whatever code wr
 ### 8.4 Status lifecycle (D-037)
 
 ```
+received ──started (Recruitment)──►
 awaiting_exam ──outcome──► awaiting_interview ──outcome──► awaiting_contract ──outcome──► contract_written ──outcome──► contract_ended
      │  │                        │  │
      │  └─outcome─► exam_absent   │  └─outcome─► interview_absent
@@ -457,7 +436,7 @@ awaiting_exam ──outcome──► awaiting_interview ──outcome──► a
 Every status before contract_written ──closure (reason + actor, applications.close)──► closed
 ```
 
-Terminal statuses: `contract_ended`, `closed`; everything else is live. `ApplicationLifecycle::move($application, $to, $type, actor:, reason:, cause:, occurredAt:)` locks the application row, reads its status from the database, refuses any move not in `ApplicationStatus::transitions()`, any wrong decision type, a person-made decision without reason and actor, and a date in the future or before the previous decision (`IllegalStatusTransition`). It then appends the event after the latest one and reloads the caller's model (the database has changed `current_status`). `open()` writes the first event inside the transaction that creates the application, without a savepoint of its own. `correct($application, $to, $cause, $actor, $reason)` replaces the latest outcome after its record was corrected (D-060): a new `correction` event, only while the outcome caused by `$cause` is still the latest decision, and only towards another outcome the same step could give (from the status before that outcome). `Application::history()` returns the events in chain order with each event's previous event attached, so `fromStatus()` costs no extra query.
+Every application opens `received` (by hand or from an approved import) and enters the lifecycle when Recruitment starts it (`started`, D-087); a received application can be closed. Terminal statuses: `contract_ended`, `closed`; everything else is live. `ApplicationLifecycle::move($application, $to, $type, actor:, reason:, cause:, occurredAt:)` locks the application row, reads its status from the database, refuses any move not in `ApplicationStatus::transitions()`, any wrong decision type, a person-made decision without reason and actor, and a date in the future or before the previous decision (`IllegalStatusTransition`). It then appends the event after the latest one and reloads the caller's model (the database has changed `current_status`). `open()` writes the first event (`received`) inside the transaction that creates the application, without a savepoint of its own. `start()` starts one; `startMany($ids, $actor)` locks them together and writes all their events in one insert, or none when any is not received (it returns those). Every event goes to `LifecycleNotices`, which tells the offices after the commit (section 14). `correct($application, $to, $cause, $actor, $reason)` replaces the latest outcome after its record was corrected (D-060): a new `correction` event, only while the outcome caused by `$cause` is still the latest decision, and only towards another outcome the same step could give (from the status before that outcome). `Application::history()` returns the events in chain order with each event's previous event attached, so `fromStatus()` costs no extra query.
 
 ### 8.5 Causes of a status change (D-038)
 
@@ -501,17 +480,19 @@ All under `/api/v1/staff`, staff token required.
 | Method | Path                               | Permission                                | Purpose                                                                                 |
 | ------ | ---------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------- |
 | GET    | `/reference/{type}`              | any staff user                            | List a managed list; `?include_archived=1` (or `true`); for areas `?district_id=` |
-| POST   | `/reference/{type}`              | `candidates.manage`                     | Add an entry (`name_ar`; areas also `district_id`)                                  |
-| PUT    | `/reference/{type}/{id}`         | `candidates.manage`                     | Rename (an area never changes district)                                                 |
-| DELETE | `/reference/{type}/{id}`         | `candidates.manage`                     | Archive                                                                                 |
-| POST   | `/reference/{type}/{id}/restore` | `candidates.manage`                     | Restore                                                                                 |
-| POST   | `/applications`                  | `candidates.manage`                     | Open an application (finds or creates the person)                                       |
-| GET    | `/applications`                  | `reports.view` or `candidates.manage` | Search and list                                                                         |
-| GET    | `/applications/{id}`             | `reports.view` or `candidates.manage` | File with person and full history                                                       |
-| PATCH  | `/applications/{id}`             | `candidates.manage`                     | Correct a live application: send only the fields that change (D-049)                    |
-| POST   | `/applications/{id}/close`       | `applications.close` (individual)       | End the application: body `reason`, optional `occurred_at` (D-037, D-039)           |
-| GET    | `/candidates`                    | `reports.view` or `candidates.manage` | People: `q` (name in any spelling or national number in any digits), `is_active`, `birth_place_id`, `has_live_application`; 25 per page |
-| GET    | `/candidates/{id}`               | `reports.view` or `candidates.manage` | The person with every application, newest first                                         |
+| POST   | `/reference/{type}`              | `candidates.manage`; `contract-types`: `contracts.manage` | Add an entry (`name_ar`; areas also `district_id`); 403 for another office's list |
+| PUT    | `/reference/{type}/{id}`         | the same                     | Rename (an area never changes district)                                                 |
+| DELETE | `/reference/{type}/{id}`         | the same                     | Archive                                                                                 |
+| POST   | `/reference/{type}/{id}/restore` | the same                     | Restore                                                                                 |
+| POST   | `/applications`                  | `candidates.manage`                     | Open an application (finds or creates the person), `received`; `start: true` starts it at once (`applications.start`) |
+| GET    | `/applications`                  | `applications.view`; identity only with `exams.view`, `interviews.view`, `contracts.view` or `documents.view` (D-086) | Search and list                                                                         |
+| GET    | `/applications/{id}`             | the same | File with person and full history; the other offices: identity only                                                       |
+| POST   | `/applications/{id}/start`       | `applications.start`                    | Start a received application (D-087)                                                      |
+| POST   | `/applications/start`            | `applications.start`                    | Start many: `application_ids` (up to 1,000) or `filters` (up to 5,000 received matches); all or none |
+| PATCH  | `/applications/{id}`             | `candidates.manage`                     | Correct a live application: send only the fields that change (D-049); the job position stays once a contract is written (D-088) |
+| POST   | `/applications/{id}/close`       | `applications.close`       | End the application: body `reason`, optional `occurred_at` (D-037, D-039)           |
+| GET    | `/candidates`                    | `applications.view` | People: `q` (name in any spelling or national number in any digits), `is_active`, `birth_place_id`, `has_live_application`; 25 per page |
+| GET    | `/candidates/{id}`               | `applications.view` | The person with every application, newest first                                         |
 | PATCH  | `/candidates/{id}`               | `candidates.manage`                     | Correct the person (national number included, never to another person's)                |
 | POST   | `/candidates/{id}/deactivate`    | `candidates.manage`                     | Body `reason`; refused while the person has a live application                         |
 | POST   | `/candidates/{id}/activate`      | `candidates.manage`                     | Nominable again                                                                         |
@@ -548,19 +529,24 @@ All under `/api/v1/staff`, staff token required.
 | `has_employee_number` | Has an existing employee number or not |
 | `status` | One status, or several: `status[]=exam_failed&status[]=exam_absent` |
 | `live` | `1`: not ended; `0`: contract ended or closed |
-| `job_position_id`, `nominating_entity_id`, `application_category_id`, `academic_qualification_id`, `specialization_id`, `marital_status_id`, `health_condition_id`, `residence_district_id`, `residence_area_id` | Exact list entry |
+| `job_position_id`, `nominating_entity_id`, `application_category_id`, `academic_qualification_id`, `specialization_id`, `marital_status_id`, `health_condition_id`, `residence_district_id`, `residence_area_id` | Exact list entry (422 when it does not exist in its list; `birth_place_id` too) |
 | `birth_place_id`, `candidate_active` | The person's birth place; whether the person is active |
 | `studies_discontinued`, `works_for_other_government_entity`, `full_commitment`, `overnight_work` | Yes/no |
 | `studying_years` | Exact; `studying_years_min`, `studying_years_max` for a range |
-| `quran_parts_min`, `quran_parts_max` | Parts memorized, range |
+| `quran_parts_min`, `quran_parts_max` | Parts memorized, range (0 to 30) |
 | `birth_date_from`, `birth_date_to` | `YYYY-MM-DD`, included |
 | `age_min`, `age_max` | Whole years today |
 | `created_by` | The staff user who opened it |
+| `import_batch_id` | Imported by that batch (D-087) |
 | `from`, `to` | Opening date, both days included, UTC |
 | `sort` | `created_at` (default, newest first), `nomination_number`, `full_name`, `birth_date`, `status`; `direction` `asc`/`desc` |
 | `per_page` | 5 to 100 (25); filters stay in the page links |
 
 Each row (`ApplicationSummaryResource`) carries the application's data and the person (`candidate`, with birth place and who deactivated them). Its relations load with the page (`ApplicationSummaryResource::RELATIONS`): 14 queries for any page size.
+
+**The other offices** (without `applications.view`, D-086) get `ApplicationIdentityResource` rows: `id`, `nomination_number`, `status`, `status_label`, `job_position`, `candidate` (`id`, `full_name`, `national_number`), `created_at`; and may use `q`, `national_number`, `status`, `live`, `job_position_id`, `import_batch_id`, `from`, `to`, `sort` (not `birth_date`), `direction`, `per_page` only (any other filter: 422 `recruitment.identity_only_filter`). The exam and interview queues show the same identity.
+
+**Start** (`POST /applications/start`, D-087): `{"application_ids": ["…"]}` or `{"filters": {"import_batch_id": "…", "job_position_id": 3}}` (the list's filters without `status`, `live`, sort or paging, applied to the received applications). All or none in one transaction; 422 naming the applications that are not received, or when the filters match none or more than 5,000. Returns `{"data": {"started": 3, "application_ids": [...]}}`; the offices get one notification for all of them.
 
 **File** (`GET /applications/{id}`): the application with each list value as `{id, name_ar, archived}`, grouped `education`, `health`, `residence`, `availability`; the `candidate`; and `history` in chain order, each event with `from_status`, `to_status`, `decision_type`, `reason`, `actor`, `occurred_at`.
 
@@ -579,8 +565,8 @@ Each row (`ApplicationSummaryResource`) carries the application's data and the p
 | `AreasSeeder` | Every environment | Suggested areas per governorate (administrative areas; neighbourhoods for دمشق); a governorate missing from the list is skipped |
 | `MaritalStatusesSeeder` | Every environment | أعزب، متزوج، مطلق، أرمل. The only way to change this list (D-048) |
 | `JobPositionsSeeder`, `ApplicationCategoriesSeeder`, `AcademicQualificationsSeeder`, `SpecializationsSeeder`, `HealthConditionsSeeder` | Every environment | The template's values (`FROM_TEMPLATE`) plus suggestions (`SUGGESTED`); remove a suggestion from the constant, or archive it through the API, if it does not apply |
-| `RecruitmentDemoSeeder` | `APP_ENV=local` | 38 invented people (national numbers `09…`), 39 applications in every status up to `awaiting_contract` (the contracts demo takes some further) with dated histories (outcomes, an exception, accepted excuses, closures), a person nominated twice, a deactivated person |
-| `ImportsDemoSeeder` | `APP_ENV=local` | Three batches from generated workbooks: approved (six rows, uploaded by `staff`, approved by `manager`), cancelled, pending (valid rows, a person nominated again, a spelling variant, unknown job position, bad phone, duplicate, person mismatch, live application) |
+| `RecruitmentDemoSeeder` | `APP_ENV=local` | 41 invented people (national numbers `09…`), 42 applications in every status up to `awaiting_contract` (three still received; the contracts demo takes some further) with dated histories (starts, outcomes, an exception, accepted excuses, closures), a person nominated twice, a deactivated person. Recruitment (`staff`) opens, starts and closes; the Exams and Interviews office (`exams`) records the rest |
+| `ImportsDemoSeeder` | `APP_ENV=local` | Three batches from generated workbooks: approved (six rows, uploaded by `staff`, approved by `staff.two`, waiting received), cancelled, pending (valid rows, a person nominated again, a spelling variant, unknown job position, bad phone, duplicate, person mismatch, live application) |
 
 Every list seeder matches entries by normalized name, archived ones included (`Concerns/SeedsReferenceList`): running it again adds only what is missing. The demo seeders use the real actions (the triggers accept nothing else), move the clock back so dates spread over the last months, need `DevUsersSeeder`, and run once. When no nominating entity exists, the demo adds the template's five (`Demo/DemoReferences`). Rebuild a development database with `php artisan migrate:fresh --seed`.
 
@@ -706,7 +692,7 @@ If anything fails, everything rolls back: nothing is imported, the reserved numb
 
 ### 9.7 API reference
 
-All under `/api/v1/staff/imports`. Reading needs `imports.manage` or `imports.approve`; changing needs `imports.manage`; approving needs `imports.approve` (individual) and is refused to the uploader (D-047).
+All under `/api/v1/staff/imports`. Reading needs `imports.view`, `imports.manage` or `imports.approve`; changing needs `imports.manage`; approving needs `imports.approve` (Recruitment) and is refused to the uploader (D-047). The approved applications wait `received` until Recruitment starts them (D-087).
 
 | Method | Path                                   | Purpose                                                                                                                                          |
 | ------ | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -816,7 +802,7 @@ Marks must cover exactly the plan's subjects and parts (otherwise `InvalidArgume
 
 ### 10.6 API reference
 
-All under `/api/v1/staff`. Subjects and plans: read with `exam_bank.manage`, `candidates.manage` or `reports.view`; change with `exam_bank.manage`. The question bank and plan readiness: `exam_bank.manage` only.
+All under `/api/v1/staff`. Subjects, plans and pass rules: read with `exams.view` (the Exams and Interviews office, the general manager; D-085); change with `exam_bank.manage`. The question bank and plan readiness: `exam_bank.manage` only.
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
@@ -841,7 +827,7 @@ All under `/api/v1/staff`. Subjects and plans: read with `exam_bank.manage`, `ca
 | DELETE | `/exam-plans/{id}` | Delete a draft (204) |
 | POST | `/exam-plans/{id}/publish` | Publish; retires the previous version. 422 lists every problem |
 | GET | `/exam-pass-policies` | Versions of the pass rules, newest (current) first |
-| POST | `/exam-pass-policies` | New version (individual `pass_policies.manage`): `subject_pass_mark`, `tolerance_floor`, `max_tolerated_subjects`, `average_must_exceed`, `description`; plans published from then on use it (D-063) |
+| POST | `/exam-pass-policies` | New version (`pass_policies.manage`): `subject_pass_mark`, `tolerance_floor`, `max_tolerated_subjects`, `average_must_exceed`, `description`; plans published from then on use it (D-063) |
 
 **Replace a draft** (`PUT /exam-plans/{id}`):
 
@@ -884,9 +870,9 @@ Timing: candidates may log in from `exams.login_early_minutes` (60) before the s
 
 | Table | Notes |
 | ----- | ----- |
-| `exam_attempts` | uuid; `booking_id` (unique: one attempt per booking), `session_id` (composite key with the booking), `status` (`in_progress`, `submitted`), `started_at`, `deadline_at` (server time; only moves later), `extra_minutes` (its own), `submitted_at`, `closed_by` (`candidate`, `timeout`), `start_ip`. Never reopened or deleted (trigger) |
+| `exam_attempts` | uuid; `booking_id` (unique: one attempt per booking), `session_id` (composite key with the booking), `status` (`in_progress`, `submitted`), `started_at`, `deadline_at` (server time; only moves later), `extra_minutes` (its own), `submitted_at`, `closed_by` (`candidate`, `timeout`), `start_ip` (inet). Never reopened or deleted (trigger) |
 | `exam_attempt_items` | the session's questions in this candidate's order: `position`, `session_question_id` (same session: composite key), `selected_option`, `answered_at`, `is_correct` (set once at closing). Answers change only while in progress (trigger) |
-| `exam_answer_revisions` | every save: `attempt_item_id`, `selected_option` (null = cleared), `ip`, `saved_at` (append-only) |
+| `exam_answer_revisions` | every save: `attempt_item_id`, `selected_option` (null = cleared), `ip` (inet), `saved_at` (append-only) |
 | `exam_attempt_extensions` | every move of a deadline: `minutes`, `reason`, `previous_deadline`, `new_deadline`, `session_extension_id` (its share of one for everyone), `extended_by` (append-only) |
 | `exam_manual_marks` | hand marks (التجويد): `attempt_id`, `plan_part_id` (a manual part of the session's plan, mark ≤ its `max_score`: trigger), `revision` (2+ need a `reason`), `mark`, `entered_by` (append-only) |
 | `exam_results` | `attempt_id`, `revision` (2+ need a `reason`), `pass_policy_id`, `passed`, `average` (display), `outcome` jsonb (`ExamOutcome::toArray()`: subjects, bands, reasons, tolerated subjects, policy version), `decided_by` (null = the system) (append-only) |
@@ -895,7 +881,7 @@ Scoring an attempt: an online subject (or exam part) scores its right answers ou
 
 ### 10.10 Exam sessions API
 
-All under `/api/v1/staff`. Reading: `exams.manage`, `candidates.manage`, `reports.view` or `exam_bank.manage`. Changing: `exams.manage`.
+All under `/api/v1/staff`. Reading: `exams.view`. Changing: `exams.manage`. The exam queue shows identity only (D-086).
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
@@ -909,15 +895,15 @@ All under `/api/v1/staff`. Reading: `exams.manage`, `candidates.manage`, `report
 | GET | `/exam-attempts/{id}/answers` | A candidate's answer sheet: their order, the key, the last answer, right or wrong, every save with time and address (`exam_bank.manage` only, D-080) |
 | GET | `/exam-sessions/{id}/bookings` | The candidates live: status, attempt (start, deadline, questions, answered, last save, right answers once closed, extensions), hand marks, result; `status` |
 | POST | `/exam-sessions/{id}/bookings` | `application_ids` (awaiting their exam, the session's job position, none open), until the late window closes; all or nothing. 201 |
-| POST | `/exam-sessions/{id}/extend` | `minutes`, `reason` (individual `attempts.extend`): everyone still sitting |
+| POST | `/exam-sessions/{id}/extend` | `minutes`, `reason` (`attempts.extend`): everyone still sitting |
 | GET | `/exams/queue` | Who waits to be booked, longest wait first; the applications list's filters |
 | GET | `/exam-bookings/{id}` | One booking with every hand-mark revision and the result |
 | GET | `/applications/{id}/exam-bookings` | An application's rounds |
 | POST | `/exam-bookings/{id}/cancel` | `reason`; only while not started and before the late window closes (then it is an absence) |
 | POST | `/exam-bookings/{id}/marks` | `marks: [{part_id, mark}]` (plan part ids), `reason` to change a mark entered; after the decision also `exam_results.correct` (403 otherwise) |
-| POST | `/exam-attempts/{id}/extend` | `minutes`, `reason` (individual `attempts.extend`): one running attempt |
-| POST | `/applications/{id}/exam-excuse` | `reason`, `occurred_at`, optional `session_id` to book the next round (individual `exceptions.approve`) |
-| POST | `/applications/{id}/exam-exception` | `reason`, `occurred_at`: a failed exam admitted to the interview (individual `exceptions.approve`) |
+| POST | `/exam-attempts/{id}/extend` | `minutes`, `reason` (`attempts.extend`): one running attempt |
+| POST | `/applications/{id}/exam-excuse` | `reason`, `occurred_at`, optional `session_id` to book the next round (`exceptions.approve`) |
+| POST | `/applications/{id}/exam-exception` | `reason`, `occurred_at`: a failed exam admitted to the interview (`exceptions.approve`) |
 
 Audit events: `exam_session.created|updated|redrawn|deleted|extended`, `exam_booking.created|cancelled|absent`, `exam.candidate_login`, `exam_attempt.started|closed|extended`, `exam_marks.entered|corrected`, `exam_result.decided|revised`, `exam.excuse_accepted`, `exam.exception_approved`.
 
@@ -975,7 +961,7 @@ Stored on the private disk (`config('documents.disk')`) as `documents/{candidate
 
 ### 11.5 API reference
 
-All under `/api/v1/staff`. Types: read by any staff user, changed with `candidates.manage`. Documents: read and download with `reports.view`, `candidates.manage` or `contracts.manage`; upload and archive with `candidates.manage` or `contracts.manage`.
+All under `/api/v1/staff`. Types: read by any staff user, changed with `documents.manage`. Documents are the Documenting office's (D-085): read and download with `documents.view`, upload and archive with `documents.manage`. The Contracts office reaches the documents of an application only (its contract): reads them with `contracts.view`, uploads and archives them with `contracts.manage`; a person's documents are 403 to it, and its `requirements` list the application-level types only.
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
@@ -1015,7 +1001,7 @@ app/Modules/Interviews/
 
 | Table | Notes |
 | ----- | ----- |
-| `interview_sittings` | uuid; `kind` (`committee`, `one_off`), `starts_at`, `location` (place or medium), `committee_name` (nullable), `notes`, `committee_key` (md5 of the members' sorted normalized names, kept at commit), `created_by`; unique (`id`, `kind`); unique (`starts_at`, `interview_text_key(location)`, `committee_key`) |
+| `interview_sittings` | uuid; `kind` (`committee`, `one_off`), `starts_at`, `ends_at` (after the start, within 24 hours: CHECK), `location` (place or medium), `committee_name` (nullable), `notes`, `committee_key` (md5 of the members' sorted normalized names, kept at commit), `created_by`; unique (`id`, `kind`); exclusion `interview_sittings_no_overlap` (`committee_key` =, `tstzrange(starts_at, ends_at)` &&; `btree_gist`): the same members never at overlapping times (D-084) |
 | `interviews` | uuid; `application_id`, `round` (unique per application), `sitting_id` (NOT NULL), `scheduled_at` (the candidate's time in the sitting), `status` (`scheduled`, `recorded`, `cancelled`), current result: `result` (`passed`, `failed`, `absent`), `held_at`, `scientific_grade`, `general_grade`, `overall_grade` (`excellent` … `weak`), `committee_summary`, `notes`, `recorded_by/at`; `cancelled_at/by`, `cancel_reason`; `created_by` |
 | `interview_members` | `sitting_id` + `sitting_kind` (NOT NULL; composite foreign key to the sitting's `(id, kind)`, RESTRICT), `position` (unique per sitting), `name`, `capacity` (`chair`, `member`, `secretary`; one chair at most), `staff_user_id`; one member at most in a one-off sitting (partial unique index) |
 | `interview_reschedules` | `from_sitting_id`, `to_sitting_id`, `from_scheduled_at`, `to_scheduled_at` (something changed), `reason`, `rescheduled_by`, `created_at`; append-only |
@@ -1026,11 +1012,12 @@ Status, result, grades, kind and capacity are enum columns (a CHECK each). CHECK
 | Trigger | Rule |
 | ------- | ---- |
 | `interviews_no_delete` | Interviews are never deleted |
-| `interviews_within_sitting` | `scheduled_at` and `held_at` not before the sitting's start; share-locks the sitting |
-| `interview_sittings_guard` | A sitting keeps its kind and cannot start after an interview booked or held in it |
+| `interviews_within_sitting` | `scheduled_at` in `[starts_at, ends_at)`, `held_at` not before the start; share-locks the sitting |
+| `interview_sittings_guard` | A sitting keeps its kind, cannot start after an interview booked or held in it, nor end at or before one booked |
+| `interview_members_staff_overlap`, `interview_sittings_staff_overlap` (deferred) | At commit, a staff account is not a member of two overlapping sittings (`interview_staff_sittings_overlap`, an advisory lock per account first) |
 | `interview_sittings_have_members`, `interview_members_keep_one` (deferred) | At commit, every sitting has at least one member |
 | `interview_members_frozen` | No member is added, changed or removed in a sitting with a recorded result |
-| `interview_members_key_sitting` (deferred) | At commit, the sitting's `committee_key` is computed from its members (`interview_committee_key`); the unique index then refuses a second sitting with the same start, place and members |
+| `interview_members_key_sitting` (deferred) | At commit, the sitting's `committee_key` is computed from its members (`interview_committee_key`); the exclusion constraint then refuses the same members at overlapping times |
 | `interview_members_staff_name` | A member with a staff account carries the account's name (`staff_user_display_name`: each name capitalised, as the application shows it), set on every write (D-076) |
 | `staff_users_rename_members` (on `staff_users`) | A renamed account renames its seats on sittings without a recorded result; sittings with a result keep their names |
 
@@ -1038,26 +1025,26 @@ Status, result, grades, kind and capacity are enum columns (a CHECK each). CHECK
 
 ### 12.3 Rules
 
-- **Schedule:** the application is `awaiting_interview` (passed the exams, or by exception) and has no waiting interview. The sitting (committee or one-off) gives place and who interviews; the candidate's time defaults to its start and cannot be before it. Round = previous rounds + 1.
-- **Book many:** applications in the order given, from `first_at` every `minutes_between` minutes, into a sitting of either kind; one refused application books none.
-- **Queue:** applications awaiting their interview with none booked, with the applications list's filters, ordered by `priority` rules: `specialization_id:5,2` puts those entries first (also `job_position_id`, `nominating_entity_id`, `application_category_id`, `academic_qualification_id`, `residence_district_id`, `residence_area_id`); `quran_parts` (desc), `studying_years` (desc), `age` (asc: youngest first), `waiting_since` (asc), `nominated_at` (asc), `exam_average` (desc: the latest recorded exam result; none last, D-080) with optional `:asc`/`:desc`. Ties: longest waiting first. Each row has its `position` and `waiting_since`.
-- **Reschedule / cancel:** a waiting interview only, with a reason (reschedules are kept). Another sitting (`sitting_id`; the time defaults to its start), a new time (`scheduled_at`; alone, in the same sitting), or both.
+- **Schedule:** the application is `awaiting_interview` (passed the exams, or by exception) and has no waiting interview. The sitting (committee or one-off) gives place and who interviews; the candidate's time defaults to its start and is before its end. Nothing is booked into a sitting that has ended (422 `sitting_ended`). Round = previous rounds + 1.
+- **Book many:** applications in the order given, from `first_at` every `minutes_between` minutes, each before the sitting's end, into a sitting of either kind not ended; one refused application books none.
+- **Queue:** applications awaiting their interview with none booked, with the applications list's filters, ordered by `priority` rules: `specialization_id:5,2` puts those entries first (also `job_position_id`, `nominating_entity_id`, `application_category_id`, `academic_qualification_id`, `residence_district_id`, `residence_area_id`); `quran_parts` (desc), `studying_years` (desc), `age` (asc: youngest first), `waiting_since` (asc), `nominated_at` (asc), `exam_average` (desc: the latest recorded exam result; none last, D-080), `excused` (desc: back after an accepted interview excuse first, D-084) with optional `:asc`/`:desc`. Ties: longest waiting first. Each row has its `position` and `waiting_since`.
+- **Reschedule / cancel:** a waiting interview only, with a reason (reschedules are kept). Another sitting (`sitting_id`; the time defaults to its start), a new time (`scheduled_at`; alone, in the same sitting), or both, within that sitting's time. An interview whose sitting has ended is not moved (422 `interview_sitting_ended`: record it, absent if so, or cancel it), nor moved into an ended sitting.
 - **Members:** a staff account (`staff_user_id`, active), whose name is the account's, or someone else by `name`; not both (D-076).
 - **Delete a sitting:** only one nothing was booked into: no interview (even cancelled) and no reschedule out of it; its members go with it.
-- **Sittings:** a committee needs a `committee_name`; a one-off sitting has exactly one member. Members can change until a result is recorded in the sitting; it cannot start after its bookings; the kind never changes. Moving a sitting does not move the interviews booked in it. A sitting with the same start, place and members as another is refused (422 `duplicate_sitting` with the other's id; `duplicate_sitting_now` when another user committed it at the same moment).
+- **Sittings:** a committee needs a `committee_name`; a one-off sitting has exactly one member. Members can change until a result is recorded in the sitting; it cannot start after its bookings nor end at or before one; the kind never changes. Moving a sitting does not move the interviews booked in it. The same members (wherever) at an overlapping time are refused (422 `duplicate_sitting` with the other's id; `duplicate_sitting_now` when another user committed it at the same moment): a sitting entered twice, even seconds apart, overlaps itself. A staff account sits in one sitting at a time (422 `staff_overlap` on `members`; `staff_overlap_now`). D-084.
 - **Record:** the application is still `awaiting_interview`. `held_at` defaults to the appointment and cannot be in the future, before the sitting starts or before the previous decision. passed → `awaiting_contract`, failed → `interview_failed`, absent → `interview_absent` (outcome event, cause = the interview, dated `held_at`). Revision 1 is written.
-- **Correct** (individual `interviews.correct`, reason): any result field; a new revision. A changed result appends a `correction` event (D-060), only while the interview's outcome is the application's latest decision; otherwise only grades and notes can be corrected.
-- **Absence excuse** (individual `exceptions.approve`, reason, optional date): `interview_absent` → `awaiting_interview` (`excuse_accepted`, cause = the absent interview). The absent result stays; with `appointment`, the next round is booked in the same transaction. "Excused" in reports = an `excuse_accepted` event caused by that interview.
+- **Correct** (`interviews.correct`, reason): any result field; a new revision. A changed result appends a `correction` event (D-060), only while the interview's outcome is the application's latest decision; otherwise only grades and notes can be corrected.
+- **Absence excuse** (`exceptions.approve`, reason, optional date): `interview_absent` → `awaiting_interview` (`excuse_accepted`, cause = the absent interview). The absent result stays; with `appointment`, the next round is booked in the same transaction. "Excused" in reports = an `excuse_accepted` event caused by that interview.
 
 ### 12.4 API reference
 
-All under `/api/v1/staff`. Reading: `interviews.manage`, `candidates.manage` or `reports.view`. Changing: `interviews.manage`, except correcting (`interviews.correct`) and excuses (`exceptions.approve`).
+All under `/api/v1/staff`. Reading: `interviews.view`. Changing: `interviews.manage`, except correcting (`interviews.correct`) and excuses (`exceptions.approve`). The interview queue shows identity only (D-086).
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
-| GET | `/interview-sittings` | Sittings (`kind` committee or one_off narrows; `member` = a staff user's id: the sittings they sit on), `from`, `to`; soonest first; with members and `interviews_count` |
+| GET | `/interview-sittings` | Sittings (`kind` committee or one_off narrows; `member` = a staff user's id: the sittings they sit on; `open` 1/0: not ended / ended), `from`, `to`; soonest first; with members, `interviews_count`, `ends_at` and `ended` |
 | GET | `/interview-sittings/{id}` | A sitting with its committee and interviews (the interviews carry `sitting_id`, not the sitting again) |
-| POST | `/interview-sittings` | `kind` (committee, default; one_off), `starts_at`, `location`, `committee_name` (committee only), `members` [`capacity` + `staff_user_id` or `name`] (one for one_off), `notes` |
+| POST | `/interview-sittings` | `kind` (committee, default; one_off), `starts_at`, `ends_at`, `location`, `committee_name` (committee only), `members` [`capacity` + `staff_user_id` or `name`] (one for one_off), `notes` |
 | PATCH | `/interview-sittings/{id}` | Fields that change (`kind` refused); `members` replaces the committee (422 once a result is recorded); a committee keeps its name |
 | DELETE | `/interview-sittings/{id}` | A sitting nothing was booked into (204; 422 `sitting_in_use`) |
 | POST | `/interview-sittings/{id}/bookings` | `application_ids` (in order), `first_at`, `minutes_between` (30); 201 with the interviews |
@@ -1072,7 +1059,7 @@ All under `/api/v1/staff`. Reading: `interviews.manage`, `candidates.manage` or 
 | POST | `/interviews/{id}/correct` | Fields that change + `reason` (`interviews.correct`) |
 | POST | `/applications/{id}/interview-excuse` | `reason`, `occurred_at`, optional `appointment` (201 with the new interview, or 204) (`exceptions.approve`) |
 
-Grades: `excellent` (ممتاز), `very_good` (جيد جداً), `good` (جيد), `acceptable` (مقبول), `average` (وسط), `weak` (ضعيف); capacities `chair`, `member`, `secretary`; both returned as `{value, label}`. An interview returns its `sitting_id` and `sitting` (`id`, `kind`, `starts_at`, `location`, `committee_name`) and repeats `location`, `committee_name` and `members` from it, except inside one sitting's page, where the sitting is shown once.
+Grades: `excellent` (ممتاز), `very_good` (جيد جداً), `good` (جيد), `acceptable` (مقبول), `average` (وسط), `weak` (ضعيف); capacities `chair`, `member`, `secretary`; both returned as `{value, label}`. An interview returns its `sitting_id` and `sitting` (`id`, `kind`, `starts_at`, `ends_at`, `location`, `committee_name`) and repeats `location`, `committee_name` and `members` from it, except inside one sitting's page, where the sitting is shown once.
 
 ### 12.5 Seeding
 
@@ -1082,19 +1069,20 @@ Grades: `excellent` (ممتاز), `very_good` (جيد جداً), `good` (جيد)
 
 ### 13.1 What it does (D-064)
 
-The contract step (analysis doc §08). The **first contract** is written after a passed interview and moves the application to `contract_written`. Contracts are **renewed**: a renewal is a new contract that renews the latest one, so an application has a chain 1 → 2 → 3. When the latest contract ends without renewal, staff **record the end** and the application becomes `contract_ended` (the person may be nominated again). "Written" does not mean signed or appointed (§08). Two weeks before a contract ends, staff are reminded in the system (section 14).
+The contract step (analysis doc §08). The **first contract** is written after a passed interview, within the **vacancies** of its job position (D-088), and moves the application to `contract_written`. Contracts are **renewed**: a renewal is a new contract that renews the latest one, so an application has a chain 1 → 2 → 3. When the latest contract ends without renewal, staff **record the end** and the application becomes `contract_ended` (the person may be nominated again). "Written" does not mean signed or appointed (§08). Two weeks before a contract ends, staff are reminded in the system (section 14).
 
 ```
 app/Modules/Contracts/
-├── Actions/       ManageContracts (write, renew, correct, end), RemindExpiringContracts
+├── Actions/       ManageContracts (write, renew, correct, end), ManageVacancies (upload, replace, check), RemindExpiringContracts
 ├── Console/       RemindExpiringContractsCommand (contracts:remind-expiring, daily)
-├── Database/      Migrations (1), Seeders (ContractTypesSeeder, ContractsDemoSeeder)
+├── Database/      Migrations (2), Seeders (ContractTypesSeeder, ContractsDemoSeeder)
 ├── Enums/         ContractState
-├── Http/          Controllers (Contract), Requests, Resources
-├── Models/        Contract (StatusChangeCause), ContractType (managed list)
+├── Http/          Controllers (Contract, VacancyPlan), Requests, Resources
+├── Models/        Contract (StatusChangeCause), ContractType (managed list), VacancyPlan, VacancyPlanItem
 ├── Notifications/ ContractEndingSoon
+├── Support/       VacancyFile (reads a vacancies workbook)
 └── routes.php
-config/contracts.php   reminder_days (14)
+config/contracts.php   reminder_days (14), vacancy_months (3), vacancies_disk, vacancies_directory, vacancies_max_file_kilobytes
 ```
 
 ### 13.2 Database schema
@@ -1104,10 +1092,14 @@ config/contracts.php   reminder_days (14)
 | `contract_types` | Managed list like the Recruitment lists (`name_ar`, `name_key` unique, archived); API type `contract-types` |
 | `contracts` | uuid; `application_id`, `sequence` (unique per application), `renews_contract_id` (unique; composite key with the application), `contract_type_id`, `reference_number` (unique), `written_on`, `starts_on`, `ends_on` (null: no end), `document_id` (unique; composite key `(document_id, application_id)` → `documents (id, application_id)`), `notes`, `ended_on`, `end_reason`, `ended_by`, `ended_at`, `expiry_reminded_at`, `created_by` |
 
-CHECKs: sequence 1 exactly when it renews nothing; reference not blank; end ≥ start; the end fields all empty or all set with a reason, not before the writing date. One ended contract per application (partial unique index). Triggers: never deleted; a renewal takes the next number, starts at the previous end or later (the previous needs an end), and does not renew an ended contract; a renewed contract does not end after its renewal starts and cannot be ended. `application_status_events.contract_id` is the cause column (first contract, end).
+| `vacancy_plans` | uuid; `starts_on`, `ends_on` (included; CHECK after the start), the original file (`original_filename`, `stored_path`, `file_sha256`, `file_size`), `notes`, `replaces_plan_id` (unique, FK to the plan it corrected), `replaced_at`, `uploaded_by`, `created_at`; exclusion `vacancy_plans_no_overlap` (`daterange` &&) among the plans not replaced |
+| `vacancy_plan_items` | `plan_id`, `job_position_id` (unique together), `vacancies` (≥ 0), `row_number` |
+
+CHECKs: sequence 1 exactly when it renews nothing; reference not blank; end ≥ start; the end fields all empty or all set with a reason, not before the writing date. One ended contract per application (partial unique index). Triggers: never deleted; a renewal takes the next number, starts at the previous end or later (the previous needs an end), and does not renew an ended contract; a renewed contract does not end after its renewal starts and cannot be ended; a first contract (inserted, or its writing day corrected) needs a vacancy left for its job position in the plan covering its writing day (`contracts_within_vacancies`, locking the plan item: `contract_no_vacancy_plan`, `contract_no_vacancy`); plans are never deleted and only get `replaced_at`, once; their items never change. `application_status_events.contract_id` is the cause column (first contract, end).
 
 ### 13.3 Rules
 
+- **Vacancies** (D-088): the plan covering the writing day must hold a vacancy left for the application's job position (first contracts written in the period, by job position, below `vacancies`; a position missing from the file has none): 422 on `vacancies` otherwise (`no_vacancy_plan`, `no_vacancy` with used and allowed). Renewals use none. A corrected writing day of a first contract is checked again. An application with a contract keeps its job position.
 - **Write:** the application is `awaiting_contract`. `written_on` defaults to today and is not in the future nor before the previous decision; `starts_on` defaults to it. The status event is dated the writing day (the end of that day; now when written today).
 - **Renew:** the latest contract (not renewed, not ended) of an application under contract, with an end date. `starts_on` defaults to the day after that end. Late renewals are allowed.
 - **Correct** (reason): any field; audited with before and after. A new end date clears `expiry_reminded_at`.
@@ -1116,7 +1108,7 @@ CHECKs: sequence 1 exactly when it renews nothing; reference not blank; end ≥ 
 
 ### 13.4 API reference
 
-All under `/api/v1/staff`. Reading: `contracts.manage`, `candidates.manage` or `reports.view`. Changing: `contracts.manage`. Contract types: `/reference/contract-types` (read by any staff user, changed with `candidates.manage`).
+All under `/api/v1/staff`. Reading: `contracts.view`. Changing: `contracts.manage`. Contract types: `/reference/contract-types` (read by any staff user, changed with `contracts.manage`).
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
@@ -1130,15 +1122,40 @@ All under `/api/v1/staff`. Reading: `contracts.manage`, `candidates.manage` or `
 
 A contract returns `sequence`, `renews_contract_id`, `renewed_by_contract_id`, `type`, dates, `state` `{value, label}`, `days_left`, `document`, `ended`, `expiry_reminded_at`.
 
+**Vacancies** (D-088): reading with `contracts.view`, uploading and replacing with `vacancies.manage` (the system administrator).
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET | `/vacancy-plans` | Every plan, latest period first, 25 per page |
+| GET | `/vacancy-plans/current` | The plan covering today (Damascus) with its items; `data: null` when none |
+| GET | `/vacancy-plans/{id}` | One plan: `state` (upcoming, current, past, replaced), `replaces_plan_id`, `replaced_by_plan_id`, `items` (`job_position`, `vacancies`, `used`, `left`), `totals` |
+| GET | `/vacancy-plans/{id}/original` | The uploaded file (attachment, `nosniff`) |
+| POST | `/vacancy-plans` | multipart: `file` (.xlsx/.xls, 5 MB), `starts_on` (default today), `notes`; three months from `starts_on`; 422 `starts_on` when it overlaps a plan in force, 422 `file` with every row's problem |
+| POST | `/vacancy-plans/{id}/replace` | multipart: `file`, `notes`: a corrected file for the same period, while it has not ended; 201 with the new plan |
+
+The file: the first sheet; a header row with «المسمى الوظيفي» (or مسمى العمل، المسمى، الوظيفة) and «عدد الشواغر» (or الشواغر، عدد العقود، العدد) in the first 20 rows; then one job position per row (matched to the list in any spelling), its vacancies a whole number of 0 or more (Arabic-Indic digits too; no formulas). Empty rows and a total row (المجموع، الإجمالي) are skipped. Problems: unknown, archived or repeated position, missing position, bad count, formula, no header, no rows. Checked for safety like imports (D-045). Audit events: `vacancy_plan.uploaded`, `vacancy_plan.replaced`.
+
 ### 13.5 Seeding
 
-`ContractTypesSeeder` (every environment): suggestions (عقد سنوي، عقد مؤقت، عقد لمدة محددة) until management sends the contract form. `ContractsDemoSeeder` (local), on the demo applications awaiting their contract: one running for months, one ending in 10 days (its reminder is sent), one expired without renewal, one renewed, one ended without renewal, one without an end date; three stay awaiting.
+`ContractTypesSeeder` (every environment): suggestions (عقد سنوي، عقد مؤقت، عقد لمدة محددة) until management sends the contract form. `ContractsDemoSeeder` (local): first three consecutive vacancies files from 170 days ago (three vacancies for every job position, uploaded by `admin`); then, by `contracts`, on the demo applications awaiting their contract: one running for months, one ending in 10 days (its reminder is sent), one expired without renewal, one renewed, one ended without renewal, one without an end date; three stay awaiting.
 
 ## 14. Notifications module (D-065)
 
 In-system notifications for staff: Laravel database notifications in `notifications` (uuid, `type`, `notifiable_type`/`notifiable_id` uuid, `data` jsonb, `read_at`). A notification returns `id`, `kind`, `title`, `message`, `details`, `read_at`, `created_at`.
 
 The first kind is `contract_ending_soon` (details: `contract_id`, `application_id`, `nomination_number`, `candidate_name`, `reference_number`, `ends_on`, `days_left`). `contracts:remind-expiring` runs every day at 06:00 UTC (`routes/console.php`; the server needs `* * * * * php artisan schedule:run`). Each latest contract under contract ending within 14 days and not reminded yet notifies its writer and every active staff user holding `contracts.manage` (one notification each), then records `expiry_reminded_at`.
+
+The second kind is `applications_moved` (D-089; details: `from_status`, `to_status`, `to_status_label`, `decision_type`, `count`, `applications` (the first 50: `id`, `nomination_number`, `candidate_name`), `actor` (`id`, `full_name`, or null)). `ApplicationLifecycle` hands every status event to `Recruitment\Support\LifecycleNotices` (scoped per request) inside its transaction (`DB::afterCommit`); after each commit (`TransactionCommitted`) the committed moves are grouped by from, to, decision and staff user, and each group is one notification per recipient. `LifecycleNotices::batch()` holds the commits of many transactions and tells them together at its end (the exam sweep uses it). Recipients:
+
+| New status | Told |
+| ---------- | ---- |
+| any | the Recruitment office |
+| `received`, `contract_ended`, `closed` | (Recruitment) |
+| `awaiting_exam`, `exam_failed`, `exam_absent`, `awaiting_interview`, `interview_failed`, `interview_absent` | the Exams and Interviews office |
+| `awaiting_contract`, `contract_written` | the Contracts office |
+| a status some document type is required from | the Documenting office |
+
+Never the staff user who made the move, the general manager, the administrator, or inactive users. A failure to send is logged (`lifecycle.notification_failed`); the move stands.
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
@@ -1183,7 +1200,7 @@ Takers are the attended decisions (passed or failed); pass rates are regular pas
 
 ### 15.2 API
 
-All under `/api/v1/staff`. Reading: `reports.view`, `candidates.manage` or `interviews.manage`; the شعبة التجنيد list needs `candidates.manage`. Every export is audited (`report.exported`, `report.workbook`, `report.conscription_list`, `report.results_statement`, `report.results_list`).
+All under `/api/v1/staff`. Each report is its section's (D-086): `applications` and the results for candidates (statement, list) with `applications.view`; `exams*` with `exams.view`; `interviews*` with `interviews.view`; `dashboard`, `summary` and `workbook` with `reports.view`; the شعبة التجنيد list with `candidates.manage`. Every export is audited (`report.exported`, `report.workbook`, `report.conscription_list`, `report.results_statement`, `report.results_list`).
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
@@ -1212,7 +1229,7 @@ Excel files follow the legacy workbook (right to left, green and gold header wit
 
 ## 16. Testing
 
-`php artisan test` (PostgreSQL database `recruitment_test`, `RefreshDatabase`): 681 tests. The suite needs no OpenSSL configuration: tests use fixed keys from `tests/Support/TestDeviceKeys.php` (D-023). Shared helpers are in `tests/Support/StaffTestHelpers.php` (devices get a unique MAC and an `os_info`), `tests/Support/RecruitmentTestHelpers.php` (one entry of every list, a valid application payload, granting an individual permission, closing an application) and `tests/Support/LegacyWorkbook.php` (synthetic workbooks in the real template's layout: three title rows, headers on row 5 with its exact texts, navigation column A, other sheets, text/number/date/formula cells; no real data, §24).
+`php artisan test` (PostgreSQL database `recruitment_test`, `RefreshDatabase`): 701 tests. The suite needs no OpenSSL configuration: tests use fixed keys from `tests/Support/TestDeviceKeys.php` (D-023). Shared helpers are in `tests/Support/StaffTestHelpers.php` (devices get a unique MAC and an `os_info`), `tests/Support/RecruitmentTestHelpers.php` (one entry of every list, a valid application payload, a user of each office (`hiringStaff`, `examsStaff`, `contractsStaff`, `documentsStaff`, `staffOf($role)`), an application opened and started (`openApplication(..., start: false)` leaves it received), open vacancies for every job position (`openVacancies`), closing an application) and `tests/Support/LegacyWorkbook.php` (synthetic workbooks in the real template's layout: three title rows, headers on row 5 with its exact texts, navigation column A, other sheets, text/number/date/formula cells; no real data, §24).
 
 Tests never commit, so the deferred checks (`applications_have_history`, `interview_sittings_have_members`, `interview_members_keep_one`, `interview_members_key_sitting`) are tested with `SET CONSTRAINTS ... IMMEDIATE`, checking the error message so that another error cannot pass for the rule. `migrate:fresh --seed` commits for real and is part of every delivery check.
 
@@ -1223,15 +1240,18 @@ Tests never commit, so the deferred checks (`applications_have_history`, `interv
 | `Feature/Identity/StaffAuthTest`               | Login through a device, generic failures, rate limit, one-day token, `me`, logout, deactivated user                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `Feature/Identity/DeviceLoginTest`             | Pending/revoked/unknown device, replay, expiry, wrong key, username binding, device owner, wrong password, challenge bound to device                                                                                                                                                                                                                                                                                                                                                                                        |
 | `Feature/Identity/DeviceManagementTest`        | Registration (idempotent, MAC, key validation, pending cap), status, approval (fingerprint, owner, twice), revoke deletes tokens, list filter, mass-assignment guard, database CHECK                                                                                                                                                                                                                                                                                                                                        |
-| `Feature/Identity/PermissionResolutionTest`    | Role permissions match the matrix; ✓* never implicit; grant/deny; unknown abilities                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `Feature/Identity/AccessManagementTest`        | Role and user access management, `individual_only`, last-administrator protection, 404s, seeder does not overwrite; roles added and removed automatically with notes, a role given by hand clearing its overrides, an automatic role taken away with its grants, role changes rechecking everyone (D-070); an administrator's new password ends every session (D-071)                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `Feature/Identity/PermissionResolutionTest`    | Each role's permissions are the offices' defaults; the administrator holds every one; every permission belongs to an office or the management; roleless users and unknown abilities get nothing |
+| `Feature/Identity/AccessManagementTest`        | Who manages access; `read_only` flags; each office holds its own section only; the general manager views only, the administrator holds everything (also a later permission) and is not edited; role permissions added and removed, the general manager refused other than read-only ones; last way to manage users kept; seeder does not overwrite; one role per user, changed and audited; no personal grants; last administrator kept; password reset ends every session (D-071); deactivation (D-079); list and detail (D-085) |
+| `Feature/Recruitment/OfficesTest`              | The other offices see identity only (list, one application, no people) and filter by identity only; the queues show identity; Recruitment and the general manager read the full file; opening received or started (`start`, its permission); starting one, many by ids (all or nothing), the received ones matching filters (D-086, D-087) |
+| `Feature/Recruitment/LifecycleNotificationsTest` | A recorded interview tells Recruitment and the Contracts office, not the recorder, the managers or the inactive; content and API; a bulk start is one notification for all, to the Exams and Interviews and Documenting offices too; moves without a staff user; nothing for a rolled-back move or savepoint; a batch of commits told together (D-089) |
+| `Feature/Contracts/VacancyPlanTest`            | Upload of three months (items, file kept, audit, default start, upcoming); who reads and who uploads; every problem with its row (spelling, unknown, repeated, archived, bad count, missing position, total row, formula, empty, no header, not a workbook, header variants); no overlap, replacing (same period, numbers at once, used counted, once, not after the period); a first contract needs a plan and a vacancy of its position (missing position: none; renewals use none; job position frozen); a corrected writing day checked; database: contract beyond the vacancies, items frozen, plans never deleted or edited, overlap, position after contract (D-088) |
 | `Unit/ApplicationStatusTest`                   | Legal moves, decision types, terminal and live statuses, labels                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `Unit/ArabicTextTest`                          | Search key and digit normalisation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `Unit/RecruitmentNormalisationTest`            | National number and phone number normalisation                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `Feature/Recruitment/NominationNumberTest`     | Format, yearly restart, configurable format, no gaps after rollback                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `Feature/Recruitment/ApplicationLifecycleTest` | Moves, refusals, exceptions and excuses, closing, contract end, stale models, chain order and `from_status`, decision dates, cause columns (real FK, at most one, add/remove, safe names); database: append-only, no direct status write, status follows events, no fork, no second first event, no cross-application link, accountable decisions, dates, new application starts at `awaiting_exam`, no application without history                                                                                     |
+| `Feature/Recruitment/ApplicationLifecycleTest` | Moves, refusals, exceptions and excuses, closing, contract end, stale models, chain order and `from_status`, decision dates, cause columns (real FK, at most one, add/remove, safe names); database: append-only, no direct status write, status follows events, no fork, no second first event, no cross-application link, accountable decisions, dates, new application starts `received`, no application without history; starting (actor needed, only from received, many all or none, database CHECK), a received application closed                                                                                     |
 | `Feature/Recruitment/ReferenceDataTest`        | Marital statuses read only (change endpoints 404), editable lists mirror the seeded rule; all nine lists: read, change, integer keys, spelling-variant duplicates, archive/restore; areas: district required, unique per district, rename stays in district, list per district; seeders                                                                                                                                                                                                                                                                                                                               |
-| `Feature/Recruitment/ApplicationSearchTest`    | Yes/no filters on false, ranges with bounds and 0, one or several statuses, live/ended, list entries of the application and the person, ages and birth dates, numbers in any digits, who opened it, inactive people, sorting (name, number, date), page size and links, fixed query count per page |
+| `Feature/Recruitment/ApplicationSearchTest`    | Yes/no filters on false, ranges with bounds and 0 (limited to what the columns hold), one or several statuses, live/ended, list entries of the application and the person (unknown entries refused), ages and birth dates, numbers in any digits, who opened it, inactive people, sorting (name, number, date), page size and links, fixed query count per page |
 | `Feature/Identity/StaffUserRegistrationTest`   | Account with its role (hashed password, audit), no role beyond one's own permissions without `users.manage`, digits-only unique personal number, strong confirmed password, `users.add` required |
 | `Feature/Recruitment/ApplicationApiTest`       | Opening applications, nomination numbers, national number as text (11 to 20 digits), digit normalisation, person matching, one live application per person (any position; what frees a person), nothing left behind on failure, closing (permission, reason, dates, refusals), area in district (API and database), permissions, validation, database CHECKs, archived entries, search, filters, date range, history                                                                                                                          |
 | `Feature/Recruitment/CandidateApiTest`         | People list and filters, search in any spelling or digits, one person's applications, corrections (audit, search key, national number conflict, same rules), deactivation (live application refused, reason, once, blocks nomination until reactivated), database CHECK, permissions |
@@ -1243,18 +1263,18 @@ Tests never commit, so the deferred checks (`applications_have_history`, `interv
 | `Feature/Exams/ExamDatabaseTest`               | Policy 1 present and append-only; published content frozen; published → retired only; retiring changes nothing else; draft not retired directly; publication CHECKs; one published and one draft per position; part in its subject; every difficulty or none (NULL cannot slip through); manual part has a scale and no questions, exam part the reverse; part defaults checked; draft deletion cascades; question versions append-only and well formed; question part in its subject |
 | `Feature/Exams/ExamQuestionApiTest`            | Version 1, part questions, well-formed questions, corrections as versions (none for same content or difficulty only), answer kept among the options, no moving questions, archive and stats, filters (part `none`, search with wildcards escaped), only `exam_bank.manage` |
 | `Feature/Documents/DocumentApiTest`            | Person documents stored on the person from any screen, application documents on their application, kept for a new application, requirements by status and missing list, content checks (fake PDF, PDF named .png, docx, size), download (headers, content, audit), archive (reason, once, file kept), archived type, permissions, types management; database: never changed except archived once, right person and scope |
-| `Feature/Interviews/InterviewApiTest`          | Members with an account carry its name (database, rename, inactive accounts, D-076); the sittings a staff user sits on; one sitting's interviews without the sitting repeated; deleting unbooked sittings; a committee keeps its name; sitting bookings (place, committee, time from the sitting start, not before it), one-off sittings (one member, many candidates, listed by kind, edited, kind kept), the same sitting refused twice (spaces and letter forms, order and capacities of members, other members / place / time accepted, also on change), at most one chair and known capacities, reschedules to another sitting or time, between committee and one-off sittings, sittings not starting after their bookings, bulk booking (order, times, all or nothing), queue priorities (lists first, values, age, longest wait, filters, refused rules), one waiting interview per awaiting application, reschedule and cancel with reasons, frozen committee, results moving the application with the interview as cause, grades by result, dates, application moved on, corrections (revisions, correction events, twice, only while latest, permission, reason), excuses (back to awaiting, next round, round 1 stays absent, excused filter, permission), lists and filters, rounds, permissions; database: result consistency, grades, cancellation, held after recorded or before the sitting, enums, no delete, one waiting, always in a sitting, time within the sitting, sitting start and kind, members need a sitting, one chair, a committee left at commit, frozen members, one member per one-off sitting (index, kind given wrong), the same sitting refused at commit, append-only revisions and reschedules |
-| `Feature/Exams/ExamSessionApiTest`             | Sessions (draw once, answers only for `exam_bank.manage`, redraw and changes before the start, password any time, published plan, late window, bank short, delete only unbooked); bookings (queue, job position, one open, all or nothing, closed window); candidate login (session password, Arabic digits, window, one login at a time, guards apart, deactivated); taking the exam (not before the start, latecomer's shorter time, own order of the same questions, no answer key, saves with history, option and position checks, idempotent submit, closed answers); deadline closing (timeout, unanswered wrong); absence at the late window (cause, date, sweep idempotent); extensions (individual permission, one attempt, everyone still sitting, history, not after the end); results (decided when hand marks are in, dated the exam day, cause, outcome); failure reasons and exception; correcting a hand mark (reason, `exam_results.correct`, revision, correction event); plan without hand marks; excuse booking round 2; reading permissions; database guards (frozen draw and timing, bookings never deleted, deadlines only later, mark scale, one open booking, never reopened, closed answers, append-only history, marked once) |
-| `Feature/Audit/AuditEventApiTest`              | Rows written with actor, category, address and context; nothing left by a rolled-back action; newest first; operations only for `audit.view_related`; filters (event or kind, related record, actor, dates, unsafe input); permission; append-only |
-| `Feature/Exams/PassPolicyApiTest`              | Version 1 current, a new version used by plans published afterwards only, individual permission, consistent rules, versions never changed |
+| `Feature/Interviews/InterviewApiTest`          | Members with an account carry its name (database, rename, inactive accounts, D-076); the sittings a staff user sits on; one sitting's interviews without the sitting repeated; deleting unbooked sittings; a committee keeps its name; sitting bookings (place, committee, time from the sitting start, not before it), one-off sittings (one member, many candidates, listed by kind, edited, kind kept), the same committee refused at overlapping times (30 seconds later, elsewhere, spaces and letter forms, order and capacities of members; other members or right after accepted; also on change), a staff account in one sitting at a time (also at commit), a sitting's end (required, within 24 hours, interviews before it, bulk booking reaching it, not ending before a booking, database), nothing booked or moved into or out of an ended sitting, `open` filter, the `excused` queue rule, at most one chair and known capacities, reschedules to another sitting or time, between committee and one-off sittings, sittings not starting after their bookings, bulk booking (order, times, all or nothing), queue priorities (lists first, values, age, longest wait, filters, refused rules), one waiting interview per awaiting application, reschedule and cancel with reasons, frozen committee, results moving the application with the interview as cause, grades by result, dates, application moved on, corrections (revisions, correction events, twice, only while latest, permission, reason), excuses (back to awaiting, next round, round 1 stays absent, excused filter, permission), lists and filters, rounds, permissions; database: result consistency, grades, cancellation, held after recorded or before the sitting, enums, no delete, one waiting, always in a sitting, time within the sitting, sitting start and kind, members need a sitting, one chair, a committee left at commit, frozen members, one member per one-off sitting (index, kind given wrong), the same committee at overlapping times refused at commit, append-only revisions and reschedules |
+| `Feature/Exams/ExamSessionApiTest`             | Sessions (draw once, answers only for `exam_bank.manage`, redraw and changes before the start, password any time, published plan, late window, bank short, delete only unbooked); bookings (queue, job position, one open, all or nothing, closed window); candidate login (session password, Arabic digits, window, one login at a time, guards apart, deactivated); taking the exam (not before the start, latecomer's shorter time, own order of the same questions, no answer key, saves with history, option and position checks, idempotent submit, closed answers); deadline closing (timeout, unanswered wrong); absence at the late window (cause, date, sweep idempotent); extensions (`attempts.extend`, one attempt, everyone still sitting, history, not after the end); results (decided when hand marks are in, dated the exam day, cause, outcome); failure reasons and exception; correcting a hand mark (reason, `exam_results.correct`, revision, correction event); plan without hand marks; excuse booking round 2; reading permissions; database guards (frozen draw and timing, bookings never deleted, deadlines only later, mark scale, one open booking, never reopened, closed answers, append-only history, marked once) |
+| `Feature/Audit/AuditEventApiTest`              | Rows written with actor, category, address and context; nothing left by a rolled-back action; newest first; operations only for `audit.view_related`; filters (event or kind, related record, actor, dates, unsafe input); the actor as a summary; `related_id` by `id`, `*_id`, `*_ids` and the acting candidate, "0" included; permission; append-only |
+| `Feature/Exams/PassPolicyApiTest`              | Version 1 current, a new version used by plans published afterwards only, `pass_policies.manage`, consistent rules, versions never changed |
 | `Feature/Contracts/ContractApiTest`            | First contract (cause, dated the writing day, defaults, only awaiting contract, once), rules (reference unique in any digits, dates, type, file of the application), renewals (chain, default start, renewed once, not before the end, no end date refused, late renewal), corrections (audit, chain kept, nothing changed, reason), new end date clears the reminder, end (reason, date, contract_ended with cause, no renewal after, nominated again, only the latest), states and filters, permissions, contract types list; database: delete, period, end fields, sequence, renewal start, same application, number 2 renews, file of the application, renewed once, only the latest ends |
-| `Feature/Contracts/ContractReminderTest`       | Two weeks before: writer and every active `contracts.manage` holder (role or grant, not denied, not inactive), once, one each; not too early, not without end, not expired, not renewed; message and details; own notifications only (list, unread, read one, read all, 404 for another's), signed in; scheduled daily |
+| `Feature/Contracts/ContractReminderTest`       | Two weeks before: writer and every active `contracts.manage` holder (the Contracts office, the administrator; not another office, not inactive), once, one each; not too early, not without end, not expired, not renewed; message and details; own notifications only (list, unread, read one, read all, 404 for another's), signed in; scheduled daily |
 | `Feature/Reports/StaffReportsTest`             | One story of four candidates: dashboard totals (exceptions and excuses apart, pass rates, average days), each event on its date, Damascus days, months, entities and job positions, the list's filters, period checks; exams report (decisions, later exception or excuse, reasons, totals, audit) and its views; interviews report and views (members, appointment, grades, note, excuse); applications report (every field, text national number, "ومنقطع", period); PDF of four reports; dashboard as tables; the whole workbook (sheets, links); row limits; the شعبة التجنيد list (template columns, birth place, military entity, date format, default status); permissions |
 | `Feature/Reports/ResultsReportTest`            | PDF statement (headers, number, dates, audit; exam outcome with exception, grades; no notes or reasons), Excel list (RTL, header, text cells, rows, totals), filters printed readable, PDF list, format, row limit, permissions |
 | `Unit/HeaderMatcherTest`                       | Header normalisation, exact before contained, similar headers, unknown headers                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `Feature/Imports/ImportUploadTest`             | Real template layout by header names, a row without national number refuses the file, security (unsafe parts, zip bomb, unsafe formulas injected in the sheet XML, content vs extension, filename, cell bounds, nosniff, rate limit), moved/renamed headers, sheet among others, empty rows, missing columns, no header, no rows, not a workbook, extensions, row limit, same file twice and after cancel (AC-10), batch metadata and default entity, permission, list, original download                                   |
 | `Feature/Imports/ImportRowsTest`               | Values and raw cells, optional area (place kept as details), study years with "ومنقطع", dates (serial, 1904, text, Arabic digits, AC-17), leading zeros (AC-16), digits, yes/no, list spellings, unknown/archived values, health and residence details, area per district, missing values, shared rules, in-file duplicates, live application, person mismatch and confirmation, corrections (audit, re-check, duplicates elsewhere, malformed), revalidation, exclude/include, filters, scoped rows, cancelled batch |
-| `Feature/Imports/ImportApprovalTest`           | Approval permission, uploader cannot approve, approver reads but cannot change, only valid rows imported, consecutive numbers, every value carried, reviews block approval, confirmed person keeps stored data, re-upload in another order (AC-19), all-or-nothing on failure, one reservation without gaps, approved/cancelled batches frozen, cancel reason, audit, report                                                                                                                                                |
+| `Feature/Imports/ImportApprovalTest`           | Approval permission (another office cannot read), imported applications wait received and start by `import_batch_id`, uploader cannot approve, approver reads but cannot change, only valid rows imported, consecutive numbers, every value carried, reviews block approval, confirmed person keeps stored data, re-upload in another order (AC-19), all-or-nothing on failure, one reservation without gaps, approved/cancelled batches frozen, cancel reason, audit, report                                                                                                                                                |
 
 API documentation check: `php artisan scramble:analyze` must report no warnings.
 
@@ -1288,7 +1308,7 @@ API documentation check: `php artisan scramble:analyze` must report no warnings.
 - `must_change_password` is deferred (D-015).
 - Failed logins are in the application log only; the audit table keeps actions (D-078). Its retention is the deployment's.
 - Web fallback for staff is deferred (OD-3).
-- A new permission introduced later must be attached to roles explicitly; the seeder only defaults new roles (D-020). `applications.close` is individual-only, so it is never attached to a role.
+- A new permission introduced later must be attached to the offices' roles explicitly; the seeder only defaults new roles (D-020). The system administrator holds it at once (D-085).
 - Production needs trusted-proxy configuration for IP-based throttling.
 - Arabic translations exist for login, recruitment and import messages; framework validation messages do not have an Arabic file yet.
 
@@ -1304,6 +1324,8 @@ API documentation check: `php artisan scramble:analyze` must report no warnings.
 | 3 (completed) | Owner's schema redesign finished: nine lists with integer keys, areas inside districts with a composite key (D-031, D-034); person vs application data (D-031); plain national number, sensitive permission removed (D-032); chained history with database-maintained status (D-033); Latin-only usernames (D-035); one-day staff tokens (D-036); recruitment tests restored and extended                         |
 | 4             | One live application per person, `contract_ended` and `closed`, closure with `applications.close` (D-037); cause columns instead of `related_type/id` (D-038); `occurred_at` as the real decision date (D-039); Excel import of the legacy template: header detection, cell reading, checks, review, locked all-or-nothing approval, report (D-040, D-041); shared field limits (D-042); PhpSpreadsheet |
 | 4 (follow-up) | Real legacy template: its headers, one sheet loaded, 30 MB uploads; residence area optional (D-043); `studies_discontinued` (D-044); upload security (D-045); a row without national number refuses the file (D-046); `imports.approve` with four eyes (D-047); reference API: enum `{type}`, `include_archived=true`, documented `district_id`; Arabic validation messages                             |
+| 13 (Offices) | On step 12. One role per staff user: four offices with full control of their own sections, the general manager viewing only, the administrator holding everything; personal permissions and automatic roles removed (D-085); what each office sees: identity only outside Recruitment, sections' reports and audit (D-086); received applications started by Recruitment, one, many or by filters (D-087); vacancies files of three months limiting first contracts per job position (D-088); lifecycle notifications to the offices, grouped per commit (D-089); contract types by the Contracts office, an account per role in the demo (D-090) |
+| 12 (Owner's review) | On the owner's commit 9406972. Sittings with an end, nothing booked or moved once ended, overlaps of a committee or a staff account refused instead of exact duplicates, `excused` queue rule (D-084); bulk booking without reading the interviews again, search list filters checked to exist and ranges as the columns, indexed `related_id` in the audit log, a short audit actor, `inet` IP columns (D-084); the contract date test back to the Damascus day (D-081) |
 | 11 (Missing features, review) | On step 10. Candidates only from the venue's network, trusted proxies (D-077); the audit log as an append-only table with a read API, staff logins and device approvals recorded, device approval and revocation under row locks (D-078); deactivating staff (D-079); exam marks, total, average and failure cause in the exams report, `exam_average` in the interview queue, answer sheets (D-080); owner's answers on the شعبة التجنيد list and the forms (OD-18, OD-19); review fixes: dates keep their offset and business days are Damascus days (D-081), import approvals of the reviewed revision (D-082), the concurrency and consistency fixes of D-083; Pint |
 | 10 (Exam sessions) | On the owner's commit 3a1fc7e plus step 9. Staff user relations to what they did; members with an account carry its name (database), unused sittings deleted, one sitting's interviews without the sitting repeated, `member` filter, create and update requests apart, `@ignoreParam` for `prohibited` (D-076); roles follow the direct permissions, with notes (D-070); an administrator resets a forgotten password and ends the sessions (D-071); exam sessions: candidate login with the national number and the session's password (D-072), late window, one end, extensions for one or everyone, absences, `exams:sweep` (D-073), bookings, queue, excuses and exceptions (D-074), attempts in the candidate's own order with saved answers, server deadline, hand marks, automatic results and corrections (D-075); `exams.manage`, `exam_results.correct`; demo sessions |
 | 9 (Reports) | On the owner's commit 3a1fc7e (docs of step 8 restored). One-off sittings as one interviewer holding many candidates, duplicate sittings refused by start, place and members (D-067); dashboard indicators and staff reports after the legacy workbook in Excel / PDF, the whole workbook (D-068); the شعبة التجنيد list (D-069) |

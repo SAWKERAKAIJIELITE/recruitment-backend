@@ -22,7 +22,8 @@ class StaffUserSummaryResource extends JsonResource
             'full_name' => $this->full_name,
             'is_active' => $this->is_active,
             'last_login_at' => $this->last_login_at,
-            'roles' => $this->roles->pluck('slug')->values(),
+            /** The user's role (office, general manager or system administrator). */
+            'role' => $this->role?->slug,
         ];
     }
 }

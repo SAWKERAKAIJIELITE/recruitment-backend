@@ -35,8 +35,10 @@ class ContractApiTest extends TestCase
         parent::setUp();
         $this->seed(RolesAndPermissionsSeeder::class);
         $this->travelTo('2026-10-31 10:00:00');
-        $this->staff = $this->hiringStaff();   // recruitment_staff holds contracts.manage
+        $this->staff = $this->contractsStaff();   // the Contracts office holds contracts.manage
         $this->type = ContractType::create(['name_ar' => 'عقد سنوي']);
+        $this->referenceIds();
+        $this->openVacancies();
     }
 
     /** An application whose interview passed (decided on 2026-10-01). */
@@ -96,7 +98,7 @@ class ContractApiTest extends TestCase
         $event = DB::table('application_status_events')->where('application_id', $application->id)->where('to_status', 'contract_written')->sole();
         $this->assertSame('outcome', $event->decision_type);
         $this->assertNotNull($event->contract_id);
-        $this->assertStringStartsWith('2026-10-20 23:59:59', $event->occurred_at);                // dated the day it was written
+        $this->assertStringStartsWith('2026-10-20 20:59:59', $event->occurred_at);                // the end of the day it was written, in Damascus (D-081)
         Log::shouldHaveReceived('notice')->withArgs(fn(string $event) => $event === 'contract.written')->once();
     }
 
@@ -237,7 +239,7 @@ class ContractApiTest extends TestCase
         $this->assertSame('انتهت المدة ولم يُجدَّد', $event->reason);
 
         $this->renew($first)->assertStatus(422)->assertJsonValidationErrors('application');                                        // ended: no renewal
-        $this->asStaff($this->staff)->postJson('/api/v1/staff/applications', $this->applicationPayload())->assertCreated();   // nominated again
+        $this->asStaff($this->hiringStaff())->postJson('/api/v1/staff/applications', $this->applicationPayload())->assertCreated();   // nominated again (by Recruitment)
     }
 
     public function test_only_the_latest_contract_ends(): void

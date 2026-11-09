@@ -20,7 +20,8 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * The contracts of an application (analysis doc §08; D-064):
- *  - write the first contract: only for an application awaiting its contract (its interview passed); the application
+ *  - write the first contract: only for an application awaiting its contract (its interview passed), and only while
+ *    its job position has a vacancy left in the vacancies plan covering the writing day (D-088); the application
  *    becomes contract_written, with the contract as the cause, dated the day it was written;
  *  - renew the latest contract: a new contract in the chain, starting at its end or later;
  *  - correct a contract's details, with a reason (audited);
@@ -33,7 +34,10 @@ class ManageContracts
 {
     public const FIELDS = ['contract_type_id', 'reference_number', 'written_on', 'starts_on', 'ends_on', 'document_id', 'notes'];
 
-    public function __construct(private readonly ApplicationLifecycle $lifecycle) {}
+    public function __construct(
+        private readonly ApplicationLifecycle $lifecycle,
+        private readonly ManageVacancies $vacancies,
+    ) {}
 
     public function write(Application $application, array $data, StaffUser $actor): Contract
     {
@@ -44,6 +48,7 @@ class ManageContracts
                 $this->fail('application', 'contracts.not_awaiting_contract', ['status' => $application->current_status->labelAr()]);
             }
 
+            $this->vacancies->assertAvailable($application, $data['written_on']);
             $contract = $this->create($application, null, $data, $actor);
 
             try {
@@ -117,6 +122,11 @@ class ManageContracts
 
             if (in_array('written_on', $changed, true)) {
                 $this->assertWritingDay($contract);
+
+                // Another day can be in another plan, or in the same one beyond it (D-088).
+                if ($contract->sequence === 1) {
+                    $this->vacancies->assertAvailable($contract->application, $contract->written_on, $contract->id);
+                }
             }
 
             if (in_array('ends_on', $changed, true)) {

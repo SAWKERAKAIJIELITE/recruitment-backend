@@ -4,6 +4,8 @@ namespace Tests\Feature\Interviews;
 
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
+use App\Modules\Identity\Models\Permission;
+use App\Modules\Identity\Models\Role;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Interviews\Models\Interview;
 use App\Modules\Recruitment\Actions\ApplicationLifecycle;
@@ -13,6 +15,7 @@ use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Models\Specialization;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -38,7 +41,7 @@ class InterviewApiTest extends TestCase
         parent::setUp();
         $this->seed(RolesAndPermissionsSeeder::class);
         $this->travelTo('2026-10-30 09:00:00');
-        $this->staff = $this->hiringStaff();   // recruitment_staff holds interviews.manage
+        $this->staff = $this->examsStaff();   // the Exams and Interviews office holds interviews.manage
     }
 
     /** An application that passed its exams (opened yesterday). */
@@ -58,19 +61,29 @@ class InterviewApiTest extends TestCase
         return [['name' => 'محمد السالم', 'capacity' => 'chair'], ['name' => 'خالد العمر', 'capacity' => 'member']];
     }
 
+    /** Eight hours from the start, unless an end is given. */
+    private function withEnd(array $body): array
+    {
+        return $body + ['ends_at' => Date::parse($body['starts_at'])->addHours(8)->toIso8601String()];
+    }
+
+    /** Each sitting made here has its own room and its own secretary, so two of them never overlap as one committee. */
     private function sitting(array $overrides = []): string
     {
-        return $this->asStaff($this->staff)->postJson('/api/v1/staff/interview-sittings', $overrides + [
-            'starts_at' => '2026-10-30T08:00:00Z', 'location' => 'مبنى الإدارة - القاعة '.(2 + $this->sittings++), 'committee_name' => 'لجنة دمشق الأولى', 'members' => $this->members(),
-        ])->assertCreated()->json('data.id');
+        $room = 2 + $this->sittings++;
+
+        return $this->asStaff($this->staff)->postJson('/api/v1/staff/interview-sittings', $this->withEnd($overrides + [
+            'starts_at' => '2026-10-30T08:00:00Z', 'location' => 'مبنى الإدارة - القاعة ' . $room, 'committee_name' => 'لجنة دمشق الأولى',
+            'members' => [...$this->members(), ['name' => 'مقرر القاعة ' . $room, 'capacity' => 'secretary']],
+        ]))->assertCreated()->json('data.id');
     }
 
     /** A one-off sitting: one interviewer. */
     private function oneOffSitting(array $overrides = []): string
     {
-        return $this->asStaff($this->staff)->postJson('/api/v1/staff/interview-sittings', $overrides + [
+        return $this->asStaff($this->staff)->postJson('/api/v1/staff/interview-sittings', $this->withEnd($overrides + [
             'kind' => 'one_off', 'starts_at' => '2026-11-02T10:00:00Z', 'location' => 'اتصال مرئي', 'members' => [['capacity' => 'chair', 'staff_user_id' => $this->staff->id]],
-        ])->assertCreated()->json('data.id');
+        ]))->assertCreated()->json('data.id');
     }
 
     private function schedule(Application $application, array $appointment): TestResponse
@@ -81,6 +94,16 @@ class InterviewApiTest extends TestCase
     private function scheduled(Application $application, ?string $sitting = null): string
     {
         return $this->schedule($application, ['sitting_id' => $sitting ?? $this->sitting()])->assertCreated()->json('data.id');
+    }
+
+    /** Booked into a sitting that has ended by now: booked while it was running (at `$at`), then back to now. */
+    private function scheduledInPast(Application $application, string $startsAt, string $at): string
+    {
+        $this->travelTo($at);
+        $interview = $this->scheduled($application, $this->sitting(['starts_at' => $startsAt]));
+        $this->travelTo('2026-10-30 09:00:00');
+
+        return $interview;
     }
 
     private function record(string $interview, array $body): TestResponse
@@ -111,7 +134,7 @@ class InterviewApiTest extends TestCase
             ->assertJsonPath('data.members.0', ['name' => 'محمد السالم', 'capacity' => ['value' => 'chair', 'label' => 'رئيس اللجنة'], 'staff_user_id' => null]);
 
         $this->asStaff($this->staff)->getJson("/api/v1/staff/interview-sittings/{$sitting}")
-            ->assertOk()->assertJsonCount(1, 'data.interviews')->assertJsonCount(2, 'data.members');
+            ->assertOk()->assertJsonCount(1, 'data.interviews')->assertJsonCount(3, 'data.members');   // and the room's secretary
     }
 
     public function test_the_candidates_time_defaults_to_the_sitting_start_and_cannot_be_before_it(): void
@@ -128,7 +151,7 @@ class InterviewApiTest extends TestCase
         $url = '/api/v1/staff/interview-sittings';
         $members = [['name' => 'سامر', 'capacity' => 'chair'], ['name' => 'خالد', 'capacity' => 'member']];
 
-        $this->asStaff($this->staff)->postJson($url, ['kind' => 'one_off', 'starts_at' => '2026-11-02T10:00:00Z', 'location' => 'اتصال مرئي', 'members' => $members])
+        $this->asStaff($this->staff)->postJson($url, ['kind' => 'one_off', 'starts_at' => '2026-11-02T10:00:00Z', 'ends_at' => '2026-11-02T14:00:00Z', 'location' => 'اتصال مرئي', 'members' => $members])
             ->assertStatus(422)->assertJsonValidationErrors('members');
         $sitting = $this->oneOffSitting();
 
@@ -156,38 +179,135 @@ class InterviewApiTest extends TestCase
         $this->asStaff($this->staff)->patchJson("{$url}/{$sitting}", ['kind' => 'committee'])->assertStatus(422)->assertJsonValidationErrors('kind');
     }
 
-    public function test_the_same_sitting_cannot_be_entered_twice(): void
+    public function test_the_same_committee_cannot_sit_at_overlapping_times(): void
     {
         $url = '/api/v1/staff/interview-sittings';
-        $first = $this->sitting(['location' => 'مبنى الإدارة - القاعة 2']);
+        $first = $this->sitting(['location' => 'مبنى الإدارة - القاعة 2', 'members' => $this->members()]);             // 08:00 to 16:00
         $same = [
-            'starts_at' => '2026-10-30T08:00:00Z',
-            'location' => '  مبنى  الادارة - القاعه 2 ',                                                            // spaces, ا for إ, ه for ة
+            'starts_at' => '2026-10-30T08:00:30Z', 'ends_at' => '2026-10-30T12:00:00Z',                              // 30 seconds later: still the same sitting
+            'location' => '  مبنى  الادارة - القاعه 2 ',
             'committee_name' => 'اسم آخر',                                                                            // the name does not make it another sitting
-            'members' => [['name' => 'خالد العمر', 'capacity' => 'chair'], ['name' => 'محمد  السالم', 'capacity' => 'secretary']],   // order and capacity neither
+            'members' => [['name' => 'خالد العمر', 'capacity' => 'chair'], ['name' => 'محمد  السالم', 'capacity' => 'secretary']],   // order, capacity and spaces neither
         ];
+        $duplicate = __('interviews.duplicate_sitting', ['id' => $first]);
 
-        $this->asStaff($this->staff)->postJson($url, $same)
-            ->assertStatus(422)->assertJsonPath('errors.starts_at.0', __('interviews.duplicate_sitting', ['id' => $first]));
-        $this->asStaff($this->staff)->postJson($url, ['members' => [['name' => 'خالد العمر', 'capacity' => 'chair']]] + $same)->assertCreated();   // other members
-        $this->asStaff($this->staff)->postJson($url, ['location' => 'القاعة 5'] + $same)->assertCreated();                                     // another place
-        $later = $this->asStaff($this->staff)->postJson($url, ['starts_at' => '2026-10-30T10:00:00Z'] + $same)->assertCreated()->json('data.id');   // another time
+        $this->asStaff($this->staff)->postJson($url, $same)->assertStatus(422)->assertJsonPath('errors.starts_at.0', $duplicate);
+        $this->asStaff($this->staff)->postJson($url, ['location' => 'القاعة 5'] + $same)->assertStatus(422)->assertJsonPath('errors.starts_at.0', $duplicate);   // nor elsewhere at once
+        $this->asStaff($this->staff)->postJson($url, ['members' => [['name' => 'خالد العمر', 'capacity' => 'chair']]] + $same)->assertCreated();                // other members
+        $later = $this->asStaff($this->staff)->postJson($url, ['starts_at' => '2026-10-30T16:00:00Z', 'ends_at' => '2026-10-30T18:00:00Z'] + $same)
+            ->assertCreated()->json('data.id');                                                                       // as the first one ends
 
-        // Nor made the same afterwards, once the fingerprints are stored as at commit (tests never commit).
+        // Nor made to overlap afterwards, once the fingerprints are stored as at commit (tests never commit).
         DB::statement('SET CONSTRAINTS interview_members_key_sitting IMMEDIATE');
         DB::statement('SET CONSTRAINTS ALL DEFERRED');
-        $this->asStaff($this->staff)->patchJson("{$url}/{$later}", ['starts_at' => '2026-10-30T08:00:00Z'])
-            ->assertStatus(422)->assertJsonPath('errors.starts_at.0', __('interviews.duplicate_sitting', ['id' => $first]));
-        $this->assertSame('2026-10-30 10:00:00+00', DB::table('interview_sittings')->where('id', $later)->value('starts_at'));
+        $this->asStaff($this->staff)->patchJson("{$url}/{$later}", ['starts_at' => '2026-10-30T15:59:00Z'])
+            ->assertStatus(422)->assertJsonPath('errors.starts_at.0', $duplicate);
+        $this->assertSame('2026-10-30 16:00:00+00', DB::table('interview_sittings')->where('id', $later)->value('starts_at'));
 
-        // Moved to the first one's time with another committee in the same change: not the same sitting.
+        // Moved into the first one's time with another committee in the same change: not the same committee.
         $this->asStaff($this->staff)->patchJson("{$url}/{$later}", ['starts_at' => '2026-10-30T08:00:00Z', 'members' => [['name' => 'سامر الحسن', 'capacity' => 'chair']]])->assertOk();
+    }
+
+    public function test_a_staff_account_sits_in_one_sitting_at_a_time(): void
+    {
+        $url = '/api/v1/staff/interview-sittings';
+        $colleague = StaffUserFactory::new()->create(['first_name' => 'rami', 'last_name' => 'haddad']);
+        $seat = ['capacity' => 'member', 'staff_user_id' => $colleague->id];
+        $one = $this->oneOffSitting(['starts_at' => '2026-11-02T10:00:00Z', 'ends_at' => '2026-11-02T12:00:00Z', 'members' => [['capacity' => 'chair', 'staff_user_id' => $colleague->id]]]);
+        $committee = ['starts_at' => '2026-11-02T11:00:00Z', 'ends_at' => '2026-11-02T13:00:00Z', 'location' => 'القاعة 9', 'committee_name' => 'لجنة', 'members' => [...$this->members(), $seat]];
+
+        $this->asStaff($this->staff)->postJson($url, $committee)
+            ->assertStatus(422)->assertJsonPath('errors.members.0', __('interviews.staff_overlap', ['name' => 'Rami Haddad', 'id' => $one]));
+        $other = $this->asStaff($this->staff)->postJson($url, ['starts_at' => '2026-11-02T12:00:00Z'] + $committee)->assertCreated()->json('data.id');
+        $this->asStaff($this->staff)->patchJson("{$url}/{$other}", ['starts_at' => '2026-11-02T11:59:00Z'])
+            ->assertStatus(422)->assertJsonPath('errors.members.0', __('interviews.staff_overlap', ['name' => 'Rami Haddad', 'id' => $one]));
+
+        // The database checks it at commit too (tests never commit: SET CONSTRAINTS runs it now).
+        $copy = (string) Str::uuid7();
+        try {
+            DB::transaction(function () use ($copy, $colleague) {
+                DB::table('interview_sittings')->insert(['id' => $copy, 'kind' => 'one_off', 'starts_at' => '2026-11-02 11:30:00', 'ends_at' => '2026-11-02 11:45:00', 'location' => 'مكتب', 'created_by' => $this->staff->id]);
+                DB::table('interview_members')->insert(['sitting_id' => $copy, 'sitting_kind' => 'one_off', 'position' => 1, 'name' => 'x', 'capacity' => 'chair', 'staff_user_id' => $colleague->id]);
+                DB::statement('SET CONSTRAINTS interview_members_staff_overlap IMMEDIATE');
+            });
+            $this->fail('The database accepted a staff account in two sittings at once.');
+        } catch (QueryException $e) {
+            $this->assertStringContainsString('interview_staff_overlap', $e->getMessage());
+        }
+        DB::statement('SET CONSTRAINTS ALL DEFERRED');
+    }
+
+    public function test_a_sitting_has_an_end_and_its_interviews_are_within_it(): void
+    {
+        $url = '/api/v1/staff/interview-sittings';
+        $body = ['starts_at' => '2026-11-01T08:00:00Z', 'location' => 'القاعة 4', 'committee_name' => 'لجنة', 'members' => $this->members()];
+
+        $this->asStaff($this->staff)->postJson($url, $body)->assertStatus(422)->assertJsonValidationErrors('ends_at');
+        $this->asStaff($this->staff)->postJson($url, $body + ['ends_at' => '2026-11-01T08:00:00Z'])->assertStatus(422)->assertJsonValidationErrors('ends_at');
+        $this->asStaff($this->staff)->postJson($url, $body + ['ends_at' => '2026-11-02T08:01:00Z'])
+            ->assertStatus(422)->assertJsonPath('errors.ends_at.0', __('interviews.sitting_too_long'));
+        $sitting = $this->asStaff($this->staff)->postJson($url, $body + ['ends_at' => '2026-11-01T12:00:00Z'])
+            ->assertCreated()->assertJsonPath('data.ends_at', '2026-11-01T12:00:00+00:00')->assertJsonPath('data.ended', false)->json('data.id');
+
+        $this->schedule($this->awaitingInterview('11111111111'), ['sitting_id' => $sitting, 'scheduled_at' => '2026-11-01T12:00:00Z'])
+            ->assertStatus(422)->assertJsonPath('errors.scheduled_at.0', __('interviews.after_sitting_end', ['end' => '2026-11-01T12:00:00+00:00']));
+        $interview = $this->schedule($this->awaitingInterview('22222222222'), ['sitting_id' => $sitting, 'scheduled_at' => '2026-11-01T11:00:00Z'])->assertCreated()->json('data.id');
+
+        // Booking many: all or nothing when the last ones would reach its end.
+        $three = [$this->awaitingInterview('33333333333')->id, $this->awaitingInterview('44444444444')->id, $this->awaitingInterview('55555555555')->id];
+        $this->asStaff($this->staff)->postJson("{$url}/{$sitting}/bookings", ['application_ids' => $three, 'first_at' => '2026-11-01T11:00:00Z', 'minutes_between' => 30])
+            ->assertStatus(422)->assertJsonValidationErrors('application_ids.2');
+        $this->assertSame(0, Interview::query()->whereIn('application_id', $three)->count());
+
+        // It cannot end at or before an interview booked in it.
+        $this->asStaff($this->staff)->patchJson("{$url}/{$sitting}", ['ends_at' => '2026-11-01T11:00:00Z'])
+            ->assertStatus(422)->assertJsonPath('errors.ends_at.0', __('interviews.sitting_before_bookings', ['time' => '2026-11-01T11:00:00+00:00']));
+        $this->asStaff($this->staff)->patchJson("{$url}/{$sitting}", ['ends_at' => '2026-11-01T11:01:00Z'])->assertOk();
+        $this->asStaff($this->staff)->patchJson("{$url}/{$sitting}", ['starts_at' => '2026-11-01T11:01:00Z'])->assertStatus(422)->assertJsonValidationErrors('starts_at');   // after the booking
+
+        // The database holds both too.
+        DB::table('interview_sittings')->where('id', $sitting)->update(['ends_at' => '2026-11-01 12:00:00']);
+        foreach ([
+            fn () => DB::table('interview_sittings')->where('id', $sitting)->update(['ends_at' => '2026-11-01 10:59:00']),
+            fn () => DB::table('interviews')->where('id', $interview)->update(['scheduled_at' => '2026-11-01 12:00:00']),
+            fn () => DB::table('interview_sittings')->where('id', $sitting)->update(['ends_at' => '2026-11-01 07:00:00']),
+        ] as $write) {
+            try {
+                DB::transaction($write);
+                $this->fail('The database accepted an interview outside its sitting.');
+            } catch (QueryException $e) {
+                $this->assertMatchesRegularExpression('/within its sitting|end before an interview|interview_sittings_duration/', $e->getMessage());
+            }
+        }
+    }
+
+    public function test_nothing_is_booked_or_moved_into_or_out_of_an_ended_sitting(): void
+    {
+        $url = '/api/v1/staff/interview-sittings';
+        $ended = $this->sitting(['starts_at' => '2026-10-30T05:00:00Z', 'ends_at' => '2026-10-30T09:00:00Z']);   // it is 09:00
+        $open = $this->sitting();
+        $application = $this->awaitingInterview();
+        $ending = __('interviews.sitting_ended', ['end' => '2026-10-30T09:00:00+00:00']);
+
+        $this->schedule($application, ['sitting_id' => $ended])->assertStatus(422)->assertJsonPath('errors.sitting_id.0', $ending);
+        $this->asStaff($this->staff)->postJson("{$url}/{$ended}/bookings", ['application_ids' => [$application->id]])
+            ->assertStatus(422)->assertJsonPath('errors.sitting.0', $ending);
+        $this->asStaff($this->staff)->getJson("{$url}?open=1")->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $open);
+        $this->asStaff($this->staff)->getJson("{$url}?open=0")->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $ended)->assertJsonPath('data.0.ended', true);
+
+        // Booked while open: once its sitting ends it is recorded (absent if so) or cancelled, not moved.
+        $interview = $this->scheduled($application, $open);
+        $this->reschedule($interview, ['sitting_id' => $ended])->assertStatus(422)->assertJsonPath('errors.sitting_id.0', $ending);
+        $this->travelTo('2026-10-30 16:00:00');
+        $this->reschedule($interview, ['sitting_id' => $this->sitting(['starts_at' => '2026-10-31T08:00:00Z'])])
+            ->assertStatus(422)->assertJsonPath('errors.interview.0', __('interviews.interview_sitting_ended', ['end' => '2026-10-30T16:00:00+00:00']));
+        $this->record($interview, ['result' => 'absent'])->assertOk();
     }
 
     public function test_a_member_with_an_account_carries_the_accounts_name(): void
     {
         $url = '/api/v1/staff/interview-sittings';
-        $base = ['starts_at' => '2026-11-01T08:00:00Z', 'location' => 'القاعة 7', 'committee_name' => 'لجنة'];
+        $base = ['starts_at' => '2026-11-01T08:00:00Z', 'ends_at' => '2026-11-01T14:00:00Z', 'location' => 'القاعة 7', 'committee_name' => 'لجنة'];
         $colleague = StaffUserFactory::new()->create(['first_name' => 'rami', 'last_name' => 'haddad']);
 
         $errors = $this->asStaff($this->staff)->postJson($url, $base + ['members' => [['name' => 'اسم آخر', 'capacity' => 'chair', 'staff_user_id' => $colleague->id]]])->assertStatus(422)->json('errors');
@@ -206,7 +326,7 @@ class InterviewApiTest extends TestCase
         $this->assertSame('Rami Haddad', DB::table('interview_members')->where('sitting_id', $sitting)->where('position', 1)->value('name'));
 
         // A renamed account renames its seats on sittings without a result; a sitting with a result keeps its names.
-        $held = $this->asStaff($this->staff)->postJson($url, ['location' => 'القاعة 8', 'starts_at' => '2026-10-30T08:00:00Z'] + $base + ['members' => [['capacity' => 'chair', 'staff_user_id' => $colleague->id]]])->assertCreated()->json('data.id');
+        $held = $this->asStaff($this->staff)->postJson($url, ['location' => 'القاعة 8', 'starts_at' => '2026-10-30T08:00:00Z', 'ends_at' => '2026-10-30T14:00:00Z'] + $base + ['members' => [['capacity' => 'chair', 'staff_user_id' => $colleague->id]]])->assertCreated()->json('data.id');
         $interview = $this->scheduled($this->awaitingInterview(), $held);
         $this->record($interview, ['result' => 'passed', 'held_at' => '2026-10-30T08:30:00Z'] + self::GRADES)->assertOk();
         $colleague->update(['last_name' => 'haddadin']);
@@ -243,7 +363,7 @@ class InterviewApiTest extends TestCase
         $interview = $this->asStaff($this->staff)->getJson("/api/v1/staff/interview-sittings/{$sitting}")
             ->assertOk()
             ->assertJsonPath('data.location', 'مبنى الإدارة - القاعة 2')
-            ->assertJsonCount(2, 'data.members')
+            ->assertJsonCount(3, 'data.members')
             ->json('data.interviews.0');
 
         $this->assertSame($sitting, $interview['sitting_id']);
@@ -272,7 +392,7 @@ class InterviewApiTest extends TestCase
         $this->reschedule($moved, ['sitting_id' => $this->sitting()])->assertOk();
         $this->asStaff($this->staff)->deleteJson("{$url}/{$left}")->assertStatus(422);
 
-        $this->asStaff($this->allow(StaffUserFactory::new()->create(), 'reports.view'))->deleteJson("{$url}/{$left}")->assertForbidden();
+        $this->asStaff($this->staffOf('general_manager'))->deleteJson("{$url}/{$left}")->assertForbidden();
     }
 
     public function test_a_committee_sitting_keeps_its_name(): void
@@ -289,7 +409,7 @@ class InterviewApiTest extends TestCase
     {
         // A held time sent with an offset is the instant meant (D-081).
         $application = $this->awaitingInterview();   // passed its exam yesterday at 09:00
-        $interview = $this->scheduled($application, $this->sitting(['starts_at' => '2026-10-29T08:00:00Z']));
+        $interview = $this->scheduledInPast($application, '2026-10-29T08:00:00Z', '2026-10-29 10:00:00');
         $this->record($interview, ['result' => 'passed', 'held_at' => '2026-10-30T11:30:00+03:00'] + self::GRADES)->assertOk();
         $this->assertSame('2026-10-30 08:30:00+00', DB::table('interviews')->where('id', $interview)->value('held_at'));
 
@@ -312,8 +432,11 @@ class InterviewApiTest extends TestCase
         // Booking the next round with an excuse is scheduling: interviews.manage too.
         $absent = $this->awaitingInterview('33333333333');
         $this->record($this->scheduled($absent), ['result' => 'absent'])->assertOk();
-        $approver = $this->allow(StaffUserFactory::new()->create(), 'exceptions.approve');
-        $this->asStaff($approver)->postJson("/api/v1/staff/applications/{$absent->id}/interview-excuse", ['reason' => 'عذر طبي', 'appointment' => ['sitting_id' => $this->sitting()]])->assertForbidden();
+        // A role holding exceptions.approve without interviews.manage (none does by default).
+        Role::where('slug', 'contracts')->firstOrFail()->permissions()->attach(Permission::where('slug', 'exceptions.approve')->value('id'));
+        $approver = $this->contractsStaff();
+        $sitting = $this->sitting();   // before acting as the approver: the helper signs in as the scheduler
+        $this->asStaff($approver)->postJson("/api/v1/staff/applications/{$absent->id}/interview-excuse", ['reason' => 'عذر طبي', 'appointment' => ['sitting_id' => $sitting]])->assertForbidden();
         $this->asStaff($approver)->postJson("/api/v1/staff/applications/{$absent->id}/interview-excuse", ['reason' => 'عذر طبي'])->assertNoContent();
     }
 
@@ -462,6 +585,22 @@ class InterviewApiTest extends TestCase
         $this->asStaff($this->staff)->getJson('/api/v1/staff/interviews/queue?priority[]=salary:desc')->assertStatus(422)->assertJsonValidationErrors('priority.0');
     }
 
+    public function test_the_queue_can_put_the_excused_first(): void
+    {
+        $excused = $this->awaitingInterview('11111111111');                                                 // waiting longest, then absent and excused
+        $this->record($this->scheduled($excused), ['result' => 'absent'])->assertOk();
+        $this->travelTo('2026-10-30 10:00:00');
+        $waiting = $this->awaitingInterview('22222222222');
+        $this->travelTo('2026-10-30 11:00:00');
+        $this->asStaff($this->approver())->postJson("/api/v1/staff/applications/{$excused->id}/interview-excuse", ['reason' => 'تقرير طبي'])->assertNoContent();
+
+        $queue = fn (string $query = '') => array_column($this->asStaff($this->staff)->getJson('/api/v1/staff/interviews/queue?'.$query)->assertOk()->json('data'), 'nomination_number');
+
+        $this->assertSame([$waiting->nomination_number, $excused->nomination_number], $queue());                  // back since 11:00
+        $this->assertSame([$excused->nomination_number, $waiting->nomination_number], $queue('priority[]=excused'));
+        $this->assertSame([$waiting->nomination_number, $excused->nomination_number], $queue('priority[]=excused:asc'));
+    }
+
     // ---- results ----
 
     public function test_a_passed_result_moves_the_application_with_the_interview_as_cause(): void
@@ -516,7 +655,7 @@ class InterviewApiTest extends TestCase
         $this->record($interview, ['result' => 'passed', 'held_at' => '2026-10-30T07:00:00Z'] + self::GRADES)       // before the sitting
             ->assertStatus(422)->assertJsonPath('errors.held_at.0', __('interviews.held_before_sitting', ['start' => '2026-10-30T08:00:00+00:00']));
 
-        $early = $this->scheduled($this->awaitingInterview('22222222222'), $this->sitting(['starts_at' => '2026-10-20T08:00:00Z']));
+        $early = $this->scheduledInPast($this->awaitingInterview('22222222222'), '2026-10-20T08:00:00Z', '2026-10-20 10:00:00');
         $this->record($early, ['result' => 'passed', 'held_at' => '2026-10-20T10:00:00Z'] + self::GRADES)       // before the exam decision
             ->assertStatus(422)->assertJsonPath('errors.held_at.0', __('interviews.held_before_previous_decision'));
         $this->assertSame('scheduled', Interview::query()->findOrFail($interview)->status->value);              // nothing was kept
@@ -535,7 +674,7 @@ class InterviewApiTest extends TestCase
 
     private function corrector(): StaffUser
     {
-        return $this->allow($this->hiringStaff(), 'interviews.correct');
+        return $this->examsStaff();
     }
 
     public function test_correcting_grades_adds_a_revision_and_leaves_the_status(): void
@@ -598,7 +737,7 @@ class InterviewApiTest extends TestCase
         $this->record($interview, ['result' => 'passed'] + self::GRADES)->assertOk();
         $url = "/api/v1/staff/interviews/{$interview}/correct";
 
-        $this->asStaff($this->staff)->postJson($url, ['overall_grade' => 'good', 'reason' => 'سبب'])->assertForbidden();
+        $this->asStaff($this->hiringStaff())->postJson($url, ['overall_grade' => 'good', 'reason' => 'سبب'])->assertForbidden();   // another office
         $this->asStaff($this->corrector())->postJson($url, ['overall_grade' => 'good'])->assertStatus(422)->assertJsonValidationErrors('reason');
         $this->asStaff($this->corrector())->postJson($url, ['reason' => 'سبب'])->assertStatus(422)->assertJsonValidationErrors('result');
     }
@@ -607,7 +746,7 @@ class InterviewApiTest extends TestCase
 
     private function approver(): StaffUser
     {
-        return $this->allow($this->hiringStaff(), 'exceptions.approve');
+        return $this->examsStaff();
     }
 
     public function test_an_accepted_excuse_brings_the_application_back_and_books_the_next_round(): void
@@ -639,7 +778,7 @@ class InterviewApiTest extends TestCase
         $this->asStaff($this->approver())->postJson($url, ['reason' => 'عذر'])->assertStatus(422)->assertJsonValidationErrors('application');   // not absent
         $this->record($this->scheduled($application), ['result' => 'absent'])->assertOk();
 
-        $this->asStaff($this->staff)->postJson($url, ['reason' => 'عذر'])->assertForbidden();
+        $this->asStaff($this->staffOf('general_manager'))->postJson($url, ['reason' => 'عذر'])->assertForbidden();
         $this->asStaff($this->approver())->postJson($url, [])->assertStatus(422)->assertJsonValidationErrors('reason');
         $this->asStaff($this->approver())->postJson($url, ['reason' => 'عذر مقبول'])->assertNoContent();
         $this->assertSame('awaiting_interview', $application->fresh()->current_status->value);
@@ -750,7 +889,7 @@ class InterviewApiTest extends TestCase
         };
 
         $check(fn () => DB::table('interview_members')->where('sitting_id', $sitting)->delete());
-        $check(fn () => DB::table('interview_sittings')->insert(['id' => (string) Str::uuid7(), 'kind' => 'committee', 'starts_at' => now(), 'location' => 'x', 'created_by' => $this->staff->id]));
+        $check(fn () => DB::table('interview_sittings')->insert(['id' => (string) Str::uuid7(), 'kind' => 'committee', 'starts_at' => now(), 'ends_at' => now()->addHour(), 'location' => 'x', 'created_by' => $this->staff->id]));
 
         // A committee replaced inside one transaction is fine.
         DB::transaction(function () use ($sitting) {
@@ -783,9 +922,9 @@ class InterviewApiTest extends TestCase
     }
 
     /** The committee key is computed at commit (deferred), which tests never reach: SET CONSTRAINTS runs it now. */
-    public function test_the_database_refuses_the_same_sitting_twice_at_commit(): void
+    public function test_the_database_refuses_the_same_committee_at_overlapping_times_at_commit(): void
     {
-        $first = $this->sitting(['location' => 'القاعة 2']);
+        $first = $this->sitting(['location' => 'القاعة 2', 'members' => $this->members()]);
         DB::statement('SET CONSTRAINTS interview_members_key_sitting IMMEDIATE');
         DB::statement('SET CONSTRAINTS ALL DEFERRED');
         $this->assertSame(32, strlen((string) DB::table('interview_sittings')->where('id', $first)->value('committee_key')));
@@ -793,15 +932,16 @@ class InterviewApiTest extends TestCase
 
         try {
             DB::transaction(function () use ($copy) {
-                DB::table('interview_sittings')->insert(['id' => $copy, 'kind' => 'committee', 'starts_at' => '2026-10-30 08:00:00', 'location' => 'القاعه  2', 'created_by' => $this->staff->id]);
+                // 30 seconds later, elsewhere: the same committee at once.
+                DB::table('interview_sittings')->insert(['id' => $copy, 'kind' => 'committee', 'starts_at' => '2026-10-30 08:00:30', 'ends_at' => '2026-10-30 09:00:00', 'location' => 'القاعة 6', 'created_by' => $this->staff->id]);
                 foreach (array_reverse($this->members()) as $index => $member) {
                     DB::table('interview_members')->insert(['sitting_id' => $copy, 'sitting_kind' => 'committee', 'position' => $index + 1] + $member);
                 }
                 DB::statement('SET CONSTRAINTS interview_members_key_sitting IMMEDIATE');
             });
-            $this->fail('The database accepted the same sitting twice.');
+            $this->fail('The database accepted the same committee twice at once.');
         } catch (QueryException $e) {
-            $this->assertStringContainsString('interview_sittings_no_duplicate', $e->getMessage());
+            $this->assertStringContainsString('interview_sittings_no_overlap', $e->getMessage());
         }
 
         DB::statement('SET CONSTRAINTS ALL DEFERRED');

@@ -16,8 +16,7 @@ use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\Rule;
 
 /**
- * Exam subjects and their parts (analysis doc §05). Reading: exam_bank.manage, candidates.manage or
- * reports.view. Changing: exam_bank.manage. Subjects and parts are archived, never deleted.
+ * Exam subjects and their parts (analysis doc §05). Reading: exams.view. Changing: exam_bank.manage. Subjects and parts are archived, never deleted.
  */
 class ExamSubjectController extends Controller
 {

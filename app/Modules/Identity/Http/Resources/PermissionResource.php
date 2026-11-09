@@ -14,7 +14,8 @@ class PermissionResource extends JsonResource
         return [
             'slug' => $this->slug,
             'label_ar' => $this->label_ar,
-            'individual_only' => $this->individual_only,
+            /** It only shows data. */
+            'read_only' => $this->read_only,
         ];
     }
 }

@@ -18,7 +18,7 @@ use Illuminate\Validation\Rule;
 
 /**
  * Exam plans: what a job position is examined on (D-053). A job position has at most one published version and
- * at most one draft. Reading: exam_bank.manage, candidates.manage or reports.view. Changing: exam_bank.manage.
+ * at most one draft. Reading: exams.view. Changing: exam_bank.manage.
  */
 class ExamPlanController extends Controller
 {

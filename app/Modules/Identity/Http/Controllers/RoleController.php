@@ -12,7 +12,7 @@ use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 class RoleController extends Controller
 {
-    /** List roles with their permissions. */
+    /** List roles with their permissions (the system administrator's: every permission). */
     public function index(): AnonymousResourceCollection
     {
         return RoleResource::collection(Role::with('permissions')->orderBy('slug')->get());
@@ -21,7 +21,8 @@ class RoleController extends Controller
     /**
      * Add permissions to a role
      *
-     * Everyone holding the role is affected. Permissions marked `individual_only` are refused.
+     * Everyone holding the role is affected. The system administrator's role is not edited (it holds every
+     * permission); the general manager's takes read-only permissions only (422).
      */
     public function addPermissions(AddRolePermissionsRequest $request, Role $role, ManageRolePermissions $manage): RoleResource
     {
@@ -31,7 +32,8 @@ class RoleController extends Controller
     /**
      * Remove a permission from a role
      *
-     * Refused if it would leave nobody able to manage users. A permission the role does not have gives 404.
+     * Refused if it would leave nobody able to manage users, and for the system administrator's role (422). A
+     * permission the role does not have gives 404.
      */
     public function removePermission(Role $role, Permission $permission, ManageRolePermissions $manage): RoleResource
     {

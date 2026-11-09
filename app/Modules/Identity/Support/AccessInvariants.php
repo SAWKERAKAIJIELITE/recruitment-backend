@@ -13,8 +13,7 @@ final class AccessInvariants
 
     /**
      * Access changes run one at a time (a transaction-level advisory lock, released at commit): two administrators
-     * removing each other's users.manage at the same moment would otherwise both pass the check below, and an
-     * automatic role could be computed from a role being changed at the same time.
+     * removing each other's users.manage at the same moment would otherwise both pass the check below.
      */
     public static function serialize(): void
     {
@@ -31,6 +30,7 @@ final class AccessInvariants
     {
         $someoneCan = StaffUser::query()
             ->where('is_active', true)
+            ->with('role.permissions')
             ->get()
             ->contains(fn(StaffUser $user) => $user->hasPermission(self::MANAGE_USERS));
 

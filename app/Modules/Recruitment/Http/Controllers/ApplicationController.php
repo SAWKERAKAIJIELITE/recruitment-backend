@@ -10,8 +10,10 @@ use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Exceptions\IllegalStatusTransition;
 use App\Modules\Recruitment\Http\Requests\CloseApplicationRequest;
+use App\Modules\Recruitment\Http\Requests\StartApplicationsRequest;
 use App\Modules\Recruitment\Http\Requests\StoreApplicationRequest;
 use App\Modules\Recruitment\Http\Requests\UpdateApplicationRequest;
+use App\Modules\Recruitment\Http\Resources\ApplicationIdentityResource;
 use App\Modules\Recruitment\Http\Resources\ApplicationResource;
 use App\Modules\Recruitment\Http\Resources\ApplicationSummaryResource;
 use App\Modules\Recruitment\Models\Application;
@@ -25,8 +27,16 @@ use Illuminate\Validation\ValidationException;
 
 class ApplicationController extends Controller
 {
+    /** Who may read the list and one application (the full file needs applications.view; D-086). */
+    public const READERS = 'applications.view,exams.view,interviews.view,contracts.view,documents.view';
+
     /**
      * Search applications
+     *
+     * The full rows with `applications.view` (Recruitment, the general manager); the other offices get who the
+     * candidate is and where the application stands (`id`, `nomination_number`, `status`, `job_position`, `candidate`
+     * with `full_name` and `national_number`), and only the filters `q`, `national_number`, `status`, `live`,
+     * `job_position_id`, `import_batch_id`, `from`, `to` (any other is refused, 422).
      *
      * Every filter is optional; they combine with AND, and 0 or false filter too.
      *
@@ -41,33 +51,43 @@ class ApplicationController extends Controller
      *   `overnight_work`, `candidate_active`.
      * - Ranges (included): `studying_years_min`/`_max`, `quran_parts_min`/`_max`, `birth_date_from`/`_to`,
      *   `age_min`/`age_max` (whole years today), `from`/`to` (opening date, UTC days). `studying_years`: exact.
-     * - `created_by`: the staff user who opened it.
+     * - `created_by`: the staff user who opened it; `import_batch_id`: imported by that batch.
      * - `sort`: `created_at` (default, newest first), `nomination_number`, `full_name`, `birth_date`, `status`;
      *   `direction`: `asc` or `desc`. `per_page`: 5 to 100 (25).
      */
     public function index(Request $request): AnonymousResourceCollection
     {
         ApplicationSearch::prepare($request);
+        $full = $request->user()->hasPermission('applications.view');
+
+        if (! $full) {
+            ApplicationSearch::assertIdentityOnly($request);
+        }
+
         $filters = $request->validate(ApplicationSearch::rules());
 
-        $applications = ApplicationSearch::apply(Application::query()->with(ApplicationSummaryResource::RELATIONS), $filters)
+        $applications = ApplicationSearch::apply(Application::query()->with($full ? ApplicationSummaryResource::RELATIONS : ApplicationIdentityResource::RELATIONS), $filters)
             ->paginate((int) ($filters['per_page'] ?? 25))
             ->withQueryString();
 
-        return ApplicationSummaryResource::collection($applications);
+        return $full ? ApplicationSummaryResource::collection($applications) : ApplicationIdentityResource::collection($applications);
     }
 
     /**
      * Open an application
      *
      * Finds the person by national number (or creates them), takes the next nomination number and starts
-     * the history. `candidate_matched` is true when the person was already on file: the person's stored
-     * data is kept and the `candidate` fields sent are ignored. 422 when the person already has a live
-     * application for this job position, or when the area does not belong to the district.
+     * the history: the application is `received`. With `start` = true it is started at once (awaiting its exam;
+     * needs `applications.start`, 403 otherwise). `candidate_matched` is true when the person was already on file:
+     * the person's stored data is kept and the `candidate` fields sent are ignored. 422 when the person already has
+     * a live application, or when the area does not belong to the district.
      */
     public function store(StoreApplicationRequest $request, CreateApplication $create): JsonResponse
     {
-        $result = $create->execute($request->validated(), $request->user());
+        $start = $request->boolean('start');
+        abort_if($start && ! $request->user()->hasPermission('applications.start'), 403);
+
+        $result = $create->execute($request->safe()->except('start'), $request->user(), $start);
 
         $application = $result['application']->load(ApplicationResource::RELATIONS);
 
@@ -77,16 +97,64 @@ class ApplicationController extends Controller
             ->setStatusCode(201);
     }
 
-    /** One application file with the person and the full status history. */
-    public function show(Application $application): ApplicationResource
+    /**
+     * One application
+     *
+     * With `applications.view`, the full file with the person and the status history; the other offices get who
+     * the candidate is and where the application stands, as in the list.
+     */
+    public function show(Request $request, Application $application): ApplicationResource|ApplicationIdentityResource
     {
+        if (! $request->user()->hasPermission('applications.view')) {
+            return new ApplicationIdentityResource($application->load(ApplicationIdentityResource::RELATIONS));
+        }
+
         return new ApplicationResource($application->load(ApplicationResource::RELATIONS));
+    }
+
+    /**
+     * Start a received application
+     *
+     * It now awaits its exam, and the Exams and Interviews office is notified. 422 when it is not `received`.
+     */
+    public function start(Request $request, Application $application, ApplicationLifecycle $lifecycle): ApplicationResource
+    {
+        try {
+            $lifecycle->start($application, $request->user());
+        } catch (IllegalStatusTransition) {
+            throw ValidationException::withMessages(['status' => [__('recruitment.illegal_transition', ['status' => $application->fresh()->current_status->labelAr()])]]);
+        }
+
+        return new ApplicationResource($application->load(ApplicationResource::RELATIONS));
+    }
+
+    /**
+     * Start many received applications
+     *
+     * Either `application_ids` (1 to 1,000; each must be `received`, otherwise nothing starts and 422 names the
+     * others), or `filters`: the filters of the applications list (for example `{"import_batch_id": "…"}` for the
+     * applications of an import, with `job_position_id`, `residence_district_id`, `age_max`, …), applied to the
+     * received applications only (422 when none matches, or more than 5,000). All or none, in one transaction; the
+     * offices get one notification for all of them. Returns how many started and their ids.
+     */
+    public function startMany(StartApplicationsRequest $request, ApplicationLifecycle $lifecycle): JsonResponse
+    {
+        $ids = $request->applicationIds();
+        $refused = $lifecycle->startMany($ids, $request->user());
+
+        if ($refused !== []) {
+            $numbers = Application::query()->whereKey($refused)->orderBy('nomination_number')->limit(20)->pluck('nomination_number')->implode('، ');
+
+            throw ValidationException::withMessages(['application_ids' => [__('recruitment.not_received', ['numbers' => $numbers])]]);
+        }
+
+        return response()->json(['data' => ['started' => count($ids), 'application_ids' => $ids]]);
     }
 
     /**
      * Close an application
      *
-     * Ends the application (status `closed`) so the person can be nominated again. Needs the individual
+     * Ends the application (status `closed`) so the person can be nominated again. Needs the
      * permission `applications.close` and a reason. `occurred_at` dates the decision if it was taken earlier;
      * it cannot be in the future or before the application's previous decision. 422 when the application
      * has already ended or has a written contract (a contract ends through the Contracts module).

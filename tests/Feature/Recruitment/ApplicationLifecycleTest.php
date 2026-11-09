@@ -50,21 +50,94 @@ class ApplicationLifecycleTest extends TestCase
         ], $extra);
     }
 
+    /** The event nothing follows yet. */
+    private function latest(Application $application): object
+    {
+        return $application->fresh()->history()->last();
+    }
+
     // ---- moves ----
 
-    public function test_a_new_application_starts_awaiting_exam_with_a_created_event(): void
+    public function test_a_new_application_is_received_with_a_created_event(): void
     {
         $actor = $this->hiringStaff();
-        $application = $this->openApplication($actor);
+        $application = $this->openApplication($actor, start: false);
 
-        $this->assertSame(S::AwaitingExam, $application->current_status);
+        $this->assertSame(S::Received, $application->current_status);
 
         $event = $application->history()->sole();
         $this->assertNull($event->previous_event_id);
         $this->assertNull($event->fromStatus());
-        $this->assertSame(S::AwaitingExam, $event->to_status);
+        $this->assertSame(S::Received, $event->to_status);
         $this->assertSame(D::Created, $event->decision_type);
         $this->assertSame($actor->id, $event->actor_id);
+    }
+
+    public function test_starting_a_received_application_needs_the_staff_user(): void
+    {
+        $actor = $this->hiringStaff();
+        $application = $this->openApplication($actor, start: false);
+
+        try {
+            $this->lifecycle->move($application, S::AwaitingExam, D::Started);
+            $this->fail('Starting without a staff user should be refused.');
+        } catch (IllegalStatusTransition) {
+        }
+
+        foreach ([[S::AwaitingExam, D::Outcome], [S::AwaitingInterview, D::Started], [S::ExamFailed, D::Outcome]] as [$to, $type]) {
+            try {
+                $this->lifecycle->move($application, $to, $type, $actor);
+                $this->fail("{$to->value} by {$type->value} should be refused.");
+            } catch (IllegalStatusTransition) {
+            }
+        }
+
+        $event = $this->lifecycle->start($application, $actor);
+
+        $this->assertSame(S::AwaitingExam, $application->current_status);
+        $this->assertSame([D::Started, S::Received, $actor->id, null], [$event->decision_type, $event->fromStatus(), $event->actor_id, $event->reason]);
+        $this->expectException(IllegalStatusTransition::class);
+        $this->lifecycle->start($application, $actor);   // only from received
+    }
+
+    public function test_a_received_application_can_be_closed_without_starting(): void
+    {
+        $application = $this->openApplication(start: false);
+
+        $this->lifecycle->move($application, S::Closed, D::Closure, $this->hiringStaff(), 'انسحب قبل البدء');
+
+        $this->assertSame(['received', 'closed'], $this->statusesOf($application));
+    }
+
+    public function test_many_received_applications_start_together_or_not_at_all(): void
+    {
+        $actor = $this->hiringStaff();
+        $first = $this->openApplication($actor, start: false);
+        $second = $this->openApplication($actor, ['candidate' => ['national_number' => '22222222222']], start: false);
+        $started = $this->openApplication($actor, ['candidate' => ['national_number' => '33333333333']]);
+
+        $this->assertSame([$started->id], $this->lifecycle->startMany([$first->id, $started->id, $second->id], $actor));
+        $this->assertSame(S::Received, $first->fresh()->current_status);   // nothing started
+
+        $this->assertSame([], $this->lifecycle->startMany([$first->id, $second->id, $first->id], $actor));
+        $this->assertSame(['received', 'awaiting_exam'], $this->statusesOf($first));
+        $this->assertSame(['received', 'awaiting_exam'], $this->statusesOf($second));
+        $this->assertSame([D::Started, $actor->id], [$this->latest($second)->decision_type, $this->latest($second)->actor_id]);
+    }
+
+    public function test_the_database_refuses_a_start_without_an_actor_or_elsewhere(): void
+    {
+        $application = $this->openApplication(start: false);
+        $created = $this->latest($application)->id;
+
+        foreach ([['awaiting_exam', []], ['awaiting_interview', ['actor_id' => $this->hiringStaff()->id]]] as [$to, $extra]) {
+            try {
+                DB::transaction(fn () => DB::table('application_status_events')->insert($this->rawEvent($application, $created, $to, 'started', $extra)));
+                $this->fail("A start to {$to} should be refused.");
+            } catch (QueryException $e) {
+                $this->assertStringContainsString('application_status_events_started_awaits_exam', $e->getMessage());
+            }
+        }
     }
 
     public function test_the_happy_path_to_a_written_contract_is_recorded_step_by_step(): void
@@ -77,7 +150,7 @@ class ApplicationLifecycleTest extends TestCase
 
         $this->assertSame(S::ContractWritten, $application->current_status, 'the caller\'s model is reloaded');
         $this->assertSame(
-            ['awaiting_exam', 'awaiting_interview', 'awaiting_contract', 'contract_written'],
+            ['received', 'awaiting_exam', 'awaiting_interview', 'awaiting_contract', 'contract_written'],
             $this->statusesOf($application),
         );
     }
@@ -89,7 +162,7 @@ class ApplicationLifecycleTest extends TestCase
         $this->lifecycle->move($application, S::AwaitingExam, D::ExcuseAccepted, $this->hiringStaff(), 'Medical certificate');
 
         $this->assertSame(
-            [null, 'awaiting_exam', 'exam_absent'],
+            [null, 'received', 'awaiting_exam', 'exam_absent'],
             $application->fresh()->history()->map(fn ($event) => $event->fromStatus()?->value)->all(),
         );
     }
@@ -103,7 +176,7 @@ class ApplicationLifecycleTest extends TestCase
         $this->lifecycle->move($application, S::AwaitingInterview, D::ExcuseAccepted, $this->hiringStaff(), 'Accepted');
 
         $this->assertSame(
-            ['awaiting_exam', 'awaiting_interview', 'interview_absent', 'awaiting_interview'],
+            ['received', 'awaiting_exam', 'awaiting_interview', 'interview_absent', 'awaiting_interview'],
             $this->statusesOf($application),
         );
     }
@@ -119,7 +192,7 @@ class ApplicationLifecycleTest extends TestCase
         }
 
         $this->assertSame(S::AwaitingExam, $application->fresh()->current_status);
-        $this->assertSame(1, $application->statusEvents()->count());
+        $this->assertSame(2, $application->statusEvents()->count());
     }
 
     public function test_the_decision_type_must_match_the_move(): void
@@ -171,7 +244,7 @@ class ApplicationLifecycleTest extends TestCase
         $this->lifecycle->move($application, S::AwaitingExam, D::ExcuseAccepted, $this->hiringStaff(), 'Medical certificate');
 
         $this->assertSame(S::AwaitingExam, $application->fresh()->current_status);
-        $this->assertSame(3, $application->statusEvents()->count());   // the absence stays in the history
+        $this->assertSame(4, $application->statusEvents()->count());   // the absence stays in the history
     }
 
     public function test_a_closed_application_cannot_be_reopened(): void
@@ -205,7 +278,7 @@ class ApplicationLifecycleTest extends TestCase
     {
         foreach (S::cases() as $status) {
             $closable = $status->decisionRequiredFor(S::Closed) === D::Closure;
-            $expected = ! in_array($status, [S::ContractWritten, S::ContractEnded, S::Closed], true);
+            $expected = ! in_array($status, [S::ContractWritten, S::ContractEnded, S::Closed], true);   // received too
 
             $this->assertSame($expected, $closable, $status->value);
         }
@@ -270,7 +343,7 @@ class ApplicationLifecycleTest extends TestCase
 
         $this->expectException(QueryException::class);
 
-        DB::table('application_status_events')->insert($this->rawEvent($application, $application->statusEvents()->sole()->id, 'exam_failed', 'outcome', [
+        DB::table('application_status_events')->insert($this->rawEvent($application, $this->latest($application)->id, 'exam_failed', 'outcome', [
             'occurred_at' => now()->addHour(),
             'created_at' => now(),
         ]));
@@ -282,7 +355,7 @@ class ApplicationLifecycleTest extends TestCase
 
         $this->expectException(QueryException::class);
 
-        DB::table('application_status_events')->insert($this->rawEvent($application, $application->statusEvents()->sole()->id, 'exam_failed', 'outcome', [
+        DB::table('application_status_events')->insert($this->rawEvent($application, $this->latest($application)->id, 'exam_failed', 'outcome', [
             'occurred_at' => now()->subYear(),
         ]));
     }
@@ -361,7 +434,7 @@ class ApplicationLifecycleTest extends TestCase
 
         $this->expectException(QueryException::class);
 
-        DB::table('application_status_events')->insert($this->rawEvent($application, $application->statusEvents()->sole()->id, 'exam_failed', 'outcome', [
+        DB::table('application_status_events')->insert($this->rawEvent($application, $this->latest($application)->id, 'exam_failed', 'outcome', [
             'trial_attempt_id' => $attempt->getKey(),
             'trial_interview_id' => $interview->getKey(),
         ]));
@@ -438,9 +511,7 @@ class ApplicationLifecycleTest extends TestCase
     public function test_adding_an_event_sets_the_current_status(): void
     {
         $application = $this->openApplication();
-        $first = $application->statusEvents()->sole();
-
-        DB::table('application_status_events')->insert($this->rawEvent($application, $first->id, 'exam_failed'));
+        DB::table('application_status_events')->insert($this->rawEvent($application, $this->latest($application)->id, 'exam_failed'));
 
         $this->assertSame(S::ExamFailed, $application->fresh()->current_status);
     }
@@ -448,10 +519,10 @@ class ApplicationLifecycleTest extends TestCase
     public function test_an_event_must_follow_the_latest_event(): void
     {
         $application = $this->openApplication();
-        $first = $application->statusEvents()->sole();
+        $first = $this->latest($application);
         $this->lifecycle->move($application, S::ExamAbsent, D::Outcome);
 
-        // Appending after the first event again would fork the history.
+        // Appending after the same event again would fork the history.
         $this->expectException(QueryException::class);
 
         DB::table('application_status_events')->insert($this->rawEvent($application, $first->id, 'awaiting_interview'));
@@ -463,7 +534,7 @@ class ApplicationLifecycleTest extends TestCase
 
         $this->expectException(QueryException::class);
 
-        DB::table('application_status_events')->insert($this->rawEvent($application, null, 'awaiting_exam', 'created'));
+        DB::table('application_status_events')->insert($this->rawEvent($application, null, 'received', 'created'));
     }
 
     public function test_an_event_cannot_follow_an_event_of_another_application(): void
@@ -476,7 +547,7 @@ class ApplicationLifecycleTest extends TestCase
 
         $this->expectException(QueryException::class);
 
-        DB::table('application_status_events')->insert($this->rawEvent($mine, $other->statusEvents()->sole()->id, 'exam_failed'));
+        DB::table('application_status_events')->insert($this->rawEvent($mine, $this->latest($other)->id, 'exam_failed'));
     }
 
     public function test_only_the_created_event_has_no_previous_event(): void
@@ -486,7 +557,7 @@ class ApplicationLifecycleTest extends TestCase
         $this->expectException(QueryException::class);
 
         DB::table('application_status_events')->insert(
-            $this->rawEvent($application, $application->statusEvents()->sole()->id, 'awaiting_exam', 'created'),
+            $this->rawEvent($application, $this->latest($application)->id, 'received', 'created'),
         );
     }
 
@@ -512,7 +583,7 @@ class ApplicationLifecycleTest extends TestCase
         return array_replace($row, ['id' => (string) Str::uuid(), 'candidate_id' => $person['id']], $changes);
     }
 
-    public function test_a_new_application_must_start_at_awaiting_exam(): void
+    public function test_a_new_application_must_start_received(): void
     {
         $application = $this->openApplication();
 
@@ -528,7 +599,7 @@ class ApplicationLifecycleTest extends TestCase
     {
         $application = $this->openApplication();
 
-        DB::table('applications')->insert($this->rowForAnotherPerson($application, ['nomination_number' => 'MANUAL-2']));
+        DB::table('applications')->insert($this->rowForAnotherPerson($application, ['nomination_number' => 'MANUAL-2', 'current_status' => 'received']));
 
         // The check is deferred to commit; tests never commit, so ask PostgreSQL to run it now.
         $this->expectException(QueryException::class);

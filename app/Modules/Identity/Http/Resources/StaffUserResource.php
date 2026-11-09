@@ -15,7 +15,8 @@ class StaffUserResource extends JsonResource
             'id' => $this->id,
             'username' => $this->username,
             'full_name' => $this->full_name,
-            'roles' => $this->roles->pluck('slug')->values(),
+            /** The user's role (office, general manager or system administrator). */
+            'role' => $this->role?->slug,
             // For showing or hiding UI only. The server re-checks every request.
             'permissions' => $this->permissionSlugs(),
         ];

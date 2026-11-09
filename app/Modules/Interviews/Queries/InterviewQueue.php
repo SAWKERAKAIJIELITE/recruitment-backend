@@ -21,7 +21,8 @@ use Illuminate\Validation\ValidationException;
  *    residence_district_id, residence_area_id;
  *  - a value, `:asc` or `:desc`: quran_parts (default desc: most parts first), studying_years (desc), age (asc:
  *    youngest first), waiting_since (asc: longest waiting first), nominated_at (asc), exam_average (desc: the best
- *    exam first; applications without a recorded exam result come last).
+ *    exam first; applications without a recorded exam result come last), excused (desc: back after an accepted
+ *    interview absence excuse first; asc puts them last).
  *
  * Ties are always broken by the longest wait, then the nomination.
  */
@@ -49,6 +50,8 @@ final class InterviewQueue
         // The exam average of the result that admitted it (its latest round and revision; none for older outcomes).
         'exam_average' => ['(select r.average from exam_results r join exam_attempts t on t.id = r.attempt_id join exam_bookings b on b.id = t.booking_id where b.application_id = applications.id order by b.round desc, r.revision desc limit 1)', 'desc'],
         'nominated_at' => ['applications.created_at', 'asc'],
+        // Back in the queue through an accepted interview excuse: the latest event (none follows it) is that excuse.
+        'excused' => ["exists (select 1 from application_status_events e where e.application_id = applications.id and e.decision_type = 'excuse_accepted' and not exists (select 1 from application_status_events n where n.previous_event_id = e.id))", 'desc'],
     ];
 
     /** @return array<string, list<mixed>> */

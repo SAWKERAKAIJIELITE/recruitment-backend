@@ -14,9 +14,10 @@ use Illuminate\Validation\ValidationException;
 /**
  * Sittings (D-059, D-061, D-067): a committee sitting, or a one-off sitting with exactly one interviewer. Both hold
  * many candidates. The committee can change until a result is entered for one of the sitting's interviews; after
- * that it is the evidence of who interviewed and stays as it was. A sitting with the same start, place and members as
- * another is the same sitting entered twice, and is refused (422 here; the database refuses it at commit too, when
- * two staff users enter it at the same moment).
+ * that it is the evidence of who interviewed and stays as it was. A sitting runs from `starts_at` to `ends_at` (at
+ * most 24 hours). The same members cannot sit at overlapping times (a sitting entered twice, even a few seconds
+ * apart, overlaps itself), and a staff account cannot be a member of two overlapping sittings: refused (422 here; the
+ * database refuses both at commit too, when two staff users enter them at the same moment).
  */
 class ManageSittings
 {
@@ -32,10 +33,11 @@ class ManageSittings
             $sitting = new InterviewSitting($data);
             $sitting->kind = $kind;
             $sitting->created_by = $actor->id;
+            $this->assertTimes($sitting);
             $sitting->save();
 
             Committee::write($sitting, $members);
-            $this->assertNotDuplicate($sitting);
+            $this->assertNoOverlap($sitting);
 
             AuditTrail::record('interview_sitting.created', $actor, ['sitting_id' => $sitting->id, 'kind' => $kind->value]);
 
@@ -45,7 +47,7 @@ class ManageSittings
 
     /**
      * Changes what is sent. Moving the sitting does not move the interviews already booked: each keeps its time
-     * (reschedule them one by one, with a reason), and the sitting cannot start after any of them.
+     * (reschedule them one by one, with a reason), and the sitting cannot start after any of them nor end before one.
      */
     public function update(InterviewSitting $sitting, array $data, ?array $members, StaffUser $actor): InterviewSitting
     {
@@ -73,14 +75,23 @@ class ManageSittings
                 }
             }
 
+            if (isset($data['ends_at'])) {
+                $latest = $sitting->interviews()->reorder()->max('scheduled_at');
+
+                if ($latest !== null && Date::parse($data['ends_at'])->lessThanOrEqualTo(Date::parse($latest))) {
+                    $this->fail('ends_at', 'interviews.sitting_before_bookings', ['time' => Date::parse($latest)->toIso8601String()]);
+                }
+            }
+
             $sitting->fill($data);
+            $this->assertTimes($sitting);
 
             if ($sitting->kind === SittingKind::Committee && blank($sitting->committee_name)) {
                 $this->fail('committee_name', 'interviews.committee_name_required');
             }
 
-            // Checked before saving: the unique index is checked at once, and would answer without the other's id.
-            $this->assertNotDuplicate($sitting);
+            // Checked before saving: the exclusion constraint is checked at once, and would answer without the other's id.
+            $this->assertNoOverlap($sitting);
             $sitting->save();
 
             AuditTrail::record('interview_sitting.updated', $actor, ['sitting_id' => $sitting->id, 'fields' => array_keys($data), 'members' => $members !== null]);
@@ -120,22 +131,40 @@ class ManageSittings
         }
     }
 
-    /**
-     * Another sitting with the same start, place and members (compared as the database compares them, with
-     * `interview_text_key`) already exists. Its committee key is computed here from the members just written: the
-     * stored key is filled at commit.
-     */
-    private function assertNotDuplicate(InterviewSitting $sitting): void
+    /** Ends after it starts, within 24 hours (the database's CHECK, answered here on the right field). */
+    private function assertTimes(InterviewSitting $sitting): void
     {
-        $duplicate = DB::table('interview_sittings')
-            ->where('id', '<>', $sitting->id)
-            ->where('starts_at', $sitting->starts_at)
-            ->whereRaw('interview_text_key(location) = interview_text_key(?)', [$sitting->location])
-            ->whereRaw('interview_committee_key(id) = interview_committee_key(?)', [$sitting->id])
-            ->value('id');
+        if ($sitting->ends_at->lessThanOrEqualTo($sitting->starts_at) || $sitting->ends_at->greaterThan($sitting->starts_at->copy()->addDay())) {
+            $this->fail('ends_at', 'interviews.sitting_too_long');
+        }
+    }
+
+    /**
+     * Another sitting overlapping this one has the same members (compared as the database compares them: its
+     * committee key is computed here from the members just written; the stored key is filled at commit), or one of
+     * this sitting's staff accounts.
+     */
+    private function assertNoOverlap(InterviewSitting $sitting): void
+    {
+        $overlapping = fn() => DB::table('interview_sittings as other')
+            ->where('other.id', '<>', $sitting->id)
+            ->whereRaw('tstzrange(other.starts_at, other.ends_at) && tstzrange(?, ?)', [$sitting->starts_at, $sitting->ends_at]);
+
+        $duplicate = $overlapping()->whereRaw('interview_committee_key(other.id) = interview_committee_key(?)', [$sitting->id])->value('other.id');
 
         if ($duplicate !== null) {
             $this->fail('starts_at', 'interviews.duplicate_sitting', ['id' => $duplicate]);
+        }
+
+        $busy = $overlapping()
+            ->join('interview_members as theirs', 'theirs.sitting_id', '=', 'other.id')
+            ->join('interview_members as ours', 'ours.staff_user_id', '=', 'theirs.staff_user_id')
+            ->where('ours.sitting_id', $sitting->id)
+            ->orderBy('ours.position')
+            ->first(['ours.name', 'other.id']);
+
+        if ($busy !== null) {
+            $this->fail('members', 'interviews.staff_overlap', ['name' => $busy->name, 'id' => $busy->id]);
         }
     }
 
@@ -145,8 +174,12 @@ class ManageSittings
         try {
             return DB::transaction($callback);
         } catch (QueryException $e) {
-            if (str_contains($e->getMessage(), 'interview_sittings_no_duplicate')) {
+            if (str_contains($e->getMessage(), 'interview_sittings_no_overlap')) {
                 $this->fail('starts_at', 'interviews.duplicate_sitting_now');
+            }
+
+            if (str_contains($e->getMessage(), 'interview_staff_overlap')) {
+                $this->fail('members', 'interviews.staff_overlap_now');
             }
 
             throw $e;

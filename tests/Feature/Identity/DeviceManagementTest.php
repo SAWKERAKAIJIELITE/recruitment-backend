@@ -116,7 +116,7 @@ class DeviceManagementTest extends TestCase
 
     public function test_only_holders_of_devices_approve_can_manage_devices(): void
     {
-        $staff = StaffUserFactory::new()->withRole('recruitment_staff')->create();
+        $staff = StaffUserFactory::new()->withRole('recruitment')->create();
         $admin = StaffUserFactory::new()->withRole('system_admin')->create();
 
         $this->asStaff($staff)->getJson('/api/v1/staff/devices')->assertForbidden();

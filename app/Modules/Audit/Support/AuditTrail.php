@@ -30,6 +30,7 @@ final class AuditTrail
             'actor_id' => $actor?->id,
             'candidate_id' => $candidateId,
             'context' => $context,
+            'related_ids' => self::arrayLiteral(self::relatedIds($context, $candidateId)),
             'ip' => request()->route() === null ? null : request()->ip(),   // none from the console or the scheduler
             'created_at' => Date::now(),
         ]);
@@ -46,6 +47,37 @@ final class AuditTrail
         }
 
         return 'operations';
+    }
+
+    /**
+     * The ids the event is about, for the `related_id` search: the values of the top-level context keys `id`,
+     * `*_id` and `*_ids`, and the acting candidate.
+     *
+     * @return list<string>
+     */
+    public static function relatedIds(array $context, ?string $candidateId = null): array
+    {
+        $ids = $candidateId === null ? [] : [$candidateId];
+
+        foreach ($context as $key => $value) {
+            if (! is_string($key) || ! ($key === 'id' || str_ends_with($key, '_id') || str_ends_with($key, '_ids'))) {
+                continue;
+            }
+
+            foreach (is_array($value) ? $value : [$value] as $id) {
+                if (is_string($id) || is_int($id)) {
+                    $ids[] = (string) $id;
+                }
+            }
+        }
+
+        return array_values(array_unique(array_filter($ids, fn(string $id) => $id !== '')));
+    }
+
+    /** A PostgreSQL text[] literal: every element quoted, `"` and `\` escaped. */
+    private static function arrayLiteral(array $values): string
+    {
+        return '{' . implode(',', array_map(fn(string $value) => '"' . addcslashes($value, '"\\') . '"', $values)) . '}';
     }
 
     /** Dates as ISO strings and enums as their values, so the stored JSON reads the same everywhere. */

@@ -13,7 +13,7 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Opens an application for a person: finds or creates the person, takes the next nomination number,
- * and writes the first history event, all in one transaction. The Excel import will reuse it per row.
+ * and writes the first history event (received), all in one transaction. The Excel import reuses it per row.
  */
 class CreateApplication
 {
@@ -48,14 +48,21 @@ class CreateApplication
 
     /**
      * @param  array  $input  validated data (see StoreApplicationRequest)
+     * @param  bool  $start  start it at once (awaiting its exam) instead of leaving it received (D-087)
      * @return array{application: Application, candidate_matched: bool}
      */
-    public function execute(array $input, StaffUser $actor): array
+    public function execute(array $input, StaffUser $actor, bool $start = false): array
     {
-        return DB::transaction(function () use ($input, $actor) {
+        return DB::transaction(function () use ($input, $actor, $start) {
             self::lockPeople([$input['candidate']['national_number']]);
 
-            return $this->createLocked($input, $actor, $this->numbers->next());
+            $result = $this->createLocked($input, $actor, $this->numbers->next());
+
+            if ($start) {
+                $this->lifecycle->start($result['application'], $actor);
+            }
+
+            return $result;
         });
     }
 

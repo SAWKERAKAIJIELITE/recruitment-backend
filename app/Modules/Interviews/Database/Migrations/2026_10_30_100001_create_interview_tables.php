@@ -12,8 +12,10 @@ use Illuminate\Support\Facades\Schema;
  * Every interview is booked into a sitting: a committee sitting, or a one-off sitting (one interviewer who sees the
  * candidates one by one; D-067). Both hold many candidates, each with their own time. The sitting holds the place,
  * the committee and its members (a member who is a staff account carries the account's name), so an interview
- * always has who interviews and where. Two sittings with the same
- * start, place and members are the same sitting entered twice: refused. The committee enters the result (passed, failed, absent) with its grades; the result
+ * always has who interviews and where. A sitting runs from its start to its end, and every interview in it is booked
+ * within that time. The same committee (the same members) cannot sit twice at overlapping times, and a staff account
+ * cannot be a member of two sittings that overlap: refused (a duplicate entered twice, even 30 seconds apart, is
+ * such an overlap). The committee enters the result (passed, failed, absent) with its grades; the result
  * moves the application's status, with the interview as the cause of that status event. Rescheduling and every
  * version of the result are kept (append-only); interviews are never deleted.
  */
@@ -35,6 +37,7 @@ return new class extends Migration
             $table->uuid('id')->primary();
             $table->enum('kind', self::KINDS)->default('committee');   // one_off: a single interviewer (exactly one member)
             $table->timestampTz('starts_at');
+            $table->timestampTz('ends_at');                            // interviews are booked in [starts_at, ends_at)
             $table->string('location', 300);                           // place, or medium (video call, ...)
             $table->string('committee_name', 150)->nullable();
             $table->text('notes')->nullable();
@@ -48,8 +51,12 @@ return new class extends Migration
         });
 
         $this->textKeyFunction();
-        // The same start, place (spaces, letter forms of ا/ي/ه and tatweel ignored) and members: one sitting, not two.
-        DB::statement('CREATE UNIQUE INDEX interview_sittings_no_duplicate ON interview_sittings (starts_at, interview_text_key(location), committee_key)');
+        DB::statement("ALTER TABLE interview_sittings ADD CONSTRAINT interview_sittings_duration CHECK (ends_at > starts_at AND ends_at <= starts_at + interval '24 hours')");
+        // The same members (names compared without spaces, letter forms of ا/ي/ه and tatweel) cannot sit at
+        // overlapping times, wherever: one committee, one place at a time. A sitting entered twice is the simplest
+        // overlap. The key is filled at commit (below), and checked then. btree_gist: `=` on the key in a GiST index.
+        DB::statement('CREATE EXTENSION IF NOT EXISTS btree_gist');
+        DB::statement('ALTER TABLE interview_sittings ADD CONSTRAINT interview_sittings_no_overlap EXCLUDE USING gist (committee_key WITH =, tstzrange(starts_at, ends_at) WITH &&) WHERE (committee_key IS NOT NULL)');
 
         Schema::create('interviews', function (Blueprint $table) {
             $table->uuid('id')->primary();
@@ -152,6 +159,7 @@ return new class extends Migration
         $this->interviewTriggers();
         $this->sittingTriggers();
         $this->committeeTriggers();
+        $this->staffOverlapTriggers();
         $this->memberNameTriggers();
 
         // The interview behind a status change (D-038).
@@ -170,7 +178,7 @@ return new class extends Migration
         );
     }
 
-    /** Never deleted; the time and the holding date are within the sitting. */
+    /** Never deleted; the time is within the sitting, and the holding date not before its start. */
     private function interviewTriggers(): void
     {
         DB::unprepared(<<<'SQL'
@@ -191,10 +199,10 @@ return new class extends Migration
                 DECLARE
                     sitting RECORD;
                 BEGIN
-                    SELECT starts_at INTO sitting FROM interview_sittings WHERE id = NEW.sitting_id FOR SHARE;
+                    SELECT starts_at, ends_at INTO sitting FROM interview_sittings WHERE id = NEW.sitting_id FOR SHARE;
 
-                    IF NEW.scheduled_at < sitting.starts_at THEN
-                        RAISE EXCEPTION 'An interview cannot be scheduled before its sitting starts' USING ERRCODE = 'check_violation';
+                    IF NEW.scheduled_at < sitting.starts_at OR NEW.scheduled_at >= sitting.ends_at THEN
+                        RAISE EXCEPTION 'An interview is scheduled within its sitting' USING ERRCODE = 'check_violation';
                     END IF;
 
                     IF NEW.held_at IS NOT NULL AND NEW.held_at < sitting.starts_at THEN
@@ -209,7 +217,7 @@ return new class extends Migration
         DB::unprepared('CREATE TRIGGER interviews_within_sitting BEFORE INSERT OR UPDATE OF sitting_id, scheduled_at, held_at ON interviews FOR EACH ROW EXECUTE FUNCTION interviews_within_sitting()');
     }
 
-    /** A sitting keeps its kind, and cannot start after an interview booked or held in it. */
+    /** A sitting keeps its kind, cannot start after an interview booked or held in it, nor end before one booked. */
     private function sittingTriggers(): void
     {
         DB::unprepared(<<<'SQL'
@@ -225,6 +233,10 @@ return new class extends Migration
                         WHERE sitting_id = NEW.id AND (scheduled_at < NEW.starts_at OR held_at < NEW.starts_at)
                     ) THEN
                         RAISE EXCEPTION 'The sitting would start after an interview booked or held in it' USING ERRCODE = 'check_violation';
+                    END IF;
+
+                    IF NEW.ends_at < OLD.ends_at AND EXISTS (SELECT 1 FROM interviews WHERE sitting_id = NEW.id AND scheduled_at >= NEW.ends_at) THEN
+                        RAISE EXCEPTION 'The sitting would end before an interview booked in it' USING ERRCODE = 'check_violation';
                     END IF;
 
                     RETURN NEW;
@@ -336,6 +348,61 @@ return new class extends Migration
     }
 
     /**
+     * A staff account sits in one sitting at a time: checked at commit, for each member who is an account, when the
+     * member is written and when the sitting moves. Locked per account first, so two sittings committed at the same
+     * moment are checked one after the other. (A member entered by name alone is not checked: two people can share
+     * a name; the committee check above still catches the same committee twice.)
+     */
+    private function staffOverlapTriggers(): void
+    {
+        DB::unprepared(<<<'SQL'
+            CREATE OR REPLACE FUNCTION interview_staff_sittings_overlap(sitting uuid) RETURNS void AS
+            $$
+                DECLARE
+                    account uuid;
+                BEGIN
+                    FOR account IN SELECT DISTINCT staff_user_id FROM interview_members WHERE sitting_id = sitting AND staff_user_id IS NOT NULL ORDER BY staff_user_id LOOP
+                        PERFORM pg_advisory_xact_lock(hashtextextended('interview_staff:' || account::text, 0));
+
+                        IF EXISTS (
+                            SELECT 1
+                            FROM interview_sittings mine
+                            JOIN interview_sittings other ON other.id <> mine.id AND tstzrange(other.starts_at, other.ends_at) && tstzrange(mine.starts_at, mine.ends_at)
+                            JOIN interview_members m ON m.sitting_id = other.id AND m.staff_user_id = account
+                            WHERE mine.id = sitting
+                        ) THEN
+                            RAISE EXCEPTION 'interview_staff_overlap: staff user % already sits at that time', account USING ERRCODE = 'exclusion_violation';
+                        END IF;
+                    END LOOP;
+                END;
+            $$ LANGUAGE plpgsql
+            SQL
+        );
+        DB::unprepared(<<<'SQL'
+            CREATE OR REPLACE FUNCTION interview_members_staff_overlap() RETURNS trigger AS
+            $$
+                BEGIN
+                    PERFORM interview_staff_sittings_overlap(NEW.sitting_id);
+                    RETURN NULL;
+                END;
+            $$ LANGUAGE plpgsql
+            SQL
+        );
+        DB::unprepared(<<<'SQL'
+            CREATE OR REPLACE FUNCTION interview_sittings_staff_overlap() RETURNS trigger AS
+            $$
+                BEGIN
+                    PERFORM interview_staff_sittings_overlap(NEW.id);
+                    RETURN NULL;
+                END;
+            $$ LANGUAGE plpgsql
+            SQL
+        );
+        DB::unprepared('CREATE CONSTRAINT TRIGGER interview_members_staff_overlap AFTER INSERT OR UPDATE OF sitting_id, staff_user_id ON interview_members DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.staff_user_id IS NOT NULL) EXECUTE FUNCTION interview_members_staff_overlap()');
+        DB::unprepared('CREATE CONSTRAINT TRIGGER interview_sittings_staff_overlap AFTER UPDATE OF starts_at, ends_at ON interview_sittings DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION interview_sittings_staff_overlap()');
+    }
+
+    /**
      * A member who is a staff account has the account's name, as the application shows it (each name with its first
      * letter capitalised): set here on every write, so it can never differ. When the account is renamed, the
      * members of sittings without a recorded result follow; a sitting with a result keeps the names it was held
@@ -391,10 +458,11 @@ return new class extends Migration
         Schema::dropIfExists('interviews');
         Schema::dropIfExists('interview_sittings');
 
-        foreach (['interviews_never_deleted', 'interviews_within_sitting', 'interview_sittings_guard', 'interview_sittings_have_members', 'interview_members_keep_one', 'interview_members_frozen', 'interview_members_key_sitting', 'interview_members_staff_name', 'staff_users_rename_members'] as $function) {
+        foreach (['interviews_never_deleted', 'interviews_within_sitting', 'interview_sittings_guard', 'interview_sittings_have_members', 'interview_members_keep_one', 'interview_members_frozen', 'interview_members_key_sitting', 'interview_members_staff_overlap', 'interview_sittings_staff_overlap', 'interview_members_staff_name', 'staff_users_rename_members'] as $function) {
             DB::unprepared("DROP FUNCTION IF EXISTS {$function}()");
         }
         DB::unprepared('DROP FUNCTION IF EXISTS interview_sitting_needs_members(uuid)');
+        DB::unprepared('DROP FUNCTION IF EXISTS interview_staff_sittings_overlap(uuid)');
         DB::unprepared('DROP FUNCTION IF EXISTS interview_committee_key(uuid)');
         DB::unprepared('DROP FUNCTION IF EXISTS interview_text_key(text)');
         DB::unprepared('DROP FUNCTION IF EXISTS staff_user_display_name(text, text)');

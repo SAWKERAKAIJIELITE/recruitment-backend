@@ -18,10 +18,10 @@ trait ExamTestHelpers
     /** Questions per difficulty that planContent() asks of every exam subject or part. */
     protected array $askedQuestions = ['easy' => 2, 'medium' => 2, 'hard' => 1];
 
-    /** A user who prepares exams (system_admin holds exam_bank.manage). */
+    /** A user who prepares exams (the Exams and Interviews office holds exam_bank.manage). */
     protected function examManager(): StaffUser
     {
-        return StaffUserFactory::new()->withRole('system_admin')->create();
+        return StaffUserFactory::new()->withRole('exams_interviews')->create();
     }
 
     protected function subject(string $name = 'الحديث النبوي'): ExamSubject

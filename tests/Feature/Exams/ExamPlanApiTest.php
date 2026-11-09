@@ -369,9 +369,11 @@ class ExamPlanApiTest extends TestCase
     {
         $position = $this->position();
         $plan = $this->publishedPlan($position, $this->planContent([$this->subject()]));
-        $staff = StaffUserFactory::new()->withRole('recruitment_staff')->create();
+        $staff = StaffUserFactory::new()->withRole('general_manager')->create();
 
         $this->asStaff($staff)->getJson(self::URL."/{$plan->id}")->assertOk();
+        // Recruitment sees whether a candidate took the exam, not the plans (another office's section, D-085).
+        $this->asStaff(StaffUserFactory::new()->withRole('recruitment')->create())->getJson(self::URL."/{$plan->id}")->assertForbidden();
         $this->asStaff($staff)->postJson(self::URL, ['job_position_id' => $position->id])->assertForbidden();
         $this->asStaff($staff)->postJson(self::URL."/{$plan->id}/publish")->assertForbidden();
         $this->asStaff($staff)->getJson(self::URL."/{$plan->id}/readiness")->assertForbidden();

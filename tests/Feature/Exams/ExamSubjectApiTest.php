@@ -106,15 +106,18 @@ class ExamSubjectApiTest extends TestCase
             ->assertOk()->assertJsonPath('data.name_ar', 'الحديث الشريف');
     }
 
-    public function test_hiring_staff_and_the_general_manager_read_only_exam_bank_managers_change(): void
+    public function test_the_general_manager_reads_only_exam_bank_managers_change(): void
     {
         $subject = $this->subject();
+        $user = StaffUserFactory::new()->withRole('general_manager')->create();
 
-        foreach (['recruitment_staff', 'general_manager'] as $role) {
-            $user = StaffUserFactory::new()->withRole($role)->create();
-            $this->asStaff($user)->getJson(self::URL)->assertOk();
-            $this->asStaff($user)->postJson(self::URL, ['name_ar' => 'مادة'])->assertForbidden();
-            $this->asStaff($user)->deleteJson(self::URL."/{$subject->id}")->assertForbidden();
+        $this->asStaff($user)->getJson(self::URL)->assertOk();
+        $this->asStaff($user)->postJson(self::URL, ['name_ar' => 'مادة'])->assertForbidden();
+        $this->asStaff($user)->deleteJson(self::URL."/{$subject->id}")->assertForbidden();
+
+        // The other offices do not see the exams section (D-085).
+        foreach (['recruitment', 'contracts', 'documenting'] as $role) {
+            $this->asStaff(StaffUserFactory::new()->withRole($role)->create())->getJson(self::URL)->assertForbidden();
         }
 
         $this->asStaff(StaffUserFactory::new()->create())->getJson(self::URL)->assertForbidden();

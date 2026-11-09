@@ -11,6 +11,7 @@ use App\Modules\Exams\Models\ExamPlanVersion;
 use App\Modules\Exams\Models\ExamQuestion;
 use App\Modules\Exams\Models\ExamSession;
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
+use App\Modules\Identity\Enums\StaffRole;
 use App\Modules\Imports\Models\ImportBatch;
 use App\Modules\Imports\Models\ImportRow;
 use App\Modules\Interviews\Models\Interview;
@@ -49,10 +50,11 @@ class StaffUser extends Authenticatable
         'is_active',
         // 'must_change_password',
     ];
+    // role_id is not mass assignable: it changes only through RegisterStaffUser and ManageStaffAccess.
 
     protected $hidden = ['password'];
 
-    /** Per-request cache of effective permission slugs. */
+    /** Per-request cache of the permission slugs. */
     private ?Collection $permissionSlugCache = null;
 
     protected function casts(): array
@@ -63,6 +65,7 @@ class StaffUser extends Authenticatable
             // 'must_change_password' => 'boolean',
             'last_login_at' => 'datetime',
             'deactivated_at' => 'datetime',
+            'role_assigned_at' => 'datetime',
         ];
     }
 
@@ -93,29 +96,21 @@ class StaffUser extends Authenticatable
         return $this->belongsTo(self::class, 'deactivated_by');
     }
 
-    /**
-     * The user's roles. `automatic`: added by the system because every permission of the role is granted to the
-     * user directly (its `note` says so); a role given by hand is not.
-     */
-    public function roles(): BelongsToMany
+    /** The user's one role: an office, the general manager or the system administrator (D-085). */
+    public function role(): BelongsTo
     {
-        return $this->belongsToMany(Role::class, 'role_staff_user')->withPivot(['automatic', 'note', 'assigned_by', 'created_at']);
+        return $this->belongsTo(Role::class, 'role_id');
     }
 
-    /** Direct per-user overrides (grant or deny), with a note when the system acted on them. */
-    public function permissions(): BelongsToMany
+    public function roleAssigner(): BelongsTo
     {
-        return $this->belongsToMany(Permission::class, 'permission_staff_user')
-            ->withPivot(['is_granted', 'granted_by', 'note'])
-            ->withTimestamps();
+        return $this->belongsTo(self::class, 'role_assigned_by');
     }
 
-    /**
-     * Effective permissions = (permissions from roles + direct grants) - direct denials.
-     */
+    /** The user's permissions: those of the role (every one for the system administrator); none without a role. */
     public function permissionSlugs(): Collection
     {
-        return $this->permissionSlugCache ??= $this->resolvePermissionSlugs();
+        return $this->permissionSlugCache ??= $this->role?->grantedSlugs() ?? collect();
     }
 
     public function hasPermission(string $slug): bool
@@ -123,22 +118,16 @@ class StaffUser extends Authenticatable
         return $this->permissionSlugs()->contains($slug);
     }
 
+    /** True when the user holds the role (an office, the general manager or the administrator). */
+    public function holdsRole(StaffRole $role): bool
+    {
+        return $this->role?->slug === $role->value;
+    }
+
     public function forgetPermissionCache(): void
     {
         $this->permissionSlugCache = null;
-    }
-
-    private function resolvePermissionSlugs(): Collection
-    {
-        $fromRoles = $this->roles()->with('permissions')->get()
-            ->flatMap(fn(Role $role) => $role->permissions->pluck('slug')->all())
-            ->all();
-
-        $direct = $this->permissions()->get();
-        $granted = $direct->filter(fn($p) => (bool) $p->pivot->is_granted)->pluck('slug')->all();
-        $denied = $direct->reject(fn($p) => (bool) $p->pivot->is_granted)->pluck('slug')->all();
-
-        return collect($fromRoles)->merge($granted)->unique()->diff($denied)->values();
+        $this->unsetRelation('role');
     }
 
     /** Every device this user has ever owned (history, including revoked ones). */

@@ -25,7 +25,8 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
  * LOCAL DEVELOPMENT ONLY. Three import batches built from generated workbooks in the legacy template's
  * layout, each through the real actions (the files are kept on the imports disk like real uploads):
  *
- * - approved: six new people, uploaded by "staff" and approved by "manager" (four eyes, D-047);
+ * - approved: six new people, uploaded by "staff" and approved by "staff.two" of Recruitment too (four eyes, D-047);
+ *   they wait as received (D-087)
  * - pending: one row of every kind the reviewer meets (valid, a known person nominated again, a person whose
  *   name differs from the file on record, a person with a live application, an unknown list value, a bad
  *   phone, a duplicate in the file);
@@ -69,7 +70,7 @@ class ImportsDemoSeeder extends Seeder
 
         $references = new DemoReferences;
         $staff = StaffUser::query()->where('username', 'staff')->firstOrFail();
-        $manager = StaffUser::query()->where('username', 'manager')->firstOrFail();   // holds imports.approve
+        $manager = StaffUser::query()->where('username', 'staff.two')->firstOrFail();   // Recruitment, not the uploader
         $now = CarbonImmutable::now();
 
         try {

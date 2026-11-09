@@ -26,6 +26,8 @@ class UpdateSittingRequest extends FormRequest
              */
             'kind' => ['prohibited'],
             'starts_at' => ['sometimes', 'date'],
+            /** After the start (the new one, or the current), at most 24 hours later; not before a booked interview. */
+            'ends_at' => ['sometimes', 'date'],
             'location' => ['sometimes', 'string', 'min:2', 'max:300'],
             /** A committee sitting keeps a name; a one-off sitting may drop it (null). */
             'committee_name' => ['sometimes', 'nullable', 'string', 'min:2', 'max:150'],

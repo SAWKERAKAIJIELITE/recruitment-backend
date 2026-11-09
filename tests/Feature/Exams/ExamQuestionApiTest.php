@@ -151,7 +151,7 @@ class ExamQuestionApiTest extends TestCase
         $this->stockBank($this->subject(), null, 1);
         $id = ExamQuestion::query()->value('id');
 
-        foreach (['recruitment_staff', 'general_manager'] as $role) {
+        foreach (['recruitment', 'general_manager', 'contracts'] as $role) {
             $user = StaffUserFactory::new()->withRole($role)->create();
             $this->asStaff($user)->getJson(self::URL)->assertForbidden();
             $this->asStaff($user)->getJson(self::URL."/{$id}")->assertForbidden();

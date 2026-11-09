@@ -16,8 +16,8 @@ use Illuminate\Validation\ValidationException;
 /**
  * Exam sessions (D-056, D-073): created on a published plan with the plan's duration, a late window and a password;
  * its questions are drawn at once. Until it starts, its start, place, late window and questions can change.
- * The password and notes can change at any time. An extension adds time for everyone still sitting (individual
- * permission attempts.extend). A session nobody was booked into can be deleted.
+ * The password and notes can change at any time. An extension adds time for everyone still sitting
+ * (permission attempts.extend). A session nobody was booked into can be deleted.
  */
 class ManageExamSessions
 {
@@ -114,7 +114,7 @@ class ManageExamSessions
     }
 
     /**
-     * More time for everyone (individual permission attempts.extend, with a reason): the session ends later, and
+     * More time for everyone (permission attempts.extend, with a reason): the session ends later, and
      * every attempt still running gets the same minutes on its deadline (each move recorded on the attempt). Given
      * before the session ends; attempts already closed stay closed.
      */

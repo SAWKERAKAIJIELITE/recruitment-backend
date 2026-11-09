@@ -22,7 +22,8 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 /**
  * Exam and interview results for candidates (D-066): a PDF statement of one application, and a list of many as Excel
  * or PDF. They show results, dates and the committee's grades; never the committee's notes or summary, nor any
- * reason. Reading: reports.view, candidates.manage or interviews.manage. Every export is audited.
+ * reason. Reading: applications.view (Recruitment, who talks to the candidates, and the general manager; D-086). Every
+ * export is audited.
  */
 class ResultsReportController extends Controller
 {

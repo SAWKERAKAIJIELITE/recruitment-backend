@@ -127,7 +127,7 @@ A living record of the design decisions made while building the backend and data
 
 ### D-020 Access management API; the database owns RBAC data after first run
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by D-085 (one role per user, no personal overrides; the administrator's role holds everything and is not edited, the general manager's takes read-only permissions only)
 - **Decision:** administrators (permission `users.manage`) manage access through the API: add or remove permissions of a role; assign or remove roles of a staff user; grant, deny or clear a personal permission override. Rules enforced in the services: `individual_only` permissions are refused for roles; every change runs in a transaction and is rolled back if it would leave **no active staff user able to manage users**; removing something that is not attached returns 404; every change is logged through `AccessLog` (audit table to follow). `RolesAndPermissionsSeeder` creates the catalogue and gives a role its defaults **only when the role is first created**; it never overwrites changes made later.
 - **Why:** once access is editable at runtime, a seeder that re-syncs roles would silently undo administrators' work on every deploy. The "someone must remain able to manage users" rule prevents lock-out that could only be repaired by editing the database.
 - **Consequence:** a permission introduced in a later step must be attached to roles explicitly (one-off migration or API call), not by re-running the seeder.
@@ -418,7 +418,7 @@ A living record of the design decisions made while building the backend and data
 
 ### D-047 Approving an import is a separate, individual permission (four eyes)
 
-- **Status:** Accepted (owner's rule: "a staff can import an excel file but it needs approval before it can be adopted")
+- **Status:** Accepted (owner's rule: "a staff can import an excel file but it needs approval before it can be adopted"); amended by D-085: `imports.approve` is the Recruitment office's, no longer individual, and the uploader still never approves.
 - **Decision:** new permission `imports.approve`, individual-only (granted per user, never by a role). `imports.manage` uploads, corrects, reviews, excludes and cancels; `imports.approve` approves; either may read batches, rows, the original and the report. Whoever uploaded a batch can never approve it, even holding `imports.approve` (403).
 - **Why:** an import creates many people and applications at once; a second person checking the batch before it takes effect is the control the owner asked for.
 
@@ -631,7 +631,7 @@ A living record of the design decisions made while building the backend and data
 
 ### D-070 Roles follow the direct permissions
 
-- **Status:** Accepted (owner, Step 10: "direct grant of all role's permissions to a staff that has different role means automatically adding this new role to the staff, and add note column for that, permissions stays as direct grant not from role except if adding this role manually. Same for denying all staff role's permissions means removing that role from him, and add note for that, these permissions stays as direct deny except if adding this role manually means adding permissions as role's permissions"). Amends D-020.
+- **Status:** Superseded by D-085 (one role per user, no personal permissions). Was accepted (owner, Step 10: "direct grant of all role's permissions to a staff that has different role means automatically adding this new role to the staff, and add note column for that, permissions stays as direct grant not from role except if adding this role manually. Same for denying all staff role's permissions means removing that role from him, and add note for that, these permissions stays as direct deny except if adding this role manually means adding permissions as role's permissions"). Amends D-020.
 - **Decision:**
   - When a user's direct grants hold every permission of a role they do not have, the role is added to them **automatically** (`role_staff_user.automatic`, with a `note` saying why). The grants stay direct. The role stays exactly while all of them are granted: clearing or denying one of them removes it again. Taking an automatic role away by hand takes those grants away too, otherwise it would come straight back.
   - When a user's direct denials cover every permission of a role they hold, the role is removed, and each of those denials gets a `note` (`permission_staff_user.note`) naming the role. The denials stay.
@@ -782,6 +782,83 @@ A living record of the design decisions made while building the backend and data
     - The applications' numeric CHECKs refuse negatives.
     - Documents and the audit log refuse TRUNCATE.
     - Workbooks are checked by content type and by every relationship (renamed or moved macro, object, link and connection parts are refused, and any outside target but a hyperlink). Each part's declared size is capped. The parts read are found as the reader finds them. An .xls is refused for Excel 4 auto-run names and embedded objects as well as VBA.
+
+### D-084 Sittings have an end; overlaps instead of duplicates
+
+- **Status:** Accepted (owner, Step 12)
+- **Context:** a duplicate sitting was refused only with the same start, place and members, so the same sitting entered with its start 30 seconds later passed, and the same committee could sit in two rooms at once. A sitting had no end, so nothing said when it was over.
+- **Decision:**
+  - A sitting has `ends_at` (required; after `starts_at`, within 24 hours; CHECK). Every interview's `scheduled_at` is in `[starts_at, ends_at)` (trigger; 422 `after_sitting_end`). The sitting cannot end at or before a booked interview (422 `sitting_before_bookings`; trigger), as it could not start after one.
+  - Once a sitting has ended (now ≥ `ends_at`), nothing is booked or rescheduled into it (422 `sitting_ended` on `sitting_id`, or `sitting` for bulk booking), and its waiting interviews are not moved out of it (422 `interview_sitting_ended` on `interview`): they are recorded, absent if the candidate did not come, or cancelled. An absent candidate comes back through an accepted excuse. Marking them absent automatically is deferred.
+  - The same committee (`committee_key`) cannot sit at overlapping times anywhere: an exclusion constraint `interview_sittings_no_overlap` (`committee_key WITH =`, `tstzrange(starts_at, ends_at) WITH &&`; `btree_gist`), checked at commit when the key is filled. It replaces the unique index on start, place and members. 422 `duplicate_sitting` (with the other's id) before saving; `duplicate_sitting_now` when another user committed it at the same moment.
+  - A staff account is a member of one sitting at a time: checked before saving (422 `staff_overlap` on `members`, with the member's name and the other sitting) and at commit by a deferred trigger, locked per account (`staff_overlap_now`). Members entered by name alone are not checked one by one: two people can share a name.
+  - Sittings show `ends_at` and `ended`; the list takes `open` (1: not ended yet; 0: ended).
+  - The interview queue takes `excused` (desc: applications back after an accepted interview excuse first; asc: last). It reads the application's latest status event.
+- **Also in Step 12 (owner's review):**
+  - Bulk booking returns the booked interviews with their relations loaded on them (one query a relation), not read again.
+  - `ApplicationSearch`: each list filter, and `birth_place_id`, must exist in its table (`Rule::exists`); `quran_parts_*` are 0 to 30 and `studying_years*` 0 to 15, as the columns' CHECKs.
+  - The audit log's `related_id` searches `related_ids` (text[], GIN index), filled by `AuditTrail` from the context's `id`, `*_id`, `*_ids` and the acting candidate. Searching every JSON value with `jsonb_each_text` could not use the GIN index on `context`. Its filters test `isset`, so a filter of "0" still filters. Its `actor` is a short summary (id, personal number, username, name, active), without the actor's roles and permissions (eager loading only `actor`).
+  - IP columns are `inet` (`audit_events.ip`, `exam_attempts.start_ip`, `exam_answer_revisions.ip`), as `staff_users.ip_address` was.
+
+### D-085 Offices: one role per staff user, no personal permissions
+
+- **Status:** Accepted (owner, Step 13: "recruitment staffs are separated by offices (Recruitment, Exams and Interviews, Contracts, Documenting), each staff has all control over his section only, he didn't see other's data"; "general Manager has views permissions only"; "Admin can do all other staffs can do"; "the individual only permissions no longer needed"; the Documenting office owns the documents section). Supersedes D-070, and the individual-only permissions of D-037, D-047, D-059, D-063 and D-075; amends D-020 and D-057.
+- **Decision:**
+  - Every staff user holds **one** role (`staff_users.role_id`, with who gave it and when): an office, the general manager or the system administrator. `PUT /users/{id}/role` replaces it (422 when nobody active would be left able to manage users). The per-user grants and denials (`permission_staff_user`), the many-to-many `role_staff_user`, the automatic roles of D-070 and `individual_only` are gone. A user's permissions are their role's.
+  - The offices and their default permissions:
+    - **Recruitment** (`recruitment`): `applications.view` (the full file), `candidates.manage` (people, applications, the managed lists), `applications.start`, `applications.close`, `imports.view`, `imports.manage`, `imports.approve`.
+    - **Exams and Interviews** (`exams_interviews`): `exams.view`, `exam_bank.manage`, `exams.manage`, `attempts.extend`, `exam_results.correct`, `pass_policies.manage`, `exceptions.approve` (exam exceptions and excuses, interview excuses), `interviews.view`, `interviews.manage`, `interviews.correct`.
+    - **Contracts** (`contracts`): `contracts.view` (contracts and vacancies), `contracts.manage` (also the contract types list, and the documents of an application, like its contract).
+    - **Documenting** (`documenting`): `documents.view`, `documents.manage` (documents and their types).
+    - Each office also has `audit.view_related`: the operations of its own sections only (D-086).
+  - The **general manager** holds every read-only permission (`permissions.read_only`: the `*.view` ones, `reports.view`, `audit.view`), and the role takes no other (422). Not the question bank: it holds the answers.
+  - The **system administrator** holds every permission, always: computed, not stored, so a permission added later is the administrator's at once; its role is not edited (422). Only it holds `users.manage`, `users.add`, `devices.approve` and `vacancies.manage` by default.
+  - Two eyes stay where they were: the uploader of an import never approves it (D-047), now within Recruitment.
+- **Why:** the owner's offices; one role per user says plainly which section someone works in.
+- **Consequences:** an approval or an exception is no longer a separate person's permission: everyone in the office holds it. The routes check the section's permission (`exams.view` instead of "exam bank, candidates or reports"), so the other offices get 403 on another section.
+
+### D-086 What each office sees
+
+- **Status:** Accepted (owner, Step 13: "the recruitment officer doesn't see exams plans, questions... but of course he sees whether candidate takes the exam, or write contract"; the other offices see who the candidate is only)
+- **Decision:**
+  - The full application file (phone, residence, health, education, notes, history) and the people are Recruitment's and the general manager's (`applications.view`). The other offices read `GET /applications` and `GET /applications/{id}` as identity only: id, nomination number, status, job position, the candidate's name and national number (`ApplicationIdentityResource`), and filter by identity only (`q`, `national_number`, `status`, `live`, `job_position_id`, `import_batch_id`, `from`, `to`; any other is 422). The exam and interview queues show the same identity, whatever their filters and priorities use.
+  - Recruitment sees where every application stands (its status and history), not the other sections' records: exam plans, sessions and questions, interview sittings, contracts and vacancies, documents are 403 to it.
+  - Reports are their section's: the applications report and the results for the candidates (statement and list) with `applications.view`; the exams reports with `exams.view`; the interviews reports with `interviews.view`; the dashboard and the whole workbook with `reports.view` (the general manager, the administrator). The شعبة التجنيد list stays `candidates.manage`.
+  - The audit log with `audit.view_related` shows the operations of the user's sections: Recruitment `application.`, `candidate.`, `import.` and its reports; Exams and Interviews `exam*` and `interview*`; Contracts `contract.` and `vacancy_plan.`; Documenting `document*`.
+  - The Contracts office reaches the documents of an application (its contract): it reads, uploads, downloads and archives them; a person's documents (ID card, certificates) are 403 to it.
+- **Why:** the owner's separation; Recruitment is the only office that talks to the candidates, so their contact details stay with it.
+
+### D-087 Received applications; Recruitment starts the lifecycle
+
+- **Status:** Accepted (owner, Step 13: "the recruitment officer can filter applications and make them start the lifecycle when importing applications excel")
+- **Decision:**
+  - A new first status `received` (مستلم بانتظار البدء). Every application opens received, by hand or from an approved import; a new decision type `started` moves it to `awaiting_exam`, with the staff user and no reason (CHECKs: only `created` reaches received, `started` goes only to awaiting_exam and has an actor). A received application can be closed. It is live: the person has an application.
+  - `POST /applications/{id}/start` starts one. `POST /applications/start` starts many, all or none in one transaction: `application_ids` (up to 1,000, each received, else 422 naming the others), or `filters` (the applications list's filters, without status, sort or paging) applied to the received applications, up to 5,000 (422 beyond, or when none matches). `filters.import_batch_id` picks an import's applications; the list takes `import_batch_id` too. One insert writes the events.
+  - `POST /applications` takes `start: true` to start at once (needs `applications.start`).
+- **Consequences:** an approved import no longer puts anyone in the exam queue: Recruitment starts the applications it chose. Document types required from `awaiting_exam` are required once an application starts.
+
+### D-088 Vacancies
+
+- **Status:** Accepted (owner, Step 13: "Admin upload a vacancies file who determines how many contracts allowed to be written under specific job position along specific duration (3 months) after that new vacancies file may be provided"; first contracts use a vacancy, renewals do not, a first contract is refused without one)
+- **Decision:**
+  - The system administrator (`vacancies.manage`) uploads an Excel file (`POST /vacancy-plans`: `file`, `starts_on`, default today, `notes`): the first sheet, a header row with «المسمى الوظيفي» and «عدد الشواغر» (or their usual variants) in the first 20 rows, then a job position per row (matched to the list in any spelling) and a whole number of vacancies. Checked like an import (D-045: no macros, external links, zip bombs; formulas refused). Every problem is reported with its row; one refuses the file. A total row is skipped. A job position missing from the file has no vacancy.
+  - A plan covers three months from `starts_on` (`contracts.vacancy_months`), and plans in force never overlap (exclusion constraint on `daterange`). A plan is corrected by replacing it (`POST /vacancy-plans/{id}/replace`) while its period has not ended: the new file takes the same period at once; the replaced plan stays, marked. Plans and their items are never edited or deleted (triggers); the original file is kept.
+  - A first contract is written only when the plan covering its writing day has a vacancy left for the application's job position: 422 on `vacancies` otherwise (no plan, or used ≥ allowed). Renewals use none. Correcting a first contract's writing day checks that day too. The database checks the same (trigger, locking the plan's item, so two contracts at the same moment take the last vacancy once), and an application with a contract keeps its job position (trigger; 422 on the API).
+  - The Contracts office and the general manager read the plans (`contracts.view`): every plan, the current one (`GET /vacancy-plans/current`, null when none covers today), each position's vacancies, used and left, and the original file.
+- **Consequences:** no first contract can be written until the administrator has uploaded the vacancies covering its day. A replaced plan's numbers can be below what was already written: nothing is undone, the position just has none left.
+
+### D-089 The offices are told when applications move
+
+- **Status:** Accepted (owner, Step 13: "recruitment staffs receive notifications when applications reach their section… when interview officer record interview result then the recruitment officer receive notification… also the Contract officer receives that application and notified"; "the recruitment officer is the only one who communicates with candidates so he must know when the application lifecycle moved")
+- **Decision:**
+  - Every status event is handed to `LifecycleNotices` inside its transaction and told only once it commits (a rolled-back move, or one in a rolled-back savepoint, is never told). The moves of one commit are grouped by move (from, to, decision, staff user): each group is **one** notification per recipient, with the count and up to 50 applications (id, nomination number, name). The exam sweep, which commits one booking at a time, is told together at its end. A notification that fails to send is logged; the move stands.
+  - Recipients: the Recruitment office for every move; the office whose section the application reaches (received, contract_ended, closed: Recruitment; the exam and interview statuses: Exams and Interviews; awaiting_contract, contract_written: Contracts); the Documenting office when a document type is required from the new status. Never the staff user who made the move, nor the general manager or the administrator, nor inactive users.
+  - Database notifications of kind `applications_moved` (D-065's endpoints): `from_status`, `to_status`, `to_status_label`, `decision_type`, `count`, `applications`, `actor`.
+
+### D-090 Also in Step 13
+
+- **Status:** Accepted
+- **Decision:** the contract types list is changed by the Contracts office (`contracts.manage`), the other lists by Recruitment (`candidates.manage`); 403 for another office. The demo has an account per role (`staff`, `staff.two` of Recruitment, `exams`, `contracts`, `documents`, `manager`, `admin`) and vacancies files covering the demo contracts.
 
 ---
 

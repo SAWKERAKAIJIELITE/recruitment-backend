@@ -113,7 +113,7 @@ class SeedersTest extends TestCase
 
         $this->assertSame(0, DB::table('application_status_events')->where('occurred_at', '>', now())->count());
         $this->assertSame(0, DB::table('application_status_events')->whereColumn('occurred_at', '<>', 'created_at')->count());
-        $this->assertSame(['closure', 'created', 'exception', 'excuse_accepted', 'outcome'], DB::table('application_status_events')->distinct()->orderBy('decision_type')->pluck('decision_type')->all());
+        $this->assertSame(['closure', 'created', 'exception', 'excuse_accepted', 'outcome', 'started'], DB::table('application_status_events')->distinct()->orderBy('decision_type')->pluck('decision_type')->all());
         $this->assertSame(0, DB::table('application_status_events')->whereIn('decision_type', ['closure', 'exception', 'excuse_accepted'])->where(fn($q) => $q->whereNull('reason')->orWhereNull('actor_id'))->count());
     }
 

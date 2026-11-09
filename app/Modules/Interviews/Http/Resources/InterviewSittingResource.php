@@ -16,6 +16,10 @@ class InterviewSittingResource extends JsonResource
             /** committee, or one_off: a single interviewer who sees the candidates one by one. */
             'kind' => $this->kind->value,
             'starts_at' => $this->starts_at->toIso8601String(),
+            /** Interviews are booked before it; once it has passed, nothing is booked or moved into it. */
+            'ends_at' => $this->ends_at->toIso8601String(),
+            /** Its end has passed. */
+            'ended' => $this->hasEnded(),
             'location' => $this->location,
             'committee_name' => $this->committee_name,
             'notes' => $this->notes,

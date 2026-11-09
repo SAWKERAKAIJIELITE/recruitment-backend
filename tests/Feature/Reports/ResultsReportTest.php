@@ -50,7 +50,7 @@ class ResultsReportTest extends TestCase
         $lifecycle->move($application, S::AwaitingInterview, D::Exception, $this->staff, self::REASON);
 
         $this->travelTo('2026-10-10 09:00:00');
-        $sitting = app(ManageSittings::class)->create(['starts_at' => '2026-10-10 08:00:00', 'location' => 'القاعة 2', 'committee_name' => 'لجنة'], [['name' => 'رئيس', 'capacity' => 'chair']], $this->staff);
+        $sitting = app(ManageSittings::class)->create(['starts_at' => '2026-10-10 08:00:00', 'ends_at' => '2026-10-10 14:00:00', 'location' => 'القاعة 2', 'committee_name' => 'لجنة'], [['name' => 'رئيس', 'capacity' => 'chair']], $this->staff);
         $interviews = app(ManageInterviews::class);
         $interview = $interviews->schedule($application, ['sitting_id' => $sitting->id], $this->staff);
         $interviews->record($interview, ['result' => 'passed', 'scientific_grade' => 'excellent', 'general_grade' => 'good', 'overall_grade' => 'very_good', 'notes' => self::NOTE, 'committee_summary' => self::NOTE], $this->staff);
@@ -168,5 +168,8 @@ class ResultsReportTest extends TestCase
 
         $this->asStaff(StaffUserFactory::new()->withRole('general_manager')->create())->get('/api/v1/staff/reports/results')->assertOk();
         $this->asStaff(StaffUserFactory::new()->create())->getJson("/api/v1/staff/applications/{$application->id}/results-statement")->assertForbidden();
+        // For the candidates: Recruitment talks to them, the other offices do not (D-086).
+        $this->asStaff($this->hiringStaff())->get("/api/v1/staff/applications/{$application->id}/results-statement")->assertOk();
+        $this->asStaff($this->examsStaff())->getJson("/api/v1/staff/applications/{$application->id}/results-statement")->assertForbidden();
     }
 }

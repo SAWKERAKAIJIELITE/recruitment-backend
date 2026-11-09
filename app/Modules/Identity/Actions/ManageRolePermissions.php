@@ -2,39 +2,36 @@
 
 namespace App\Modules\Identity\Actions;
 
+use App\Modules\Identity\Enums\StaffRole;
 use App\Modules\Identity\Models\Permission;
 use App\Modules\Identity\Models\Role;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Identity\Support\AccessInvariants;
 use App\Modules\Identity\Support\AccessLog;
-use App\Modules\Identity\Support\AutomaticRoles;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Add or remove permissions of a ROLE (everyone holding the role is affected). Automatic roles are checked again for
- * everyone (D-070): a user whose direct grants no longer cover the role loses it, one whose grants now do gains it.
+ * Add or remove permissions of a ROLE (everyone holding the role is affected; D-020, D-085). The system administrator
+ * holds every permission and is not edited; the general manager's role holds read-only permissions only.
  */
 class ManageRolePermissions
 {
     /** @param  list<string>  $permissionSlugs */
     public function add(Role $role, array $permissionSlugs, StaffUser $actor): Role
     {
+        $this->assertEditable($role);
         $permissions = Permission::whereIn('slug', $permissionSlugs)->get();
 
-        // The ✓* cells: these may only be granted to individual users, never to a whole role.
-        $individualOnly = $permissions->where('individual_only', true)->pluck('slug');
-
-        if ($individualOnly->isNotEmpty()) {
+        if ($role->slug === StaffRole::GeneralManager->value && $permissions->contains('read_only', false)) {
             throw ValidationException::withMessages([
-                'permissions' => ['These permissions can only be granted to individual users, not to roles: '.$individualOnly->implode(', ')],
+                'permissions' => [__('access.manager_views_only', ['permissions' => $permissions->where('read_only', false)->pluck('slug')->sort()->implode('، ')])],
             ]);
         }
 
         DB::transaction(function () use ($role, $permissions, $permissionSlugs, $actor) {
             AccessInvariants::serialize();
             $role->permissions()->syncWithoutDetaching($permissions->pluck('id')->all());
-            AutomaticRoles::syncEveryone($actor);
             AccessInvariants::ensureSomeoneCanManageUsers();
 
             AccessLog::record('role_permissions_added', $actor, ['role' => $role->slug, 'permissions' => $permissionSlugs]);
@@ -45,15 +42,23 @@ class ManageRolePermissions
 
     public function remove(Role $role, Permission $permission, StaffUser $actor): Role
     {
+        $this->assertEditable($role);
+
         DB::transaction(function () use ($role, $permission, $actor) {
             AccessInvariants::serialize();
             $role->permissions()->detach($permission->id);
-            AutomaticRoles::syncEveryone($actor);
             AccessInvariants::ensureSomeoneCanManageUsers();
 
             AccessLog::record('role_permission_removed', $actor, ['role' => $role->slug, 'permission' => $permission->slug]);
         });
 
         return $role->load('permissions');
+    }
+
+    private function assertEditable(Role $role): void
+    {
+        if ($role->isAdministrator()) {
+            throw ValidationException::withMessages(['role' => [__('access.administrator_holds_all')]]);
+        }
     }
 }

@@ -32,8 +32,9 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
  * The dashboard and the staff's reports (legacy workbook "نظام التوظيف والاختبارات والمقابلات"; analysis doc §16;
  * D-068). Every report takes the filters of the applications list (which applications) and a period (`year` with an
  * optional `month`, and/or `period_from` / `period_to`; each report says which date it compares). Exports carry the
- * title, period, date, issuer and filters, and their totals count the same rows; every export is audited. Reading:
- * reports.view, candidates.manage or interviews.manage.
+ * title, period, date, issuer and filters, and their totals count the same rows; every export is audited. Each report
+ * is its section's (D-086): the applications with applications.view, the exams with exams.view, the interviews with
+ * interviews.view, the dashboard and the workbook of all of them with reports.view.
  */
 class ReportController extends Controller
 {
@@ -49,6 +50,14 @@ class ReportController extends Controller
         'interviews-failed' => ['interviews', 'failed'],
         'interviews-absent' => ['interviews', 'absent'],
         'dashboard' => ['dashboard', null],
+    ];
+
+    /** table builder => the permission that reads it (its section's, D-086) */
+    private const READERS = [
+        'applications' => 'applications.view',
+        'exams' => 'exams.view',
+        'interviews' => 'interviews.view',
+        'dashboard' => 'reports.view',
     ];
 
     /**
@@ -82,6 +91,7 @@ class ReportController extends Controller
     public function export(Request $request, string $report): BinaryFileResponse|Response
     {
         abort_unless(isset(self::REPORTS[$report]), 404);
+        abort_unless($request->user()->hasPermission(self::READERS[self::REPORTS[$report][0]]), 403);
         $filters = ReportFilters::validate($request, ['format' => ['nullable', Rule::in(['xlsx', 'pdf'])], 'sitting_id' => ['nullable', 'uuid']]);
         $format = $filters['format'] ?? 'xlsx';
         $this->assertCountFits($report, $filters, $format);

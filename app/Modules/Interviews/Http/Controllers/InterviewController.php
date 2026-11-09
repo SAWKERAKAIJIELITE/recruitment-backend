@@ -25,9 +25,9 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 /**
- * Interviews (analysis doc §07, §08; D-059). Reading: interviews.manage, candidates.manage or reports.view.
+ * Interviews (analysis doc §07, §08; D-059). Reading: interviews.view.
  * Scheduling, rescheduling, cancelling and recording: interviews.manage. Correcting a recorded result:
- * interviews.correct (individual). Accepting an absence excuse: exceptions.approve (individual).
+ * interviews.correct. Accepting an absence excuse: exceptions.approve.
  */
 class InterviewController extends Controller
 {
@@ -96,7 +96,8 @@ class InterviewController extends Controller
      *
      * Only for an application awaiting its interview (passed the exams, or by exception), and one waiting interview at
      * a time. Book it into a sitting (`sitting_id`: a committee, or a one-off sitting's single interviewer), at the
-     * candidate's time `scheduled_at` (default: the sitting's start). 422 on `scheduled_at` before the sitting starts.
+     * candidate's time `scheduled_at` (default: the sitting's start). 422 on `scheduled_at` before the sitting starts
+     * or at or after its end, on `sitting_id` once the sitting has ended.
      */
     public function store(ScheduleInterviewRequest $request, Application $application, ManageInterviews $interviews): JsonResponse
     {
@@ -109,7 +110,9 @@ class InterviewController extends Controller
      * Reschedule an interview
      *
      * With a `reason` (kept in its reschedules). Another sitting (`sitting_id`; the time defaults to its start), a new
-     * time (`scheduled_at`; alone, in the same sitting), or both. 422 `same_appointment` when nothing changes.
+     * time (`scheduled_at`; alone, in the same sitting), or both, within the sitting's time. 422 `same_appointment`
+     * when nothing changes; 422 on `interview` once its sitting has ended (record it, absent if so, or cancel it), on
+     * `sitting_id` when the new sitting has ended.
      */
     public function reschedule(RescheduleInterviewRequest $request, Interview $interview, ManageInterviews $interviews): InterviewResource
     {
@@ -136,7 +139,7 @@ class InterviewController extends Controller
     /**
      * Correct a recorded result
      *
-     * Individual permission interviews.correct. Send the fields that change and a `reason`; a new revision keeps
+     * Permission interviews.correct. Send the fields that change and a `reason`; a new revision keeps
      * every version. A changed result moves the application with a correction event, only while that result is
      * still the application's latest decision (422 otherwise).
      */
@@ -148,7 +151,7 @@ class InterviewController extends Controller
     /**
      * Accept an interview absence excuse
      *
-     * Individual permission exceptions.approve. The application goes back to awaiting its interview; the absent
+     * Permission exceptions.approve. The application goes back to awaiting its interview; the absent
      * result stays. With `appointment`, the next round is booked in the same step and returned (otherwise 204).
      */
     public function excuse(InterviewExcuseRequest $request, Application $application, ManageInterviews $interviews): JsonResponse|InterviewResource

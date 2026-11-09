@@ -35,6 +35,11 @@ class UpdateApplication
             $locked->fill($changes);
             $dirty = $locked->getDirty();
 
+            // A written contract used this job position's vacancy (D-088): the database refuses the change too.
+            if (array_key_exists('job_position_id', $dirty) && DB::table('contracts')->where('application_id', $locked->id)->exists()) {
+                throw ValidationException::withMessages(['job_position_id' => [__('recruitment.position_after_contract')]]);
+            }
+
             if ($dirty !== []) {
                 $locked->save();
 

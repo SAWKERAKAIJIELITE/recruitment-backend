@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * More time for one attempt (analysis doc §06, §07: "duration, reason, attempt"; individual permission
+ * More time for one attempt (analysis doc §06, §07: "duration, reason, attempt"; permission
  * attempts.extend): a latecomer, a power cut at one desk. Only while it is running: a closed attempt is never
  * reopened. The previous and new deadline, who and why are kept.
  */

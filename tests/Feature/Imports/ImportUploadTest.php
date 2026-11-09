@@ -348,10 +348,12 @@ class ImportUploadTest extends TestCase
     public function test_imports_need_the_imports_permission(): void
     {
         $manager = StaffUserFactory::new()->withRole('general_manager')->create();
+        $exams = StaffUserFactory::new()->withRole('exams_interviews')->create();
 
         $this->asStaff($manager)->post(self::URL, ['file' => LegacyWorkbook::file([LegacyWorkbook::row()])], ['Accept' => 'application/json'])
             ->assertForbidden();
-        $this->asStaff($manager)->getJson(self::URL)->assertForbidden();
+        $this->asStaff($manager)->getJson(self::URL)->assertOk();   // the general manager reads (imports.view)
+        $this->asStaff($exams)->getJson(self::URL)->assertForbidden();   // another office's section
         $this->app['auth']->forgetGuards();
         $this->withoutToken()->post(self::URL, [], ['Accept' => 'application/json'])->assertUnauthorized();
     }

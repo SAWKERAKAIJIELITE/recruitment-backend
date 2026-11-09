@@ -27,16 +27,18 @@ use Illuminate\Support\Facades\Date;
  * interviews and contracts are added through their own modules (InterviewsDemoSeeder, ContractsDemoSeeder): this
  * seeder stops at awaiting_contract, and the contracts demo writes, renews and ends the contracts.
  *
- * Needs ReferenceDataSeeder and DevUsersSeeder (users "staff" and "manager"). Runs once: it stops if the
- * first demo person already exists.
+ * Needs ReferenceDataSeeder and DevUsersSeeder (users "staff" of Recruitment and "exams" of the Exams and Interviews
+ * office). Runs once: it stops if the first demo person already exists.
  */
 class RecruitmentDemoSeeder extends Seeder
 {
     /**
-     * Each scenario: the moves after the application is opened, and how many people follow it.
+     * Each scenario: the moves after the application is opened (received), and how many people follow it. Every
+     * scenario but `received` and `closed` starts the application first (D-087).
      * A move: [to status, decision type, reason for decisions made by a person].
      */
     private const SCENARIOS = [
+        'received' => [3, []],
         'awaiting_exam' => [8, []],
         'exam_failed' => [3, [[S::ExamFailed, D::Outcome]]],
         'exam_absent' => [2, [[S::ExamAbsent, D::Outcome]]],
@@ -48,7 +50,7 @@ class RecruitmentDemoSeeder extends Seeder
         'interview_absent_excused' => [1, [[S::AwaitingInterview, D::Outcome], [S::InterviewAbsent, D::Outcome], [S::AwaitingInterview, D::ExcuseAccepted, 'تعارض مع موعد امتحان جامعي']]],
         // Contracts are written for most of them by ContractsDemoSeeder.
         'awaiting_contract' => [9, [[S::AwaitingInterview, D::Outcome], [S::AwaitingContract, D::Outcome]]],
-        'closed' => [2, [[S::Closed, D::Closure, 'انسحب المرشح بطلب خطي']]],
+        'closed' => [2, [[S::Closed, D::Closure, 'انسحب المرشح بطلب خطي']]],   // before it started
         'closed_after_interview' => [1, [[S::AwaitingInterview, D::Outcome], [S::InterviewFailed, D::Outcome], [S::Closed, D::Closure, 'لا مجال لإعادة المقابلة']]],
     ];
 
@@ -70,32 +72,33 @@ class RecruitmentDemoSeeder extends Seeder
         }
 
         $references = new DemoReferences;
-        $staff = StaffUser::query()->where('username', 'staff')->firstOrFail();
-        $manager = StaffUser::query()->where('username', 'manager')->firstOrFail();   // holds exceptions.approve and applications.close
+        $staff = StaffUser::query()->where('username', 'staff')->firstOrFail();   // Recruitment: opens, starts, closes
+        $exams = StaffUser::query()->where('username', 'exams')->firstOrFail();   // Exams and Interviews: results, exceptions, excuses
 
         $start = CarbonImmutable::now()->subDays(self::DAYS_BACK)->setTime(9, 0);
+        $started = [S::AwaitingExam, D::Started];
         $index = 0;
 
         try {
-            foreach (self::SCENARIOS as [$count, $moves]) {
+            foreach (self::SCENARIOS as $scenario => [$count, $moves]) {
                 for ($i = 0; $i < $count; $i++) {
                     $index++;
-                    $this->follow($references, $index, $start->addDays($index * 2), $moves, $staff, $manager);
+                    $this->follow($references, $index, $start->addDays($index * 2), in_array($scenario, ['received', 'closed'], true) ? $moves : [$started, ...$moves], $staff, $exams);
                 }
             }
 
             // Nominated again: the first application was closed, a new one is live.
             $index++;
-            $first = $this->follow($references, $index, $start->addDays($index * 2), [[S::Closed, D::Closure, 'تقدم لمسمى آخر']], $staff, $manager);
-            $this->follow($references, $index, $first->addDays(5), [], $staff, $manager, ['job_position_id' => $references->entry('job_position_id', $index + 1)->id]);
+            $first = $this->follow($references, $index, $start->addDays($index * 2), [$started, [S::Closed, D::Closure, 'تقدم لمسمى آخر']], $staff, $exams);
+            $this->follow($references, $index, $first->addDays(5), [$started], $staff, $exams, ['job_position_id' => $references->entry('job_position_id', $index + 1)->id]);
 
             // Deactivated: the application ended, then the person was deactivated.
             $index++;
-            $ended = $this->follow($references, $index, $start->addDays($index * 2), [[S::Closed, D::Closure, 'تبين أنه يعمل لدى جهة أخرى']], $staff, $manager);
+            $ended = $this->follow($references, $index, $start->addDays($index * 2), [$started, [S::Closed, D::Closure, 'تبين أنه يعمل لدى جهة أخرى']], $staff, $exams);
             Date::setTestNow($ended->addDay());
             $this->activation->deactivate(
                 Candidate::query()->where('national_number', DemoPeople::nationalNumber($index))->firstOrFail(),
-                $manager,
+                $staff,
                 'طلب الجهة المرشحة عدم ترشيحه مجددًا',
             );
         } finally {
@@ -110,7 +113,7 @@ class RecruitmentDemoSeeder extends Seeder
      *
      * @return CarbonImmutable the date of the last decision
      */
-    private function follow(DemoReferences $references, int $index, CarbonImmutable $openedAt, array $moves, StaffUser $staff, StaffUser $manager, array $overrides = []): CarbonImmutable
+    private function follow(DemoReferences $references, int $index, CarbonImmutable $openedAt, array $moves, StaffUser $staff, StaffUser $exams, array $overrides = []): CarbonImmutable
     {
         $at = $openedAt->addMinutes(($index * 37) % 420);
         Date::setTestNow($at);
@@ -122,7 +125,9 @@ class RecruitmentDemoSeeder extends Seeder
             $at = $at->addDays(3 + ($index + $step * 5) % 8)->addMinutes(($index * 13) % 300);
             Date::setTestNow($at);
 
-            $this->lifecycle->move($application, $to, $type, $type->needsReasonAndActor() ? $manager : $staff, $move[2] ?? null);
+            // Recruitment starts and closes; the Exams and Interviews office records the rest.
+            $actor = in_array($type, [D::Started, D::Closure], true) ? $staff : $exams;
+            $this->lifecycle->move($application, $to, $type, $actor, $move[2] ?? null);
         }
 
         return $at;

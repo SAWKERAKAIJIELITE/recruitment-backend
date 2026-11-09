@@ -96,7 +96,7 @@ return new class extends Migration
             $table->unsignedInteger('extra_minutes')->default(0);       // given to this attempt alone
             $table->timestampTz('submitted_at')->nullable();
             $table->enum('closed_by', self::CLOSED_BY)->nullable();
-            $table->string('start_ip', 45)->nullable();
+            $table->ipAddress('start_ip')->nullable();   // inet
             $table->timestampsTz();
 
             $table->foreign(['booking_id', 'session_id'])->references(['id', 'session_id'])->on('exam_bookings')->restrictOnDelete();
@@ -127,7 +127,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('attempt_item_id')->constrained('exam_attempt_items')->restrictOnDelete();
             $table->unsignedSmallInteger('selected_option')->nullable();   // null: the answer was cleared
-            $table->string('ip', 45)->nullable();
+            $table->ipAddress('ip')->nullable();   // inet
             $table->timestampTz('saved_at');
         });
 

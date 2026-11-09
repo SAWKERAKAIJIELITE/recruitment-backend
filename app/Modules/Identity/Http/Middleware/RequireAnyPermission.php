@@ -9,7 +9,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Allows the request when the staff user holds AT LEAST ONE of the listed permissions.
- * Usage: ->middleware(RequireAnyPermission::class.':reports.view,candidates.manage')
+ * Usage: ->middleware(RequireAnyPermission::class.':contracts.view,documents.view')
  * (the built-in `can:` middleware can only demand one). Must run after auth:staff.
  */
 class RequireAnyPermission

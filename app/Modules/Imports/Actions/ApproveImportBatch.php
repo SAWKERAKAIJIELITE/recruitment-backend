@@ -18,11 +18,12 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Analysis doc §09 step 6, owner's rule (D-047): approving needs the individual permission imports.approve,
+ * Analysis doc §09 step 6, owner's rule (D-047): approving needs the permission imports.approve,
  * and never by the staff member who uploaded the batch.
  *
  * Approving a batch turns each valid row into a person (or the person on file),
- * an application and a nomination number, through the same CreateApplication as the API (D-041).
+ * an application and a nomination number, through the same CreateApplication as the API (D-041). The applications
+ * are received: Recruitment chooses which to start (D-087).
  *
  * - Everyone the batch names is locked first (the API takes the same lock), then the batch is checked
  *   again: lists, people and live applications may have changed since upload. Under those locks the

@@ -12,7 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\Rule;
 
-/** Document types (D-057). Any staff user reads them; candidates.manage changes them. */
+/** Document types (D-057). Any staff user reads them; documents.manage changes them. */
 class DocumentTypeController extends Controller
 {
     /** List document types. Archived ones only with `include_archived` = `1` or `true`. */

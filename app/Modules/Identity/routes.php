@@ -42,29 +42,23 @@ Route::middleware('api')->prefix('api/v1')->group(function () {
                 Route::post('{device}/revoke', [StaffDeviceController::class, 'revoke'])->whereUuid('device');
             });
 
-        // Access management: roles, permissions and per-user overrides
+        // Access management: roles, their permissions, and each user's role (D-085)
         Route::middleware(['auth:staff', EnsureStaffIsActive::class, 'can:users.manage'])->group(function () {
             Route::get('permissions', [PermissionController::class, 'index']);
 
             Route::get('roles', [RoleController::class, 'index']);
             Route::post('roles/{role:slug}/permissions', [RoleController::class, 'addPermissions']);
-            Route::delete('roles/{role:slug}/permissions/{permission:slug}', [RoleController::class, 'removePermission'])
-                ->scopeBindings();
+            Route::delete('roles/{role:slug}/permissions/{permission:slug}', [RoleController::class, 'removePermission'])->scopeBindings();
 
             Route::get('users', [StaffUserController::class, 'index']);
             Route::get('users/{user}', [StaffUserController::class, 'show'])->whereUuid('user');
             Route::put('users/{user}/password', [StaffUserController::class, 'resetPassword'])->whereUuid('user');
             Route::post('users/{user}/deactivate', [StaffUserController::class, 'deactivate'])->whereUuid('user');
             Route::post('users/{user}/activate', [StaffUserController::class, 'activate'])->whereUuid('user');
-            Route::post('users/{user}/roles', [StaffUserController::class, 'addRole'])->whereUuid('user');
-            Route::delete('users/{user}/roles/{role:slug}', [StaffUserController::class, 'removeRole'])
-                ->whereUuid('user')->scopeBindings();
-            Route::post('users/{user}/permissions', [StaffUserController::class, 'setPermission'])->whereUuid('user');
-            Route::delete('users/{user}/permissions/{permission:slug}', [StaffUserController::class, 'clearPermission'])
-                ->whereUuid('user')->scopeBindings();
+            Route::put('users/{user}/role', [StaffUserController::class, 'changeRole'])->whereUuid('user');
         });
 
-        Route::middleware(['auth:staff', EnsureStaffIsActive::class, 'can:users.add'])->group(function(){
+        Route::middleware(['auth:staff', EnsureStaffIsActive::class, 'can:users.add'])->group(function () {
             Route::post('new', [StaffUserController::class, 'addStaff']);
         });
     });

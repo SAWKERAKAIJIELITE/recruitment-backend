@@ -46,9 +46,10 @@ class ReferenceDataTest extends TestCase
         return "/api/v1/staff/reference/{$type}{$suffix}";
     }
 
-    private function manager()
+    /** The office that changes the list: Recruitment, and the Contracts office for contract types (D-085). */
+    private function manager(string $type = 'job-positions')
     {
-        return StaffUserFactory::new()->withRole('recruitment_staff')->create();
+        return StaffUserFactory::new()->withRole($type === 'contract-types' ? 'contracts' : 'recruitment')->create();
     }
 
     // ---- every flat list ----
@@ -63,17 +64,21 @@ class ReferenceDataTest extends TestCase
     }
 
     #[DataProvider('editableTypes')]
-    public function test_changing_a_list_needs_candidates_manage(string $type): void
+    public function test_changing_a_list_needs_its_offices_permission(string $type): void
     {
         $generalManager = StaffUserFactory::new()->withRole('general_manager')->create();
+        $otherOffice = StaffUserFactory::new()->withRole($type === 'contract-types' ? 'recruitment' : 'contracts')->create();
 
         $this->asStaff($generalManager)->postJson($this->url($type), ['name_ar' => 'اسم'])->assertForbidden();
+        $this->asStaff($otherOffice)->postJson($this->url($type), ['name_ar' => 'اسم'])->assertForbidden();
+        $id = $this->asStaff($this->manager($type))->postJson($this->url($type), ['name_ar' => 'اسم'] + ($type === 'areas' ? ['district_id' => $this->district()->id] : []))->assertCreated()->json('item.id');
+        $this->asStaff($otherOffice)->deleteJson($this->url($type, "/{$id}"))->assertForbidden();
     }
 
     #[DataProvider('editableTypes')]
     public function test_create_then_list(string $type): void
     {
-        $response = $this->asStaff($this->manager())->postJson($this->url($type), ['name_ar' => ' مثال أول '])
+        $response = $this->asStaff($this->manager($type))->postJson($this->url($type), ['name_ar' => ' مثال أول '])
             ->assertCreated()
             ->assertJsonPath('item.name_ar', 'مثال أول')
             ->assertJsonPath('item.archived_at', null);
@@ -85,7 +90,7 @@ class ReferenceDataTest extends TestCase
     #[DataProvider('editableTypes')]
     public function test_the_same_name_in_another_spelling_is_refused(string $type): void
     {
-        $manager = $this->manager();
+        $manager = $this->manager($type);
         $this->asStaff($manager)->postJson($this->url($type), ['name_ar' => 'أحمد'])->assertCreated();
 
         $this->asStaff($manager)->postJson($this->url($type), ['name_ar' => 'احمد'])
@@ -96,7 +101,7 @@ class ReferenceDataTest extends TestCase
     #[DataProvider('editableTypes')]
     public function test_rename(string $type): void
     {
-        $manager = $this->manager();
+        $manager = $this->manager($type);
         $id = $this->asStaff($manager)->postJson($this->url($type), ['name_ar' => 'قديم'])->json('item.id');
 
         $this->asStaff($manager)->putJson($this->url($type, "/{$id}"), ['name_ar' => 'جديد'])
@@ -107,7 +112,7 @@ class ReferenceDataTest extends TestCase
     #[DataProvider('editableTypes')]
     public function test_renaming_onto_an_existing_name_is_refused(string $type): void
     {
-        $manager = $this->manager();
+        $manager = $this->manager($type);
         $this->asStaff($manager)->postJson($this->url($type), ['name_ar' => 'الأول'])->assertCreated();
         $id = $this->asStaff($manager)->postJson($this->url($type), ['name_ar' => 'الثاني'])->json('item.id');
 
@@ -117,7 +122,7 @@ class ReferenceDataTest extends TestCase
     #[DataProvider('editableTypes')]
     public function test_archive_hides_restore_brings_back(string $type): void
     {
-        $manager = $this->manager();
+        $manager = $this->manager($type);
         $id = $this->asStaff($manager)->postJson($this->url($type), ['name_ar' => 'مؤقت'])->json('item.id');
 
         $this->asStaff($manager)->deleteJson($this->url($type, "/{$id}"))->assertOk();
@@ -133,7 +138,7 @@ class ReferenceDataTest extends TestCase
     #[DataProvider('editableTypes')]
     public function test_an_archived_name_points_to_restore(string $type): void
     {
-        $manager = $this->manager();
+        $manager = $this->manager($type);
         $id = $this->asStaff($manager)->postJson($this->url($type), ['name_ar' => 'قديم'])->json('item.id');
         $this->asStaff($manager)->deleteJson($this->url($type, "/{$id}"))->assertOk();
 

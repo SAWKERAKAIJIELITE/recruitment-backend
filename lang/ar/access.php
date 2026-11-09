@@ -1,10 +1,8 @@
 <?php
 
-// Access management: the notes the system writes when it adds or removes a role (D-070), and its messages.
+// Access management messages (D-085).
 return [
-    'notes' => [
-        'role_added' => 'أُضيف الدور «:role» تلقائيًا: كل صلاحياته ممنوحة لهذا المستخدم مباشرة (تبقى منحًا مباشرًا).',
-        'role_removed' => 'سُحب الدور «:role» تلقائيًا: كل صلاحياته ممنوعة عن هذا المستخدم مباشرة (يبقى المنع مباشرًا).',
-    ],
     'password_reset' => 'غُيّرت كلمة المرور وأُنهيت كل جلسات المستخدم: أبلغه بكلمة المرور الجديدة.',
+    'administrator_holds_all' => 'مسؤول النظام يملك كل الصلاحيات دائمًا: لا تُعدَّل صلاحيات دوره.',
+    'manager_views_only' => 'دور المدير العام للعرض فقط: لا يُمنح صلاحيات تعديل (:permissions).',
 ];

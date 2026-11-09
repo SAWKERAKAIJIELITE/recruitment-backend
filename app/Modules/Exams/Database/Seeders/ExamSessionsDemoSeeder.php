@@ -104,7 +104,7 @@ class ExamSessionsDemoSeeder extends Seeder
         foreach (range(self::FIRST_PERSON, self::FIRST_PERSON + 5) as $offset => $index) {
             Date::setTestNow($at->addMinutes($offset * 7));
             $input = array_replace($references->applicationInput($index), ['job_position_id' => $plan->job_position_id]);
-            $applications->push($this->create->execute($input, $staff)['application']);
+            $applications->push($this->create->execute($input, $staff, start: true)['application']);
         }
 
         return $applications;

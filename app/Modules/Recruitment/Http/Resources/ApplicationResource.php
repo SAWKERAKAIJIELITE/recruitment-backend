@@ -16,6 +16,7 @@ class ApplicationResource extends JsonResource
     /** The relations the file shows; load them before building the resource. */
     public const RELATIONS = [
         'candidate.birthPlace',
+        'candidate.deactivator',
         'statusEvents.actor',
         'nominatingEntity',
         'jobPosition',

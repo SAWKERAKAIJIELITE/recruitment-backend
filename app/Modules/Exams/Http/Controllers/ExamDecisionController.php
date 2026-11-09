@@ -11,7 +11,7 @@ use App\Modules\Recruitment\Models\Application;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Date;
 
-/** Decisions after an exam (analysis doc §07): the individual permission exceptions.approve. */
+/** Decisions after an exam (analysis doc §07): the permission exceptions.approve. */
 class ExamDecisionController extends Controller
 {
     /**

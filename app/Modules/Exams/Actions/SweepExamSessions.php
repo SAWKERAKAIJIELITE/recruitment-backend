@@ -12,6 +12,7 @@ use App\Modules\Recruitment\Actions\ApplicationLifecycle;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Models\Application;
+use App\Modules\Recruitment\Support\LifecycleNotices;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -31,10 +32,24 @@ use Illuminate\Support\Facades\Log;
  */
 class SweepExamSessions
 {
-    public function __construct(private readonly ApplicationLifecycle $lifecycle, private readonly ExamResults $results) {}
+    public function __construct(
+        private readonly ApplicationLifecycle $lifecycle,
+        private readonly ExamResults $results,
+        private readonly LifecycleNotices $notices,
+    ) {}
+
+    /**
+     * Each booking in its own transaction; the offices are told of all the moves together (D-089).
+     *
+     * @return array{absent: int, closed: int}
+     */
+    public function sweep(?string $sessionId = null): array
+    {
+        return $this->notices->batch(fn() => $this->sweepNow($sessionId));
+    }
 
     /** @return array{absent: int, closed: int} */
-    public function sweep(?string $sessionId = null): array
+    private function sweepNow(?string $sessionId): array
     {
         $now = Date::now();
         $absent = 0;

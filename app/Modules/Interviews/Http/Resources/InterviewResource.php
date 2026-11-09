@@ -27,7 +27,14 @@ class InterviewResource extends JsonResource
     {
         $person = fn($user) => $user === null ? null : ['id' => $user->id, 'username' => $user->username, 'full_name' => $user->full_name];
         $grade = fn(?InterviewGrade $grade) => $grade === null ? null : ['value' => $grade->value, 'label' => $grade->labelAr()];
-        $sitting = fn(InterviewSitting $sitting) => ['id' => $sitting->id, 'kind' => $sitting->kind->value, 'starts_at' => $sitting->starts_at->toIso8601String(), 'location' => $sitting->location, 'committee_name' => $sitting->committee_name];
+        $sitting = fn(InterviewSitting $sitting) => [
+            'id' => $sitting->id,
+            'kind' => $sitting->kind->value,
+            'starts_at' => $sitting->starts_at->toIso8601String(),
+            'ends_at' => $sitting->ends_at->toIso8601String(),
+            'location' => $sitting->location,
+            'committee_name' => $sitting->committee_name
+        ];
 
         return [
             'id' => $this->id,

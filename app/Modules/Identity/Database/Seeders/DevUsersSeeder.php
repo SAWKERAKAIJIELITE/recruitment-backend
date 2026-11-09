@@ -2,12 +2,12 @@
 
 namespace App\Modules\Identity\Database\Seeders;
 
-use App\Modules\Identity\Models\Permission;
 use App\Modules\Identity\Models\Role;
 use App\Modules\Identity\Models\StaffUser;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Date;
 
-/** LOCAL DEVELOPMENT ONLY. Never run in production: the password is "password". */
+/** LOCAL DEVELOPMENT ONLY. Never run in production: the password is "password". One account per role (D-085). */
 class DevUsersSeeder extends Seeder
 {
     public function run(): void
@@ -22,7 +22,11 @@ class DevUsersSeeder extends Seeder
         $accounts = [
             ['admin', 'مسؤول النظام', 'system_admin', '1234'],
             ['manager', 'المدير العام', 'general_manager', '5678'],
-            ['staff', 'إداري التوظيف', 'recruitment_staff', '9012'],
+            ['staff', 'موظف التوظيف', 'recruitment', '9012'],
+            ['staff.two', 'معتمد الاستيراد', 'recruitment', '9013'],
+            ['exams', 'موظف الاختبارات', 'exams_interviews', '3456'],
+            ['contracts', 'موظف العقود', 'contracts', '7890'],
+            ['documents', 'موظف التوثيق', 'documenting', '2468'],
         ];
 
         foreach ($accounts as [$username, $name, $roleSlug, $personalNumber]) {
@@ -36,20 +40,7 @@ class DevUsersSeeder extends Seeder
                     'is_active' => true,
                 ],
             );
-            $user->roles()->syncWithoutDetaching([Role::where('slug', $roleSlug)->value('id')]);
-        }
-
-        // The ✓* cells: individual grants
-        $this->grant('staff', ['exam_bank.manage', 'attempts.extend', 'exceptions.approve']);
-        $this->grant('manager', ['attempts.extend', 'exceptions.approve', 'imports.approve', 'applications.close', 'interviews.correct', 'pass_policies.manage']);
-    }
-
-    private function grant(string $username, array $permissionSlugs): void
-    {
-        $user = StaffUser::where('username', $username)->firstOrFail();
-
-        foreach (Permission::whereIn('slug', $permissionSlugs)->pluck('id') as $permissionId) {
-            $user->permissions()->syncWithoutDetaching([$permissionId => ['is_granted' => true]]);
+            $user->forceFill(['role_id' => Role::where('slug', $roleSlug)->value('id'), 'role_assigned_at' => Date::now()])->save();
         }
     }
 }

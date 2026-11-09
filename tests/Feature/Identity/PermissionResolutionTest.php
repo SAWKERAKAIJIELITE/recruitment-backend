@@ -5,7 +5,6 @@ namespace Tests\Feature\Identity;
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use App\Modules\Identity\Models\Permission;
-use App\Modules\Identity\Models\StaffUser;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -19,58 +18,32 @@ class PermissionResolutionTest extends TestCase
         $this->seed(RolesAndPermissionsSeeder::class);
     }
 
-    private function override(StaffUser $user, string $slug, bool $granted): void
+    public function test_roles_match_the_offices(): void
     {
-        $user->permissions()->attach(
-            Permission::where('slug', $slug)->value('id'),
-            ['is_granted' => $granted],
-        );
-    }
+        foreach (RolesAndPermissionsSeeder::ROLES as $role => $permissions) {
+            if ($role === 'system_admin') {
+                continue;
+            }
 
-    public function test_roles_match_the_rbac_matrix(): void
-    {
-        $staff = StaffUserFactory::new()->withRole('recruitment_staff')->create();
-        $manager = StaffUserFactory::new()->withRole('general_manager')->create();
-        $admin = StaffUserFactory::new()->withRole('system_admin')->create();
-
-        $this->assertEqualsCanonicalizing(
-            ['reports.view', 'imports.manage', 'candidates.manage', 'exams.manage', 'interviews.manage', 'contracts.manage', 'audit.view_related'],
-            $staff->permissionSlugs()->all()
-        );
-        $this->assertEqualsCanonicalizing(['reports.view', 'audit.view'], $manager->permissionSlugs()->all());
-        $this->assertEqualsCanonicalizing(
-            ['devices.approve', 'reports.view', 'imports.manage', 'candidates.manage', 'exam_bank.manage', 'exams.manage', 'interviews.manage', 'contracts.manage', 'users.manage', 'users.add', 'audit.view'],
-            $admin->permissionSlugs()->all()
-        );
-    }
-
-    public function test_starred_permissions_are_not_implicit_for_anyone(): void
-    {
-        foreach (['general_manager', 'recruitment_staff', 'system_admin'] as $role) {
-            $user = StaffUserFactory::new()->withRole($role)->create();
-
-            $this->assertFalse($user->can('attempts.extend'), "$role must not get attempts.extend implicitly");
-            $this->assertFalse($user->can('exceptions.approve'), "$role must not get exceptions.approve implicitly");
-            $this->assertFalse($user->can('exam_results.correct'), "$role must not get exam_results.correct implicitly");
+            $this->assertEqualsCanonicalizing($permissions, StaffUserFactory::new()->withRole($role)->create()->permissionSlugs()->all(), $role);
         }
+
+        $this->assertEqualsCanonicalizing(
+            ['applications.view', 'candidates.manage', 'applications.start', 'applications.close', 'imports.view', 'imports.manage', 'imports.approve', 'audit.view_related'],
+            StaffUserFactory::new()->withRole('recruitment')->create()->permissionSlugs()->all(),
+        );
+        $this->assertEqualsCanonicalizing(
+            Permission::query()->pluck('slug')->all(),
+            StaffUserFactory::new()->withRole('system_admin')->create()->permissionSlugs()->all(),
+        );
     }
 
-    public function test_direct_grant_adds_a_permission(): void
+    public function test_every_permission_belongs_to_an_office_or_the_management(): void
     {
-        $staff = StaffUserFactory::new()->withRole('recruitment_staff')->create();
-        $this->override($staff, 'attempts.extend', true);
+        $given = collect(RolesAndPermissionsSeeder::ROLES)->flatten()->unique();
+        $adminOnly = ['users.manage', 'users.add', 'devices.approve', 'vacancies.manage'];
 
-        $this->assertTrue($staff->fresh()->can('attempts.extend'));
-    }
-
-    public function test_direct_denial_removes_a_role_permission(): void
-    {
-        $admin = StaffUserFactory::new()->withRole('system_admin')->create();
-        $this->assertTrue($admin->can('users.manage'));
-
-        $this->override($admin, 'users.manage', false);
-
-        $this->assertFalse($admin->fresh()->can('users.manage'));
+        $this->assertEqualsCanonicalizing(array_keys(RolesAndPermissionsSeeder::PERMISSIONS), [...$given->all(), ...$adminOnly]);
     }
 
     public function test_unknown_abilities_and_roleless_users_get_nothing(): void

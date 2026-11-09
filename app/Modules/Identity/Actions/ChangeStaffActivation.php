@@ -12,7 +12,7 @@ use Illuminate\Validation\ValidationException;
 /**
  * Deactivating and reactivating a staff user (D-079). A deactivated user cannot log in, and every session they have
  * ends at once (their tokens are deleted; the active check on each request stops anything still in flight). Their
- * device, roles and history stay, so reactivating gives the account back as it was. Nobody deactivates themselves
+ * device, role and history stay, so reactivating gives the account back as it was. Nobody deactivates themselves
  * (the one who acts holds users.manage, so someone able to manage users always stays; D-020 is checked anyway).
  */
 class ChangeStaffActivation
@@ -39,7 +39,7 @@ class ChangeStaffActivation
             AccessLog::record('user_deactivated', $actor, ['user_id' => $target->id, 'reason' => trim($reason), 'sessions_ended' => $ended]);
         });
 
-        return $target->fresh(['roles', 'permissions']);
+        return $target->fresh('role.permissions');
     }
 
     public function activate(StaffUser $target, StaffUser $actor): StaffUser
@@ -55,6 +55,6 @@ class ChangeStaffActivation
             AccessLog::record('user_activated', $actor, ['user_id' => $target->id]);
         });
 
-        return $target->fresh(['roles', 'permissions']);
+        return $target->fresh('role.permissions');
     }
 }

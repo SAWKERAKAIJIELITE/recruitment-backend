@@ -21,7 +21,7 @@ use Illuminate\Support\Facades\Date;
 use Illuminate\Validation\Rule;
 
 /**
- * Contracts (analysis doc §08; D-064). Reading: contracts.manage, candidates.manage or reports.view. Writing, renewing,
+ * Contracts (analysis doc §08; D-064). Reading: contracts.view (the Contracts office and the general manager). Writing, renewing,
  * correcting and ending: contracts.manage.
  */
 class ContractController extends Controller

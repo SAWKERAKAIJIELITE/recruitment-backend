@@ -33,7 +33,10 @@ class StoreApplicationRequest extends FormRequest
 
     public function rules(): array
     {
-        return self::applicationRules((int) $this->input('residence_district_id')) + self::candidateRules();
+        return self::applicationRules((int) $this->input('residence_district_id')) + self::candidateRules() + [
+            /** Start it at once (awaiting its exam) instead of leaving it received; needs applications.start. */
+            'start' => ['sometimes', 'boolean'],
+        ];
     }
 
     /**

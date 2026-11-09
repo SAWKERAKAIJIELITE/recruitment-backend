@@ -39,8 +39,8 @@ class ApplicationApiTest extends TestCase
 
         $this->asStaff($staff)->postJson(self::URL, $this->applicationPayload())
             ->assertCreated()
-            ->assertJsonPath('data.status', 'awaiting_exam')
-            ->assertJsonPath('data.status_label', 'بانتظار الاختبار')
+            ->assertJsonPath('data.status', 'received')
+            ->assertJsonPath('data.status_label', 'مستلم بانتظار البدء')
             ->assertJsonPath('data.job_position.name_ar', 'مدرس')
             ->assertJsonPath('data.residence.district.name_ar', 'دمشق')
             ->assertJsonPath('data.residence.area.name_ar', 'المزة')
@@ -249,16 +249,19 @@ class ApplicationApiTest extends TestCase
 
     // ---- closing an application ----
 
+    /** Recruitment closes applications (D-085). */
     private function closer()
     {
-        return $this->allow($this->hiringStaff(), 'applications.close');
+        return $this->hiringStaff();
     }
 
-    public function test_closing_needs_the_individual_permission(): void
+    public function test_closing_needs_applications_close(): void
     {
         $application = $this->openApplication();
 
-        $this->asStaff($this->hiringStaff())->postJson(self::URL."/{$application->id}/close", ['reason' => 'انسحب المرشح'])
+        $this->asStaff($this->examsStaff())->postJson(self::URL."/{$application->id}/close", ['reason' => 'انسحب المرشح'])
+            ->assertForbidden();
+        $this->asStaff($this->staffOf('general_manager'))->postJson(self::URL."/{$application->id}/close", ['reason' => 'انسحب المرشح'])
             ->assertForbidden();
         $this->assertSame(S::AwaitingExam, $application->fresh()->current_status);
     }
@@ -271,10 +274,10 @@ class ApplicationApiTest extends TestCase
         $this->asStaff($closer)->postJson(self::URL."/{$application->id}/close", ['reason' => 'انسحب المرشح'])
             ->assertOk()
             ->assertJsonPath('data.status', 'closed')
-            ->assertJsonPath('data.history.1.decision_type', 'closure')
-            ->assertJsonPath('data.history.1.from_status', 'awaiting_exam')
-            ->assertJsonPath('data.history.1.reason', 'انسحب المرشح')
-            ->assertJsonPath('data.history.1.actor.id', $closer->id);
+            ->assertJsonPath('data.history.2.decision_type', 'closure')
+            ->assertJsonPath('data.history.2.from_status', 'awaiting_exam')
+            ->assertJsonPath('data.history.2.reason', 'انسحب المرشح')
+            ->assertJsonPath('data.history.2.actor.id', $closer->id);
     }
 
     public function test_a_reason_is_required_to_close(): void
@@ -300,7 +303,7 @@ class ApplicationApiTest extends TestCase
 
         $this->asStaff($closer)->postJson(self::URL."/{$application->id}/close", ['reason' => 'قرار ورقي', 'occurred_at' => '2026-03-05 10:30:00'])
             ->assertOk()
-            ->assertJsonPath('data.history.1.occurred_at', '2026-03-05T10:30:00.000000Z');
+            ->assertJsonPath('data.history.2.occurred_at', '2026-03-05T10:30:00.000000Z');
     }
 
     public function test_closing_with_todays_date_works_for_an_application_opened_today(): void
@@ -584,10 +587,10 @@ class ApplicationApiTest extends TestCase
 
         $response = $this->asStaff($staff)->getJson(self::URL."/{$application->id}")->assertOk();
 
-        $this->assertSame(['awaiting_exam', 'exam_absent', 'awaiting_exam'], collect($response->json('data.history'))->pluck('to_status')->all());
-        $this->assertSame([null, 'awaiting_exam', 'exam_absent'], collect($response->json('data.history'))->pluck('from_status')->all());
-        $response->assertJsonPath('data.history.2.reason', 'Medical certificate')
-            ->assertJsonPath('data.history.2.decision_type', 'excuse_accepted');
+        $this->assertSame(['received', 'awaiting_exam', 'exam_absent', 'awaiting_exam'], collect($response->json('data.history'))->pluck('to_status')->all());
+        $this->assertSame([null, 'received', 'awaiting_exam', 'exam_absent'], collect($response->json('data.history'))->pluck('from_status')->all());
+        $this->assertSame(['created', 'started', 'outcome', 'excuse_accepted'], collect($response->json('data.history'))->pluck('decision_type')->all());
+        $response->assertJsonPath('data.history.3.reason', 'Medical certificate');
     }
 
     public function test_unknown_application_is_404(): void

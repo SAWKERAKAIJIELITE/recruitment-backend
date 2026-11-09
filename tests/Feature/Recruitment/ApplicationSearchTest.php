@@ -68,6 +68,13 @@ class ApplicationSearchTest extends TestCase
         $this->assertSame(2, $this->total('studying_years_max=4'));
         $this->assertSame(1, $this->total('quran_parts_min=15&quran_parts_max=29'));
         $this->assertSame(1, $this->total('quran_parts_max=0'));
+
+        // Within what the columns hold: 30 parts, 15 years.
+        $staff = $this->hiringStaff();
+        $this->assertSame(1, $this->total('quran_parts_min=30'));
+        $this->asStaff($staff)->getJson(self::URL.'?quran_parts_min=31')->assertStatus(422)->assertJsonValidationErrors('quran_parts_min');
+        $this->asStaff($staff)->getJson(self::URL.'?quran_parts_max=-1')->assertStatus(422)->assertJsonValidationErrors('quran_parts_max');
+        $this->asStaff($staff)->getJson(self::URL.'?studying_years_max=16&studying_years=16')->assertStatus(422)->assertJsonValidationErrors(['studying_years_max', 'studying_years']);
     }
 
     public function test_one_or_several_statuses_and_live_or_ended(): void
@@ -101,6 +108,10 @@ class ApplicationSearchTest extends TestCase
         $this->assertSame([$target->nomination_number], $this->found("job_position_id={$target->job_position_id}"));
         $this->assertSame([$target->nomination_number], $this->found("birth_place_id={$aleppo->id}"));
         $this->assertSame([$other->nomination_number], $this->found("marital_status_id={$other->marital_status_id}&residence_district_id={$other->residence_district_id}"));
+
+        // An entry that does not exist in its list is refused, not searched.
+        $this->asStaff($this->hiringStaff())->getJson(self::URL.'?job_position_id=999999&birth_place_id=999999&residence_area_id=999999')
+            ->assertStatus(422)->assertJsonValidationErrors(['job_position_id', 'birth_place_id', 'residence_area_id']);
     }
 
     public function test_ages_and_birth_dates(): void

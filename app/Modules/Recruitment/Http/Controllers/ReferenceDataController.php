@@ -18,7 +18,8 @@ use Illuminate\Validation\Rule;
 /**
  * The managed lists. {type} is a ReferenceType value (an unknown one is 404): districts, areas, nominating-entities, job-positions,
  * application-categories, academic-qualifications, specializations, marital-statuses, health-conditions, contract-types.
- * Any signed-in staff user can read them; changing them needs candidates.manage. Marital statuses are
+ * Any signed-in staff user can read them; changing them needs candidates.manage (Recruitment), and contract-types
+ * contracts.manage (the Contracts office; 403 otherwise, D-085). Marital statuses are
  * seeded and only read here: the change endpoints do not know them (404, D-048).
  */
 class ReferenceDataController extends Controller
@@ -57,7 +58,7 @@ class ReferenceDataController extends Controller
      */
     public function store(ReferenceItemRequest $request, EditableReferenceType $type, ManageReferenceData $manage): JsonResponse
     {
-        $list = $type->type();
+        $list = $this->editable($request, $type);
 
         $item = $manage->create(
             $list,
@@ -72,25 +73,33 @@ class ReferenceDataController extends Controller
     /** Rename an entry. */
     public function update(ReferenceItemRequest $request, EditableReferenceType $type, int $id, ManageReferenceData $manage): ReferenceItemResource
     {
-        $list = $type->type();
+        $list = $this->editable($request, $type);
 
         return new ReferenceItemResource($this->withDistrict($manage->rename($list, $this->find($list, $id), $request->validated('name_ar'))));
     }
 
     /** Archive an entry: it leaves the lists but stays valid for existing applications. */
-    public function archive(EditableReferenceType $type, int $id, ManageReferenceData $manage): ReferenceItemResource
+    public function archive(Request $request, EditableReferenceType $type, int $id, ManageReferenceData $manage): ReferenceItemResource
     {
-        $list = $type->type();
+        $list = $this->editable($request, $type);
 
         return new ReferenceItemResource($this->withDistrict($manage->archive($this->find($list, $id))));
     }
 
     /** Bring an archived entry back. */
-    public function restore(EditableReferenceType $type, int $id, ManageReferenceData $manage): ReferenceItemResource
+    public function restore(Request $request, EditableReferenceType $type, int $id, ManageReferenceData $manage): ReferenceItemResource
     {
-        $list = $type->type();
+        $list = $this->editable($request, $type);
 
         return new ReferenceItemResource($this->withDistrict($manage->restore($this->find($list, $id))));
+    }
+
+    /** The list, if the user's office changes it (contract types: contracts.manage; the others: candidates.manage). */
+    private function editable(Request $request, EditableReferenceType $type): ReferenceType
+    {
+        abort_unless($request->user()->hasPermission($type->managedBy()), 403);
+
+        return $type->type();
     }
 
     /** An area is shown with its district. */

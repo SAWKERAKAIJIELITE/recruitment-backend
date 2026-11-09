@@ -11,8 +11,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 /**
- * The pass rules, as versions (D-052, D-063). Reading: exam_bank.manage, candidates.manage or reports.view. Adding:
- * the individual permission pass_policies.manage.
+ * The pass rules, as versions (D-052, D-063). Reading: exams.view. Adding:
+ * pass_policies.manage.
  */
 class PassPolicyController extends Controller
 {
@@ -28,7 +28,7 @@ class PassPolicyController extends Controller
     /**
      * Add a version of the pass rules
      *
-     * Individual permission pass_policies.manage. Becomes the current version: exam plans published from now on are
+     * Permission pass_policies.manage. Becomes the current version: exam plans published from now on are
      * scored with it; plans already published keep theirs, so no result changes. Versions are never edited.
      */
     public function store(PassPolicyRequest $request, AddPassPolicy $add): JsonResponse

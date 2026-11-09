@@ -24,6 +24,6 @@ class ResetStaffPassword
             AccessLog::record('password_reset', $actor, ['user_id' => $target->id, 'sessions_ended' => $ended]);
         });
 
-        return $target->fresh(['roles', 'permissions']);
+        return $target->fresh('role.permissions');
     }
 }

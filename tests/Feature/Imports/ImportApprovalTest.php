@@ -8,6 +8,8 @@ use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Actions\CreateApplication;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Models\Candidate;
+use App\Modules\Identity\Models\Role;
+use App\Modules\Identity\Models\Permission;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -39,7 +41,7 @@ class ImportApprovalTest extends TestCase
         Storage::fake('local');
         $this->referenceIds();
         $this->staff = $this->hiringStaff();
-        $this->approver = $this->allow($this->hiringStaff(), 'imports.approve');
+        $this->approver = $this->hiringStaff();   // Recruitment approves, never its own batch (D-047, D-085)
     }
 
     private function uploadRows(array $rows, string $filename = 'candidates.xlsx'): string
@@ -104,7 +106,7 @@ class ImportApprovalTest extends TestCase
         $application = Application::with('candidate')->findOrFail($rows[1]['application']['id']);
         $this->assertSame($rows[1]['application']['nomination_number'], $application->nomination_number);
         $this->assertSame('سارة خالد عمر', $application->candidate->full_name);
-        $this->assertSame('awaiting_exam', $application->current_status->value);
+        $this->assertSame('received', $application->current_status->value);   // Recruitment starts it (D-087)
         $this->assertSame($this->approver->id, $application->created_by);
         $this->assertSame(1, $application->statusEvents()->count());
     }
@@ -119,17 +121,34 @@ class ImportApprovalTest extends TestCase
         $this->assertSame([$numbers[0], $numbers[0] + 1, $numbers[0] + 2], $numbers);
     }
 
-    public function test_approving_needs_the_individual_approval_permission(): void
+    public function test_the_imported_applications_wait_received_until_recruitment_starts_them(): void
+    {
+        $batch = $this->mixedBatch();
+        $other = $this->uploadRows([LegacyWorkbook::row(['J' => '55555555555', 'F' => 'سامر خالد الأحمد'])], 'other.xlsx');
+        $this->approve($batch)->assertOk();
+        $this->approve($other)->assertOk();
+        $this->assertSame(['received'], Application::query()->distinct()->pluck('current_status')->map->value->all());
+
+        $this->asStaff($this->staff)->getJson("/api/v1/staff/applications?import_batch_id={$batch}")->assertOk()->assertJsonCount(3, 'data');
+        $this->asStaff($this->staff)->postJson('/api/v1/staff/applications/start', ['filters' => ['import_batch_id' => $batch]])
+            ->assertOk()
+            ->assertJsonPath('data.started', 3);
+
+        $this->assertSame(3, Application::query()->where('current_status', 'awaiting_exam')->count());
+        $this->assertSame(1, Application::query()->where('current_status', 'received')->count());   // the other batch's
+    }
+
+    public function test_approving_needs_imports_approve(): void
     {
         $batch = $this->uploadRows([LegacyWorkbook::row()]);
 
-        $this->asStaff($this->hiringStaff())->postJson(self::URL."/{$batch}/approve", ['revision' => $this->revision($batch)])->assertForbidden();
+        $this->asStaff($this->staffOf('general_manager'))->postJson(self::URL."/{$batch}/approve", ['revision' => $this->revision($batch)])->assertForbidden();
+        $this->asStaff($this->examsStaff())->getJson(self::URL."/{$batch}")->assertForbidden();   // another office's section
         $this->assertDatabaseCount('applications', 0);
     }
 
     public function test_the_uploader_cannot_approve_their_own_batch(): void
     {
-        $this->allow($this->staff, 'imports.approve');
         $batch = $this->uploadRows([LegacyWorkbook::row()]);
 
         $this->asStaff($this->staff)->postJson(self::URL."/{$batch}/approve", ['revision' => $this->revision($batch)])
@@ -142,7 +161,9 @@ class ImportApprovalTest extends TestCase
 
     public function test_an_approver_without_imports_manage_can_read_but_not_change_the_batch(): void
     {
-        $approver = $this->allow(StaffUserFactory::new()->create(), 'imports.approve');
+        // A role holding imports.approve without imports.manage (none does by default).
+        Role::where('slug', 'contracts')->firstOrFail()->permissions()->attach(Permission::where('slug', 'imports.approve')->value('id'));
+        $approver = $this->contractsStaff();
         $batch = $this->uploadRows([LegacyWorkbook::row()]);
         $row = $this->rows($batch)[0]['id'];
 
@@ -203,7 +224,7 @@ class ImportApprovalTest extends TestCase
         $this->asStaff($this->approver)->postJson(self::URL."/{$batch}/approve", [])->assertStatus(422)->assertJsonValidationErrors('revision');
 
         // Whoever changed the rows does not approve them: another person reviews those changes.
-        $editor = $this->allow($this->allow($this->hiringStaff(), 'imports.approve'), 'imports.manage');
+        $editor = $this->hiringStaff();
         $this->asStaff($editor)->patchJson(self::URL."/{$batch}/rows/{$row}", ['values' => ['notes' => 'مراجعة']])->assertOk();
         $this->asStaff($editor)->postJson(self::URL."/{$batch}/approve", ['revision' => $this->revision($batch)])->assertForbidden();
 

@@ -145,5 +145,10 @@ return [
         'national_number' => 'الرقم الوطني',
         'from' => 'من تاريخ',
         'to' => 'إلى تاريخ',
+        'username' => 'اسم المستخدم',
+        'personal_number' => 'الرقم الذاتي',
+        'first_name' => 'الاسم الأول',
+        'last_name' => 'الاسم الأخير',
+        'password' => 'كلمة المرور',
     ],
 ];

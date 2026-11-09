@@ -3,7 +3,6 @@
 namespace Tests\Support;
 
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
-use App\Modules\Identity\Models\Permission;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Actions\ApplicationLifecycle;
 use App\Modules\Recruitment\Actions\CreateApplication;
@@ -19,6 +18,8 @@ use App\Modules\Recruitment\Models\JobPosition;
 use App\Modules\Recruitment\Models\MaritalStatus;
 use App\Modules\Recruitment\Models\NominatingEntity;
 use App\Modules\Recruitment\Models\Specialization;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 trait RecruitmentTestHelpers
 {
@@ -40,18 +41,52 @@ trait RecruitmentTestHelpers
         return Area::create(['district_id' => $district->id, 'name_ar' => $name]);
     }
 
-    /** A hiring-staff user (holds candidates.manage). */
+    /** A user of the Recruitment office (candidates, applications, imports; D-085). */
     protected function hiringStaff(): StaffUser
     {
-        return StaffUserFactory::new()->withRole('recruitment_staff')->create();
+        return $this->staffOf('recruitment');
     }
 
-    /** Grants an individual permission (for example applications.close). */
-    protected function allow(StaffUser $user, string $permission): StaffUser
+    /** A user of the Exams and Interviews office. */
+    protected function examsStaff(): StaffUser
     {
-        $user->permissions()->attach(Permission::where('slug', $permission)->value('id'), ['is_granted' => true]);
+        return $this->staffOf('exams_interviews');
+    }
 
-        return $user;
+    /** A user of the Contracts office. */
+    protected function contractsStaff(): StaffUser
+    {
+        return $this->staffOf('contracts');
+    }
+
+    /** A user of the Documenting office. */
+    protected function documentsStaff(): StaffUser
+    {
+        return $this->staffOf('documenting');
+    }
+
+    /** A user holding the role (recruitment, exams_interviews, contracts, documenting, general_manager, system_admin). */
+    protected function staffOf(string $role): StaffUser
+    {
+        return StaffUserFactory::new()->withRole($role)->create();
+    }
+
+    /**
+     * A vacancies plan in force from 2000 to 2099 with $count vacancies for every job position there is now (D-088),
+     * written straight to the database (the upload is tested on its own).
+     */
+    protected function openVacancies(int $count = 100): string
+    {
+        $id = (string) Str::uuid7();
+        DB::table('vacancy_plans')->insert([
+            'id' => $id, 'starts_on' => '2000-01-01', 'ends_on' => '2099-12-31', 'original_filename' => 'test.xlsx', 'stored_path' => 'vacancies/test.xlsx',
+            'file_sha256' => str_repeat('0', 64), 'file_size' => 1, 'uploaded_by' => $this->staffOf('system_admin')->id, 'created_at' => now(),
+        ]);
+        DB::table('vacancy_plan_items')->insert(JobPosition::query()->pluck('id')->values()->map(fn (int $position, int $row) => [
+            'plan_id' => $id, 'job_position_id' => $position, 'vacancies' => $count, 'row_number' => $row + 2,
+        ])->all());
+
+        return $id;
     }
 
     /** Ends an application through the lifecycle, as authorised staff would. */
@@ -117,10 +152,10 @@ trait RecruitmentTestHelpers
         return array_replace_recursive($base, $overrides);
     }
 
-    /** Opens an application through the real action (no HTTP). */
-    protected function openApplication(?StaffUser $actor = null, array $overrides = []): Application
+    /** Opens an application through the real action (no HTTP), started (awaiting its exam) unless $start is false. */
+    protected function openApplication(?StaffUser $actor = null, array $overrides = [], bool $start = true): Application
     {
         return app(CreateApplication::class)
-            ->execute($this->applicationPayload($overrides), $actor ?? $this->hiringStaff())['application'];
+            ->execute($this->applicationPayload($overrides), $actor ?? $this->hiringStaff(), $start)['application'];
     }
 }

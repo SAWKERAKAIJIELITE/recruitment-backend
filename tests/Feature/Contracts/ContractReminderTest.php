@@ -5,14 +5,16 @@ namespace Tests\Feature\Contracts;
 use App\Modules\Contracts\Actions\ManageContracts;
 use App\Modules\Contracts\Models\Contract;
 use App\Modules\Contracts\Models\ContractType;
+use App\Modules\Contracts\Notifications\ContractEndingSoon;
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
-use App\Modules\Identity\Models\Permission;
+use App\Modules\Identity\Models\Role;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Actions\ApplicationLifecycle;
 use App\Modules\Recruitment\Enums\ApplicationStatus as S;
 use App\Modules\Recruitment\Enums\DecisionType as D;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\RecruitmentTestHelpers;
@@ -33,7 +35,9 @@ class ContractReminderTest extends TestCase
         parent::setUp();
         $this->seed(RolesAndPermissionsSeeder::class);
         $this->travelTo('2026-10-31 06:00:00');
-        $this->writer = $this->hiringStaff();
+        $this->writer = $this->contractsStaff();
+        $this->referenceIds();
+        $this->openVacancies();
     }
 
     /** A first contract written by $by (default: the writer), ending on $endsOn. */
@@ -59,41 +63,52 @@ class ContractReminderTest extends TestCase
     {
         $this->artisan('contracts:remind-expiring')->assertSuccessful();
 
-        return DB::table('notifications')->count();
+        return $this->reminders()->count();
     }
 
-    /** @return list<string> who got a notification */
+    /** Leaves the reminders only: the moves of the applications are notified too (D-089). */
+    private function forgetMoves(): void
+    {
+        DB::table('notifications')->where('type', '<>', ContractEndingSoon::class)->delete();
+    }
+
+    /** The reminders only (the moves of the applications are notified too, D-089). */
+    private function reminders(): Builder
+    {
+        return DB::table('notifications')->where('type', ContractEndingSoon::class);
+    }
+
+    /** @return list<string> who got a reminder */
     private function recipients(): array
     {
-        return DB::table('notifications')->orderBy('notifiable_id')->pluck('notifiable_id')->unique()->values()->all();
+        return $this->reminders()->orderBy('notifiable_id')->pluck('notifiable_id')->unique()->values()->all();
     }
 
     public function test_a_contract_ending_within_two_weeks_reminds_its_writer_and_every_contracts_manager_once(): void
     {
-        $other = $this->hiringStaff();                                                                      // contracts.manage through the role
-        $granted = $this->allow(StaffUserFactory::new()->create(), 'contracts.manage');                    // through a grant
-        $inactive = StaffUserFactory::new()->withRole('recruitment_staff')->create(['is_active' => false]);
-        $denied = StaffUserFactory::new()->withRole('recruitment_staff')->create();
-        $denied->permissions()->attach(Permission::where('slug', 'contracts.manage')->value('id'), ['is_granted' => false]);
-        $writerWithoutPermission = StaffUserFactory::new()->withRole('general_manager')->create();
+        $other = $this->contractsStaff();                                                                   // contracts.manage through the role
+        $admin = $this->staffOf('system_admin');                                                            // holds every permission
+        $inactive = StaffUserFactory::new()->withRole('contracts')->create(['is_active' => false]);
+        $recruitment = $this->hiringStaff();                                                                // another office
+        $writerWithoutPermission = $this->contractsStaff();
         $reader = StaffUserFactory::new()->withRole('general_manager')->create();                          // reads, does not manage
-        $contract = $this->contract('2026-11-14', $this->allow($writerWithoutPermission, 'contracts.manage'));
-        $writerWithoutPermission->permissions()->updateExistingPivot(Permission::where('slug', 'contracts.manage')->value('id'), ['is_granted' => false]);
+        $contract = $this->contract('2026-11-14', $writerWithoutPermission);
+        $writerWithoutPermission->forceFill(['role_id' => Role::where('slug', 'general_manager')->value('id')])->save();   // moved to another role since
 
         $this->remind();
 
-        foreach ([$this->writer, $other, $granted, $writerWithoutPermission] as $user) {
+        foreach ([$this->writer, $other, $admin, $writerWithoutPermission] as $user) {
             $this->assertContains($user->id, $this->recipients());
         }
 
-        foreach ([$inactive, $denied, $reader] as $user) {
+        foreach ([$inactive, $recruitment, $reader] as $user) {
             $this->assertNotContains($user->id, $this->recipients());
         }
 
-        $this->assertSame(1, DB::table('notifications')->where('notifiable_id', $this->writer->id)->count());   // one each, even when both writer and manager
+        $this->assertSame(1, $this->reminders()->where('notifiable_id', $this->writer->id)->count());   // one each, even when both writer and manager
         $this->assertNotNull($contract->fresh()->expiry_reminded_at);
 
-        $count = DB::table('notifications')->count();
+        $count = $this->reminders()->count();
         $this->travel(1)->days();
         $this->assertSame($count, $this->remind());                                                        // once
     }
@@ -117,6 +132,7 @@ class ContractReminderTest extends TestCase
     public function test_the_notification_says_which_contract_and_when(): void
     {
         $contract = $this->contract('2026-11-10');
+        $this->forgetMoves();
         $this->remind();
 
         $this->asStaff($this->writer)->getJson('/api/v1/staff/notifications')
@@ -135,7 +151,8 @@ class ContractReminderTest extends TestCase
     {
         $this->contract('2026-11-10');
         $this->contract('2026-11-12');
-        $other = $this->hiringStaff();
+        $other = $this->contractsStaff();
+        $this->forgetMoves();
         $this->remind();
         $mine = $this->asStaff($this->writer)->getJson('/api/v1/staff/notifications')->json('data.0.id');
         $theirs = $this->asStaff($other)->getJson('/api/v1/staff/notifications')->json('data.0.id');

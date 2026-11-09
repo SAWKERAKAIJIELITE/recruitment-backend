@@ -23,7 +23,7 @@ class BookSittingRequest extends FormRequest
             'application_ids' => ['required', 'array', 'min:1', 'max:' . self::MAX],
             'application_ids.*' => ['required', 'uuid', 'distinct', 'exists:applications,id'],
             'first_at' => ['nullable', 'date'],
-            'minutes_between' => ['nullable', 'integer', 'min:0', 'max:480'],
+            'minutes_between' => ['nullable', 'integer', 'min:10', 'max:480'],
         ];
     }
 }

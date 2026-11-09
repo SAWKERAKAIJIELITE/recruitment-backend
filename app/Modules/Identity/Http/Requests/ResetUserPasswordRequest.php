@@ -16,7 +16,18 @@ class ResetUserPasswordRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'password' => ['required', 'string', 'max:255', 'confirmed', Password::min(8)->letters()->mixedCase()->numbers()->symbols()],
+            'password' => [
+                'required',
+                'string',
+                'max:255',
+                'confirmed',
+                Password::min(8) // Minimum length of 8 characters
+                    ->letters()          // Must contain at least one letter
+                    ->mixedCase()        // Must contain both uppercase and lowercase letters
+                    ->numbers()          // Must contain at least one number
+                    ->symbols()          // Must contain at least one special character (!@#$%^&*)
+                // ->uncompromised(),
+            ],
         ];
     }
 }

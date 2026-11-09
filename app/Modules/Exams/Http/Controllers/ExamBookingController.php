@@ -15,13 +15,13 @@ use App\Modules\Exams\Http\Resources\ExamBookingResource;
 use App\Modules\Exams\Models\ExamAttempt;
 use App\Modules\Exams\Models\ExamBooking;
 use App\Modules\Exams\Queries\ExamQueue;
-use App\Modules\Recruitment\Http\Resources\ApplicationSummaryResource;
+use App\Modules\Recruitment\Http\Resources\ApplicationIdentityResource;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Bookings, attempts and hand marks (D-074, D-075). Reading: exams.manage, candidates.manage or reports.view.
+ * Bookings, attempts and hand marks (D-074, D-075). Reading: exams.view.
  * Cancelling and entering marks: exams.manage. More time for one attempt: attempts.extend.
  */
 class ExamBookingController extends Controller
@@ -30,13 +30,14 @@ class ExamBookingController extends Controller
      * The exam queue
      *
      * Applications awaiting their exam with no booking waiting or undecided, longest wait first. Takes the filters
-     * of the applications list (`job_position_id` for a session's position); 25 per page.
+     * of the applications list (`job_position_id` for a session's position); 25 per page. Each entry shows who the
+     * candidate is and where the application stands (D-086).
      */
     public function queue(Request $request): AnonymousResourceCollection
     {
         $filters = $request->validate(ExamQueue::rules());
 
-        return ApplicationSummaryResource::collection(ExamQueue::query($filters)->with(ApplicationSummaryResource::RELATIONS)->paginate(25)->withQueryString());
+        return ApplicationIdentityResource::collection(ExamQueue::query($filters)->with(ApplicationIdentityResource::RELATIONS)->paginate(25)->withQueryString());
     }
 
     /** One booking, with its attempt, hand marks (every revision) and result. */
@@ -71,7 +72,7 @@ class ExamBookingController extends Controller
      * The marks of the hand-marked parts (التجويد) for a candidate who started the exam: `marks` [{part_id, mark}],
      * out of each part's maximum. When the online part is closed and every hand mark is in, the result is decided
      * and the application moves. A mark already entered changes only with `reason` (a correction, kept); once the
-     * result is decided, that also needs the individual permission exam_results.correct, and the result is revised
+     * result is decided, that also needs the permission exam_results.correct, and the result is revised
      * (a correction event when passed / failed changes).
      */
     public function marks(ManualMarksRequest $request, ExamBooking $booking, ExamResults $results): ExamBookingResource
@@ -98,7 +99,7 @@ class ExamBookingController extends Controller
     /**
      * More time for one attempt
      *
-     * Individual permission attempts.extend: a latecomer, a power cut at one desk. Only while it is running; the
+     * Permission attempts.extend: a latecomer, a power cut at one desk. Only while it is running; the
      * previous and new deadline and the reason are kept.
      */
     public function extend(ExtendExamRequest $request, ExamAttempt $attempt, ExtendAttempt $extend): ExamBookingResource

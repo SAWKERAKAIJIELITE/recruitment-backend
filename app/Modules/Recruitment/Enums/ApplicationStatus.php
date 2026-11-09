@@ -3,14 +3,16 @@
 namespace App\Modules\Recruitment\Enums;
 
 /**
- * Current status of an application (analysis doc §03, diagram 03; D-037).
+ * Current status of an application (analysis doc §03, diagram 03; D-037, D-087).
  * The legal moves live here, in one place; the database stores the same values (CHECK).
  *
- * An application is live until it ends: its contract ended without renewal, or authorized staff closed it.
+ * An application opens as received (by hand or from an approved import) and enters the lifecycle when Recruitment
+ * starts it. It is live until it ends: its contract ended without renewal, or authorized staff closed it.
  * A person can have only one live application at a time.
  */
 enum ApplicationStatus: string
 {
+    case Received = 'received';
     case AwaitingExam = 'awaiting_exam';
     case ExamFailed = 'exam_failed';
     case ExamAbsent = 'exam_absent';
@@ -25,6 +27,7 @@ enum ApplicationStatus: string
     public function labelAr(): string
     {
         return match ($this) {
+            self::Received => 'مستلم بانتظار البدء',
             self::AwaitingExam => 'بانتظار الاختبار',
             self::ExamFailed => 'راسب بالاختبارات',
             self::ExamAbsent => 'غائب عن الاختبارات',
@@ -41,7 +44,7 @@ enum ApplicationStatus: string
     /**
      * Legal next statuses (keyed by value) and the type of decision each one requires.
      * Every status before a written contract can be closed by authorized staff; a written contract
-     * ends only through contract_ended.
+     * ends only through contract_ended. A received application starts (to awaiting_exam) or is closed.
      *
      * @return array<string, DecisionType>
      */
@@ -50,6 +53,7 @@ enum ApplicationStatus: string
         $close = [self::Closed->value => DecisionType::Closure];
 
         return match ($this) {
+            self::Received => [self::AwaitingExam->value => DecisionType::Started] + $close,
             self::AwaitingExam => [
                 self::AwaitingInterview->value => DecisionType::Outcome,
                 self::ExamFailed->value => DecisionType::Outcome,

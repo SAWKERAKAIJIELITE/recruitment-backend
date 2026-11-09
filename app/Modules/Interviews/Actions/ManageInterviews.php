@@ -24,9 +24,9 @@ use Illuminate\Validation\ValidationException;
  *    one by one, or several applications into one sitting at successive times;
  *  - reschedule or cancel a waiting interview, with a reason (kept);
  *  - record the committee's result, which moves the application (the interview is the cause of that event);
- *  - correct a recorded result (individual permission): a new revision, and a correction event when the result
+ *  - correct a recorded result (interviews.correct): a new revision, and a correction event when the result
  *    changes, allowed only while that result is still the application's latest decision;
- *  - accept an absence excuse (individual permission): back to awaiting_interview, optionally with the next
+ *  - accept an absence excuse (exceptions.approve): back to awaiting_interview, optionally with the next
  *    appointment. The absent result stays: the new appointment is a new round.
  *
  * An appointment is ['sitting_id' => ..., 'scheduled_at' => ?]: a sitting (a committee, or a one-off sitting's single
@@ -62,11 +62,13 @@ class ManageInterviews
             $sitting = InterviewSitting::query()->whereKey($sitting->id)->sharedLock()->firstOrFail();
             // Locked in one order (by id) first: two bookings sharing applications in another order never deadlock.
             Application::query()->whereKey($applicationIds)->orderBy('id')->lockForUpdate()->get();
+            $this->assertOpen($sitting, 'sitting');
             $time = Date::parse($firstAt ?? $sitting->starts_at);
             $this->assertWithinSitting($sitting, $time, 'first_at');
             $booked = [];
 
             foreach (array_values($applicationIds) as $index => $id) {
+                $this->assertWithinSitting($sitting, $time, "application_ids.{$index}");   // the last ones may pass its end
                 $application = $this->lockBookable(Application::query()->findOrFail($id), "application_ids.{$index}");
                 $booked[] = $this->book($application, $sitting, $time, $actor);
                 $time = $time->copy()->addMinutes($minutesBetween);
@@ -83,6 +85,11 @@ class ManageInterviews
             // not moved.
             $this->assertStatus($this->lockApplication($interview->application), ApplicationStatus::AwaitingInterview);
             $interview = $this->lockScheduled($interview);
+
+            if ($interview->sitting->hasEnded()) {
+                $this->fail('interview', 'interviews.interview_sitting_ended', ['end' => $interview->sitting->ends_at->toIso8601String()]);
+            }
+
             $from = ['sitting_id' => $interview->sitting_id, 'scheduled_at' => $interview->scheduled_at];
             [$sitting, $time] = $this->resolve($appointment, $interview);
 
@@ -134,7 +141,7 @@ class ManageInterviews
             $interview = $this->lockScheduled($interview);
             $this->assertStatus($application, ApplicationStatus::AwaitingInterview);
 
-            $values = $this->resultValues($data + [$data['held_at'] ?? 'held_at' => $interview->scheduled_at], $interview);
+            $values = $this->resultValues($data + ['held_at' => $interview->scheduled_at], $interview);   // `+` keeps a given held_at
             $now = Date::now();
 
             $interview->forceFill($values + ['status' => InterviewStatus::Recorded, 'recorded_by' => $actor->id, 'recorded_at' => $now])->save();
@@ -266,16 +273,30 @@ class ManageInterviews
         }
 
         $sitting = InterviewSitting::query()->whereKey($sittingId)->sharedLock()->firstOrFail();
+        $this->assertOpen($sitting, 'sitting_id');
         $time ??= $current?->sitting_id === $sitting->id ? $current->scheduled_at : $sitting->starts_at;
         $this->assertWithinSitting($sitting, Date::parse($time), 'scheduled_at');
 
         return [$sitting, Date::parse($time)];
     }
 
+    /** From its start, before its end. */
     private function assertWithinSitting(InterviewSitting $sitting, CarbonInterface $time, string $field): void
     {
         if ($time->lessThan($sitting->starts_at)) {
             $this->fail($field, 'interviews.before_sitting_start', ['start' => $sitting->starts_at->toIso8601String()]);
+        }
+
+        if ($time->greaterThanOrEqualTo($sitting->ends_at)) {
+            $this->fail($field, 'interviews.after_sitting_end', ['end' => $sitting->ends_at->toIso8601String()]);
+        }
+    }
+
+    /** Nothing is booked or moved into a sitting that has ended (the absent are recorded, not moved; D-084). */
+    private function assertOpen(InterviewSitting $sitting, string $field): void
+    {
+        if ($sitting->hasEnded()) {
+            $this->fail($field, 'interviews.sitting_ended', ['end' => $sitting->ends_at->toIso8601String()]);
         }
     }
 

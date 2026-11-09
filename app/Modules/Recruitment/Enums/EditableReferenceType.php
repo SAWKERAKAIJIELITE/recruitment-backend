@@ -23,4 +23,10 @@ enum EditableReferenceType: string
     {
         return ReferenceType::from($this->value);
     }
+
+    /** The permission that changes the list: its office's (D-085). Contract types are the Contracts office's. */
+    public function managedBy(): string
+    {
+        return $this === self::ContractTypes ? 'contracts.manage' : 'candidates.manage';
+    }
 }

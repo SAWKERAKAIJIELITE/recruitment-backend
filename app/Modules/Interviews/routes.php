@@ -1,7 +1,6 @@
 <?php
 
 use App\Modules\Identity\Http\Middleware\EnsureStaffIsActive;
-use App\Modules\Identity\Http\Middleware\RequireAnyPermission;
 use App\Modules\Interviews\Http\Controllers\InterviewController;
 use App\Modules\Interviews\Http\Controllers\InterviewQueueController;
 use App\Modules\Interviews\Http\Controllers\InterviewSittingController;
@@ -9,7 +8,8 @@ use Illuminate\Support\Facades\Route;
 
 // Every route here needs a signed-in, active staff user (D-059).
 Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('api/v1/staff')->group(function () {
-    Route::middleware(RequireAnyPermission::class . ':interviews.manage,candidates.manage,reports.view')->group(function () {
+    // The Exams and Interviews office and the general manager (D-085).
+    Route::middleware('can:interviews.view')->group(function () {
         Route::get('interview-sittings', [InterviewSittingController::class, 'index']);
         Route::get('interview-sittings/{sitting}', [InterviewSittingController::class, 'show'])->whereUuid('sitting');
         Route::get('interviews', [InterviewController::class, 'index']);
@@ -29,7 +29,6 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
         Route::post('interviews/{interview}/result', [InterviewController::class, 'record'])->whereUuid('interview');
     });
 
-    // Individual permissions (never given by a role).
     Route::post('interviews/{interview}/correct', [InterviewController::class, 'correct'])->whereUuid('interview')->middleware('can:interviews.correct');
     Route::post('applications/{application}/interview-excuse', [InterviewController::class, 'excuse'])->whereUuid('application')->middleware('can:exceptions.approve');
 });

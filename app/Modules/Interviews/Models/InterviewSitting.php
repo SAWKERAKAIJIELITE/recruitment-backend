@@ -10,15 +10,18 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Date;
 
 /**
  * Where, when and before whom interviews happen (D-059, D-061, D-067): a committee sitting, or a one-off sitting (a
- * single interviewer, exactly one member). Both hold many candidates, each with their own time from its start. It
- * always has at least one member, and no other sitting has the same start, place and members.
+ * single interviewer, exactly one member). Both hold many candidates, each with their own time between its start and
+ * its end. It always has at least one member; the same committee never sits twice at overlapping times, and a staff
+ * account is a member of one sitting at a time.
  *
  * @property string $id
  * @property SittingKind $kind
  * @property CarbonInterface $starts_at
+ * @property CarbonInterface $ends_at
  * @property string $location
  * @property ?string $committee_name
  */
@@ -26,13 +29,13 @@ class InterviewSitting extends Model
 {
     use HasUuids;
 
-    protected $fillable = ['starts_at', 'location', 'committee_name', 'notes'];
+    protected $fillable = ['starts_at', 'ends_at', 'location', 'committee_name', 'notes'];
 
     protected $attributes = ['kind' => 'committee'];
 
     protected function casts(): array
     {
-        return ['kind' => SittingKind::class, 'starts_at' => 'datetime'];
+        return ['kind' => SittingKind::class, 'starts_at' => 'datetime', 'ends_at' => 'datetime'];
     }
 
     public function members(): HasMany
@@ -53,6 +56,12 @@ class InterviewSitting extends Model
     public function isOneOff(): bool
     {
         return $this->kind === SittingKind::OneOff;
+    }
+
+    /** Over: nothing more is booked into it, and its interviews are not moved (record them, absent if so, or cancel them). */
+    public function hasEnded(?CarbonInterface $at = null): bool
+    {
+        return ($at ?? Date::now())->greaterThanOrEqualTo($this->ends_at);
     }
 
     /** Its committee is frozen once a result was entered for any of its interviews. */
