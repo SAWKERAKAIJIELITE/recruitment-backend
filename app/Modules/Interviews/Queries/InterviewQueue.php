@@ -25,10 +25,16 @@ use Illuminate\Validation\ValidationException;
  *    interview absence excuse first; asc puts them last).
  *
  * Ties are always broken by the longest wait, then the nomination.
+ *
+ * Each entry's `queue_position` is its place in the whole queue in that order, counted before the filters (D-094):
+ * with a job position filter, the first row shows how many wait ahead of it in every position.
  */
 final class InterviewQueue
 {
     public const MAX_RULES = 10;
+
+    /** When it last became awaiting_interview. */
+    private const WAITING_SINCE = "(select max(e.occurred_at) from application_status_events e where e.application_id = applications.id and e.to_status = 'awaiting_interview')";
 
     private const PREFERENCES = [
         'specialization_id',
@@ -46,7 +52,7 @@ final class InterviewQueue
         'studying_years' => ['applications.studying_years', 'desc'],
         // Youngest first is the latest birth date first.
         'age' => ['(select c.birth_date from candidates c where c.id = applications.candidate_id)', 'asc', true],
-        'waiting_since' => ['waiting_since', 'asc'],
+        'waiting_since' => [self::WAITING_SINCE, 'asc'],
         // The exam average of the result that admitted it (its latest round and revision; none for older outcomes).
         'exam_average' => ['(select r.average from exam_results r join exam_attempts t on t.id = r.attempt_id join exam_bookings b on b.id = t.booking_id where b.application_id = applications.id order by b.round desc, r.revision desc limit 1)', 'desc'],
         'nominated_at' => ['applications.created_at', 'asc'],
@@ -71,30 +77,39 @@ final class InterviewQueue
         return ['lists' => self::PREFERENCES, 'values' => array_keys(self::VALUES)];
     }
 
-    /** @param array<string, mixed> $filters validated with rules() */
+    /**
+     * The whole queue is numbered in the priority order first (`queue_position`), then the filters choose the rows:
+     * the positions stay those of the whole queue.
+     *
+     * @param  array<string, mixed>  $filters  validated with rules()
+     */
     public static function query(array $filters): Builder
     {
-        $query = Application::query()
+        $orders = [];
+
+        foreach (array_values((array) ($filters['priority'] ?? [])) as $index => $rule) {
+            $orders[] = self::order((string) $rule, "priority.{$index}");
+        }
+
+        $orders = [...$orders, [self::WAITING_SINCE . ' asc', []], ['applications.created_at asc', []], ['applications.id asc', []]];
+
+        $queue = Application::query()
             ->select('applications.*')
-            ->selectSub(fn($sub) => $sub->from('application_status_events as e')
-                ->selectRaw('max(e.occurred_at)')
-                ->whereColumn('e.application_id', 'applications.id')
-                ->where('e.to_status', ApplicationStatus::AwaitingInterview->value), 'waiting_since')
+            ->selectRaw(self::WAITING_SINCE . ' as waiting_since')
+            ->selectRaw('row_number() over (order by ' . implode(', ', array_column($orders, 0)) . ') as queue_position', array_merge(...array_column($orders, 1)))
             ->where('applications.current_status', ApplicationStatus::AwaitingInterview)
             ->whereNotExists(fn($interview) => $interview->from('interviews')
                 ->whereColumn('interviews.application_id', 'applications.id')
                 ->where('interviews.status', InterviewStatus::Scheduled->value));
 
+        $query = Application::query()->fromSub($queue, 'applications')->select('applications.*');
         ApplicationSearch::filter($query, $filters);
 
-        foreach (array_values((array) ($filters['priority'] ?? [])) as $index => $rule) {
-            self::order($query, (string) $rule, "priority.{$index}");
-        }
-
-        return $query->orderBy('waiting_since')->orderBy('applications.created_at')->orderBy('applications.id');
+        return $query->orderBy('applications.queue_position');
     }
 
-    private static function order(Builder $query, string $rule, string $field): void
+    /** @return array{0: string, 1: list<int>} one rule as SQL to order by, with its bindings */
+    private static function order(string $rule, string $field): array
     {
         [$name, $argument] = array_pad(explode(':', trim($rule), 2), 2, null);
 
@@ -116,9 +131,8 @@ final class InterviewQueue
             }
 
             $cases = implode(' ', array_map(fn($position) => "WHEN ? THEN {$position}", array_keys($ids)));
-            $query->orderByRaw("CASE applications.{$name} {$cases} ELSE " . count($ids) . ' END', array_map('intval', $ids));
 
-            return;
+            return ["CASE applications.{$name} {$cases} ELSE " . count($ids) . ' END', array_map('intval', $ids)];
         }
 
         if (! isset(self::VALUES[$name]) || ! in_array($argument, [null, 'asc', 'desc'], true)) {
@@ -130,7 +144,7 @@ final class InterviewQueue
         // Age runs opposite to the birth date.
         $sqlDirection = $name === 'age' ? ($direction === 'asc' ? 'desc' : 'asc') : $direction;
 
-        $query->orderByRaw("{$expression} {$sqlDirection} nulls last");
+        return ["{$expression} {$sqlDirection} nulls last", []];
     }
 
     private static function fail(string $field, string $key, array $replace): never

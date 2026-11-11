@@ -16,10 +16,11 @@ use App\Modules\Interviews\Http\Resources\InterviewResource;
 use App\Modules\Interviews\Models\Interview;
 use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Models\Application;
+use App\Support\ArabicText;
+use App\Support\BusinessDay;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -34,13 +35,17 @@ class InterviewController extends Controller
     /**
      * List interviews
      *
-     * Soonest first, 25 per page. Filters: `status` (scheduled, recorded, cancelled), `result` (passed, failed,
-     * absent), `excused` (with result=absent: 1 excuse accepted, 0 not), `sitting_id`, `committee_name` (part of),
-     * `job_position_id`, `nominating_entity_id`, `from` / `to` (appointment day, UTC, included).
+     * Soonest first, 25 per page (`per_page` up to 100). Filters: `q` (the candidate's name in any spelling, or the
+     * national or nomination number in any digits), `status` (scheduled, recorded, cancelled), `result` (passed,
+     * failed, absent), `excused` (with result=absent: 1 excuse accepted, 0 not), `sitting_id`, `committee_name` and
+     * `location` (part of), `job_position_id`, `nominating_entity_id`, `residence_district_id`, `from` / `to`
+     * (appointment day in Damascus, included). `sort`: scheduled_at (default), held_at, nomination_number, full_name;
+     * `direction`: asc (default) or desc.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
         $filters = $request->validate([
+            'q' => ['nullable', 'string', 'max:150'],
             'status' => ['nullable', Rule::enum(InterviewStatus::class)],
             'result' => ['nullable', Rule::enum(InterviewResult::class)],
             'excused' => ['nullable', Rule::in(['0', '1', 'true', 'false'])],
@@ -49,9 +54,15 @@ class InterviewController extends Controller
             'location' => ['nullable', 'string', 'max:150'],
             'job_position_id' => ['nullable', 'integer', Rule::exists('job_positions', 'id')],
             'nominating_entity_id' => ['nullable', 'integer', Rule::exists('nominating_entities', 'id')],
+            'residence_district_id' => ['nullable', 'integer', Rule::exists('districts', 'id')],
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
+            'sort' => ['nullable', Rule::in(['scheduled_at', 'held_at', 'nomination_number', 'full_name'])],
+            'direction' => ['nullable', Rule::in(['asc', 'desc'])],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
+        $direction = $filters['direction'] ?? 'asc';
+        $person = fn() => DB::table('applications')->whereColumn('applications.id', 'interviews.application_id');
 
         $excuse = fn($query) => $query->select(DB::raw(1))->from('application_status_events')
             ->whereColumn('application_status_events.interview_id', 'interviews.id')
@@ -59,19 +70,37 @@ class InterviewController extends Controller
 
         $interviews = Interview::query()
             ->with(InterviewResource::RELATIONS)
-            ->when($filters['status'] ?? null, fn($query, $value) => $query->where('status', $value))
-            ->when($filters['result'] ?? null, fn($query, $value) => $query->where('result', $value))
+            ->whenGiven($filters['q'] ?? null, function ($query, string $q) {
+                $digits = ArabicText::digitsToAscii(trim($q));
+                $like = '%' . addcslashes(ArabicText::searchKey($q), '\\%_') . '%';
+
+                $query->whereHas('application', fn($application) => $application->where(fn($inner) => $inner
+                    ->where('nomination_number', $digits)
+                    ->orWhereHas('candidate', fn($candidate) => $candidate->where('national_number', $digits)->orWhere('name_search_key', 'like', $like))));
+            })
+            ->whenGiven($filters['status'] ?? null, fn($query, $value) => $query->where('status', $value))
+            ->whenGiven($filters['result'] ?? null, fn($query, $value) => $query->where('result', $value))
             ->when(isset($filters['excused']), fn($query) => $request->boolean('excused') ? $query->whereExists($excuse) : $query->whereNotExists($excuse))
-            ->when($filters['sitting_id'] ?? null, fn($query, $value) => $query->where('sitting_id', $value))
-            ->when($filters['committee_name'] ?? null, fn($query, $value) => $query->whereHas('sitting', fn($sitting) => $sitting->where('committee_name', 'ilike', '%' . addcslashes($value, '\\%_') . '%')))
-            ->when($filters['location'] ?? null, fn($query, $value) => $query->whereHas('sitting', fn($sitting) => $sitting->where('location', 'ilike', '%' . addcslashes($value, '\\%_') . '%')))
-            ->when($filters['job_position_id'] ?? null, fn($query, $value) => $query->whereHas('application', fn($application) => $application->where('job_position_id', $value)))
-            ->when($filters['nominating_entity_id'] ?? null, fn($query, $value) => $query->whereHas('application', fn($application) => $application->where('nominating_entity_id', $value)))
-            ->when($filters['from'] ?? null, fn($query, $date) => $query->where('scheduled_at', '>=', $date))
-            ->when($filters['to'] ?? null, fn($query, $date) => $query->where('scheduled_at', '<', Carbon::parse($date)->addDay()->toDateString()))
+            ->whenGiven($filters['sitting_id'] ?? null, fn($query, $value) => $query->where('sitting_id', $value))
+            ->whenGiven($filters['committee_name'] ?? null, fn($query, $value) => $query->whereHas('sitting', fn($sitting) => $sitting->where('committee_name', 'ilike', '%' . addcslashes($value, '\\%_') . '%')))
+            ->whenGiven($filters['location'] ?? null, fn($query, $value) => $query->whereHas('sitting', fn($sitting) => $sitting->where('location', 'ilike', '%' . addcslashes($value, '\\%_') . '%')))
+            ->whenGiven($filters['job_position_id'] ?? null, fn($query, $value) => $query->whereHas('application', fn($application) => $application->where('job_position_id', $value)))
+            ->whenGiven($filters['nominating_entity_id'] ?? null, fn($query, $value) => $query->whereHas('application', fn($application) => $application->where('nominating_entity_id', $value)))
+            ->whenGiven($filters['residence_district_id'] ?? null, fn($query, $value) => $query->whereHas('application', fn($application) => $application->where('residence_district_id', $value)))
+            ->whenGiven($filters['from'] ?? null, fn($query, $date) => $query->where('scheduled_at', '>=', BusinessDay::startOf($date)))
+            ->whenGiven($filters['to'] ?? null, fn($query, $date) => $query->where('scheduled_at', '<', BusinessDay::startOfNext($date)))
+            ->when(
+                $filters['sort'] ?? 'scheduled_at',
+                fn($query, string $sort) => match ($sort) {
+                    'nomination_number' => $query->orderBy($person()->select('applications.nomination_number'), $direction),
+                    'full_name' => $query->orderBy($person()->join('candidates', 'candidates.id', '=', 'applications.candidate_id')->select('candidates.name_search_key'), $direction),
+                    'held_at' => $query->orderByRaw('held_at ' . $direction . ' nulls last'),
+                    default => $query->orderBy('scheduled_at', $direction),
+                },
+            )
             ->orderBy('scheduled_at')
             ->orderBy('id')
-            ->paginate(25)
+            ->paginate((int) ($filters['per_page'] ?? 25))
             ->withQueryString();
 
         return InterviewResource::collection($interviews);

@@ -56,9 +56,7 @@ Route::middleware('api')->prefix('api/v1')->group(function () {
             Route::post('users/{user}/deactivate', [StaffUserController::class, 'deactivate'])->whereUuid('user');
             Route::post('users/{user}/activate', [StaffUserController::class, 'activate'])->whereUuid('user');
             Route::put('users/{user}/role', [StaffUserController::class, 'changeRole'])->whereUuid('user');
-        });
-
-        Route::middleware(['auth:staff', EnsureStaffIsActive::class, 'can:users.add'])->group(function () {
+            // Adding staff users is the administrator's too (D-092).
             Route::post('new', [StaffUserController::class, 'addStaff']);
         });
     });

@@ -34,6 +34,20 @@ final class BusinessDay
         return Date::parse($day instanceof CarbonInterface ? $day->toDateString() : $day)->toDateString() === self::today();
     }
 
+    /** The first instant of a business day, in UTC: a list's `from` (D-093). */
+    public static function startOf(CarbonInterface|string $day): CarbonInterface
+    {
+        $date = $day instanceof CarbonInterface ? $day->toDateString() : $day;
+
+        return Date::parse($date, self::timezone())->startOfDay()->utc();
+    }
+
+    /** The first instant of the next business day, in UTC: a list's `to`, included, is before it (D-093). */
+    public static function startOfNext(CarbonInterface|string $day): CarbonInterface
+    {
+        return self::startOf(Date::parse($day instanceof CarbonInterface ? $day->toDateString() : $day)->addDay()->toDateString());
+    }
+
     /** The last instant of a business day, in UTC (a decision dated that day, placed after anything else that day). */
     public static function endOf(CarbonInterface|string $day): CarbonInterface
     {

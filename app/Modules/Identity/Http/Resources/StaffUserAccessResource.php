@@ -24,7 +24,15 @@ class StaffUserAccessResource extends JsonResource
             'full_name' => $this->full_name,
             'is_active' => $this->is_active,
             /** When, by whom and why the account was deactivated (null while active). */
-            'deactivation' => $this->deactivated_at === null ? null : ['at' => $this->deactivated_at->toIso8601String(), 'by' => $this->deactivated_by, 'reason' => $this->deactivation_reason],
+            'deactivation' => $this->deactivated_at === null ? null : [
+                'at' => $this->deactivated_at->toIso8601String(),
+                'reason' => $this->deactivation_reason,
+                'by' => $this->whenLoaded('deactivatedBy', fn() => $this->deactivatedBy === null ? null : [
+                    'id' => $this->deactivatedBy->id,
+                    'username' => $this->deactivatedBy->username,
+                    'full_name' => $this->deactivatedBy->full_name,
+                ]),
+            ],
             'last_login_at' => $this->last_login_at,
             /** The user's one role (null only for an account set up outside the API). */
             'role' => $this->role === null ? null : ['slug' => $this->role->slug, 'label' => $this->role->label_ar, 'office' => $this->role->kind()->isOffice()],

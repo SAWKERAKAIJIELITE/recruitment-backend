@@ -30,6 +30,7 @@ class InterviewResource extends JsonResource
         $sitting = fn(InterviewSitting $sitting) => [
             'id' => $sitting->id,
             'kind' => $sitting->kind->value,
+            'kind_label' => $sitting->kind->labelAr(),
             'starts_at' => $sitting->starts_at->toIso8601String(),
             'ends_at' => $sitting->ends_at->toIso8601String(),
             'location' => $sitting->location,

@@ -31,7 +31,7 @@ class StaffUserController extends Controller
     /** One staff user's role and permissions. */
     public function show(StaffUser $user): StaffUserAccessResource
     {
-        return new StaffUserAccessResource($user->load('role.permissions'));
+        return new StaffUserAccessResource($user->load(['role.permissions', 'deactivatedBy']));
     }
 
     /**
@@ -82,8 +82,8 @@ class StaffUserController extends Controller
     /**
      * Add a staff user
      *
-     * Creates the account with its role. Without users.manage, the role may only carry permissions the
-     * caller holds (403 otherwise). The new user still needs an approved device to log in.
+     * Creates the account with its role (users.manage: the system administrator). The new user still needs an
+     * approved device to log in.
      */
     public function addStaff(RegisterUserRequest $request, RegisterStaffUser $register): JsonResponse
     {

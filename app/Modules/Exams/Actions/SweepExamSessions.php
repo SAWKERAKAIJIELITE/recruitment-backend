@@ -57,7 +57,7 @@ class SweepExamSessions
 
         $late = ExamBooking::query()
             ->where('status', BookingStatus::Booked)
-            ->when($sessionId, fn($query, $id) => $query->where('session_id', $id))
+            ->whenGiven($sessionId, fn($query, $id) => $query->where('session_id', $id))
             ->whereHas('session', fn($session) => $session->whereRaw("starts_at + late_minutes * interval '1 minute' <= ?", [$now]))
             ->pluck('id');
 
@@ -68,7 +68,7 @@ class SweepExamSessions
         $expired = ExamAttempt::query()
             ->where('status', AttemptStatus::InProgress)
             ->where('deadline_at', '<=', $now)
-            ->when($sessionId, fn($query, $id) => $query->where('session_id', $id))
+            ->whenGiven($sessionId, fn($query, $id) => $query->where('session_id', $id))
             ->pluck('id');
 
         foreach ($expired as $id) {

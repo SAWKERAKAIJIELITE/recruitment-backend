@@ -5,9 +5,7 @@ namespace App\Modules\Reports\Support;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Queries\ApplicationSearch;
 use App\Modules\Recruitment\Support\ApplicationRules;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\Validator;
 
 /**
  * The filters every report takes: those of the applications list (which applications), and the period (when; see
@@ -18,16 +16,16 @@ final class ReportFilters
     /** Ordering and paging belong to the list screen, not to a report. */
     private const LIST_ONLY = ['per_page'];
 
-    /** @return array<string, mixed> validated */
-    public static function validate(Request $request, array $extra = []): array
+    /** @return array<string, list<mixed>> the rules of every report's filters (ReportRequest) */
+    public static function rules(): array
     {
-        ApplicationSearch::prepare($request);
-        $rules = array_diff_key(ApplicationSearch::rules(), array_flip(self::LIST_ONLY)) + ReportPeriod::rules() + $extra;
+        return array_diff_key(ApplicationSearch::rules(), array_flip(self::LIST_ONLY)) + ReportPeriod::rules();
+    }
 
-        $validator = validator($request->query(), $rules);
-        $validator->after(fn(Validator $validator) => ReportPeriod::after($validator, $request->query()));
-
-        return array_filter($validator->validate(), fn($value) => $value !== null && $value !== '' && $value !== []);
+    /** @return array<string, mixed> the validated filters that were given ("0" is given; D-091) */
+    public static function given(array $validated): array
+    {
+        return array_filter($validated, fn($value) => $value !== null && $value !== '' && $value !== []);
     }
 
     /** @return array<string, mixed> only the filters on applications */

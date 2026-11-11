@@ -29,13 +29,12 @@ class RolesAndPermissionsSeeder extends Seeder
         'applications.start' => ['بدء دورة الطلبات المستلمة', false],
         'applications.close' => ['إغلاق طلب الترشيح وإنهاؤه', false],
         'imports.view' => ['عرض دفعات الاستيراد', true],
-        'imports.manage' => ['استيراد ملفات Excel', false],
-        'imports.approve' => ['اعتماد دفعات الاستيراد', false],
+        'imports.manage' => ['استيراد ملفات Excel واعتمادها', false],
         // Exams and interviews
         'exams.view' => ['عرض مواد الاختبار وخططه وجلساته ونتائجه', true],
         'exam_bank.manage' => ['بنك الأسئلة وخطط الاختبار', false],
         'exams.manage' => ['جدولة جلسات الاختبار وإدخال العلامات اليدوية', false],
-        'attempts.extend' => ['تعديل مدة محاولة نشطة', false],
+        'attempts.extend' => ['تمديد وقت الاختبار الجاري لمرشح أو لجميع المرشحين', false],
         'exam_results.correct' => ['تصحيح علامة يدوية بعد صدور نتيجة الاختبار', false],
         'pass_policies.manage' => ['إضافة إصدار جديد من قواعد النجاح', false],
         'exceptions.approve' => ['استثناء الرسوب / قبول العذر', false],
@@ -53,8 +52,7 @@ class RolesAndPermissionsSeeder extends Seeder
         'reports.view' => ['لوحة المؤشرات والتقارير الشاملة', true],
         'audit.view' => ['عرض سجلات التدقيق', true],
         'audit.view_related' => ['عرض تدقيق عمليات القسم فقط', true],
-        'users.manage' => ['إدارة المستخدمين والأدوار', false],
-        'users.add' => ['إضافة المستخدمين', false],
+        'users.manage' => ['إدارة المستخدمين والأدوار وإضافتهم', false],
         'devices.approve' => ['اعتماد الأجهزة الموثوقة وإلغاؤها', false],
     ];
 
@@ -67,7 +65,6 @@ class RolesAndPermissionsSeeder extends Seeder
             'applications.close',
             'imports.view',
             'imports.manage',
-            'imports.approve',
             'audit.view_related',
         ],
         'exams_interviews' => [

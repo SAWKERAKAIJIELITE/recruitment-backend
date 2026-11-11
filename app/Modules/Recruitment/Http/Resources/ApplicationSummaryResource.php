@@ -65,6 +65,7 @@ class ApplicationSummaryResource extends JsonResource
             'notes' => $this->notes,
             'candidate' => new CandidateResource($this->candidate),
             'created_at' => $this->created_at,
+            'updated_at' => $this->updated_at,
         ];
     }
 }

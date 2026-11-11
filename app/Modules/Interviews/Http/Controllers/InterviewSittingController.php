@@ -12,12 +12,12 @@ use App\Modules\Interviews\Http\Requests\UpdateSittingRequest;
 use App\Modules\Interviews\Http\Resources\InterviewResource;
 use App\Modules\Interviews\Http\Resources\InterviewSittingResource;
 use App\Modules\Interviews\Models\InterviewSitting;
+use App\Support\BusinessDay;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Validation\Rule;
 
@@ -32,7 +32,7 @@ class InterviewSittingController extends Controller
      *
      * Every sitting; `kind` committee or one_off narrows it, `member` (a staff user's id) keeps the sittings that
      * staff user sits on, `open` 1 keeps those not ended yet (to book into; 0: the ended ones). `from` / `to`
-     * (YYYY-MM-DD, UTC days, included) on the starting time; soonest first; 25 per page.
+     * (YYYY-MM-DD, Damascus days, included) on the starting time; soonest first; 25 per page.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -47,10 +47,10 @@ class InterviewSittingController extends Controller
         $sittings = InterviewSitting::query()
             ->with('members')
             ->withCount('interviews')
-            ->when($filters['kind'] ?? null, fn($query, $kind) => $query->where('kind', $kind))
-            ->when($filters['member'] ?? null, fn($query, $id) => $query->whereHas('members', fn($members) => $members->where('staff_user_id', $id)))
-            ->when($filters['from'] ?? null, fn($query, $date) => $query->where('starts_at', '>=', $date))
-            ->when($filters['to'] ?? null, fn($query, $date) => $query->where('starts_at', '<', Carbon::parse($date)->addDay()->toDateString()))
+            ->whenGiven($filters['kind'] ?? null, fn($query, $kind) => $query->where('kind', $kind))
+            ->whenGiven($filters['member'] ?? null, fn($query, $id) => $query->whereHas('members', fn($members) => $members->where('staff_user_id', $id)))
+            ->whenGiven($filters['from'] ?? null, fn($query, $date) => $query->where('starts_at', '>=', BusinessDay::startOf($date)))
+            ->whenGiven($filters['to'] ?? null, fn($query, $date) => $query->where('starts_at', '<', BusinessDay::startOfNext($date)))
             ->when(isset($filters['open']), fn($query) => $query->where('ends_at', $request->boolean('open') ? '>' : '<=', Date::now()))
             ->orderBy('starts_at')
             ->orderBy('id')
@@ -74,11 +74,12 @@ class InterviewSittingController extends Controller
      *
      * `kind`: committee (default) or one_off, a single interviewer who sees the candidates one by one (exactly one
      * member; `committee_name` optional). `starts_at`, `ends_at` (after the start, within 24 hours), `location`,
-     * `committee_name`, `members` (`name`, `capacity` chair|member|secretary; at most one chair; a staff account by
-     * `staff_user_id`, whose name is then the account's, or someone else by `name`), `notes`. 422 on `starts_at`
-     * when a sitting with the same members overlaps it (wherever it is; the same sitting entered twice, even
-     * seconds apart, is one; spaces and the letter forms ا/ي/ه are ignored), on `members` when one of its staff
-     * accounts sits in an overlapping sitting.
+     * `committee_name`, `members` (`name`, `capacity` chair|member|secretary; at most one chair; the signed-in user
+     * by `staff_user_id` (their own id, from /auth/me; another account is 422 on `members.N.staff_user_id`), whose
+     * name is then the account's, and the others by `name`), `notes`. 422 on `starts_at` when a sitting with the same
+     * members overlaps it (wherever it is; the same sitting entered twice, even seconds apart, is one; spaces and the
+     * letter forms ا/ي/ه are ignored), on `members` when the staff account sits in an overlapping sitting; both carry
+     * `conflict` {reason: duplicate_sitting or staff_overlap, sitting_id, member} next to `errors`.
      */
     public function store(StoreSittingRequest $request, ManageSittings $sittings): JsonResponse
     {
@@ -94,6 +95,7 @@ class InterviewSittingController extends Controller
      * Send only what changes. `members` replaces the committee, refused once a result is recorded in the sitting.
      * A one-off sitting keeps exactly one member. Booked interviews keep their own times, so `starts_at` cannot move
      * after any of them, nor `ends_at` to or before one. The kind never changes. 422 on overlaps as when creating.
+     * New `members` may keep the staff accounts the sitting has, and add the signed-in user's.
      */
     public function update(UpdateSittingRequest $request, InterviewSitting $sitting, ManageSittings $sittings): InterviewSittingResource
     {

@@ -50,7 +50,7 @@ class ApplicationController extends Controller
      * - Yes/no (1/0, true/false): `studies_discontinued`, `works_for_other_government_entity`, `full_commitment`,
      *   `overnight_work`, `candidate_active`.
      * - Ranges (included): `studying_years_min`/`_max`, `quran_parts_min`/`_max`, `birth_date_from`/`_to`,
-     *   `age_min`/`age_max` (whole years today), `from`/`to` (opening date, UTC days). `studying_years`: exact.
+     *   `age_min`/`age_max` (whole years today), `from`/`to` (opening date, Damascus days). `studying_years`: exact.
      * - `created_by`: the staff user who opened it; `import_batch_id`: imported by that batch.
      * - `sort`: `created_at` (default, newest first), `nomination_number`, `full_name`, `birth_date`, `status`;
      *   `direction`: `asc` or `desc`. `per_page`: 5 to 100 (25).
@@ -71,6 +71,46 @@ class ApplicationController extends Controller
             ->withQueryString();
 
         return $full ? ApplicationSummaryResource::collection($applications) : ApplicationIdentityResource::collection($applications);
+    }
+
+    /**
+     * Count applications per status
+     *
+     * For the tiles above the list: how many applications the list's filters match in each status, every status
+     * listed (0 included) in the lifecycle's order, with `total` and `live`. Same filters and meaning as the list
+     * (`from` / `to`: the opening day in Damascus); `status`, `live`, sorting and paging are not used, so each tile
+     * keeps its count whichever is chosen. The other offices may use the identity filters only, as in the list.
+     *
+     * @response array{data: array{total: int, live: int, statuses: list<array{status: string, label: string, live: bool, count: int}>}}
+     */
+    public function counts(Request $request): JsonResponse
+    {
+        ApplicationSearch::prepare($request);
+
+        if (! $request->user()->hasPermission('applications.view')) {
+            ApplicationSearch::assertIdentityOnly($request);
+        }
+
+        $filters = array_diff_key($request->validate(ApplicationSearch::rules()), array_flip(['status', 'live', 'sort', 'direction', 'per_page']));
+        $counts = ApplicationSearch::filter(Application::query(), $filters)
+            ->reorder()
+            ->toBase()
+            ->groupBy('applications.current_status')
+            ->selectRaw('applications.current_status as status, count(*) as count')
+            ->pluck('count', 'status');
+
+        $statuses = array_map(fn(ApplicationStatus $status) => [
+            'status' => $status->value,
+            'label' => $status->labelAr(),
+            'live' => $status->isLive(),
+            'count' => (int) ($counts[$status->value] ?? 0),
+        ], ApplicationStatus::cases());
+
+        return response()->json(['data' => [
+            'total' => array_sum(array_column($statuses, 'count')),
+            'live' => array_sum(array_column(array_filter($statuses, fn(array $row) => $row['live']), 'count')),
+            'statuses' => $statuses,
+        ]]);
     }
 
     /**

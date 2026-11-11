@@ -15,11 +15,11 @@ use App\Modules\Exams\Http\Resources\ExamSessionResource;
 use App\Modules\Exams\Http\Resources\SessionQuestionResource;
 use App\Modules\Exams\Models\ExamBooking;
 use App\Modules\Exams\Models\ExamSession;
+use App\Support\BusinessDay;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
-use Illuminate\Support\Carbon;
 
 /**
  * Exam sessions (D-056, D-073). Reading: exams.view.
@@ -31,7 +31,7 @@ class ExamSessionController extends Controller
     /**
      * List exam sessions
      *
-     * `from` / `to` (YYYY-MM-DD, UTC days, included) on the start; `job_position_id`; soonest first; 25 per page.
+     * `from` / `to` (YYYY-MM-DD, Damascus days, included) on the start; `job_position_id`; soonest first; 25 per page.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -44,9 +44,9 @@ class ExamSessionController extends Controller
         $sessions = ExamSession::query()
             ->with(ExamSessionResource::RELATIONS)
             ->withCount(['questions', 'bookings'])
-            ->when($filters['from'] ?? null, fn($query, $date) => $query->where('starts_at', '>=', $date))
-            ->when($filters['to'] ?? null, fn($query, $date) => $query->where('starts_at', '<', Carbon::parse($date)->addDay()->toDateString()))
-            ->when($filters['job_position_id'] ?? null, fn($query, $id) => $query->whereHas('plan', fn($plan) => $plan->where('job_position_id', $id)))
+            ->whenGiven($filters['from'] ?? null, fn($query, $date) => $query->where('starts_at', '>=', BusinessDay::startOf($date)))
+            ->whenGiven($filters['to'] ?? null, fn($query, $date) => $query->where('starts_at', '<', BusinessDay::startOfNext($date)))
+            ->whenGiven($filters['job_position_id'] ?? null, fn($query, $id) => $query->whereHas('plan', fn($plan) => $plan->where('job_position_id', $id)))
             ->orderBy('starts_at')
             ->orderBy('id')
             ->paginate(25)
@@ -147,7 +147,7 @@ class ExamSessionController extends Controller
         $bookings = ExamBooking::query()
             ->with(ExamBookingResource::relations())
             ->where('session_id', $session->id)
-            ->when($filters['status'] ?? null, fn($query, $status) => $query->where('status', $status))
+            ->whenGiven($filters['status'] ?? null, fn($query, $status) => $query->where('status', $status))
             ->join('applications', 'applications.id', '=', 'exam_bookings.application_id')
             ->orderBy('applications.nomination_number')
             ->select('exam_bookings.*')

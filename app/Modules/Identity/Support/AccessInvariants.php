@@ -35,9 +35,7 @@ final class AccessInvariants
             ->contains(fn(StaffUser $user) => $user->hasPermission(self::MANAGE_USERS));
 
         if (!$someoneCan) {
-            throw ValidationException::withMessages([
-                'permission' => ['This change would leave no active staff user able to manage users.'],
-            ]);
+            throw ValidationException::withMessages(['user' => [__('auth.permission')]]);
         }
     }
 }

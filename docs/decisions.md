@@ -418,7 +418,7 @@ A living record of the design decisions made while building the backend and data
 
 ### D-047 Approving an import is a separate, individual permission (four eyes)
 
-- **Status:** Accepted (owner's rule: "a staff can import an excel file but it needs approval before it can be adopted"); amended by D-085: `imports.approve` is the Recruitment office's, no longer individual, and the uploader still never approves.
+- **Status:** Superseded by D-092 (owner, Step 14: the Recruitment officer approves their own batch; `imports.approve` is folded into `imports.manage`). Was: accepted (owner's rule: "a staff can import an excel file but it needs approval before it can be adopted"); amended by D-085: `imports.approve` is the Recruitment office's, no longer individual, and the uploader still never approves.
 - **Decision:** new permission `imports.approve`, individual-only (granted per user, never by a role). `imports.manage` uploads, corrects, reviews, excludes and cancels; `imports.approve` approves; either may read batches, rows, the original and the report. Whoever uploaded a batch can never approve it, even holding `imports.approve` (403).
 - **Why:** an import creates many people and applications at once; a second person checking the batch before it takes effect is the control the owner asked for.
 
@@ -532,7 +532,7 @@ A living record of the design decisions made while building the backend and data
 
 ### D-058 Adding staff users
 
-- **Status:** Accepted (the owner added `users.add` and `POST /api/v1/staff/new`)
+- **Status:** Accepted (the owner added `users.add` and `POST /api/v1/staff/new`); amended by D-092: `users.add` is gone, `users.manage` (the administrator's) adds staff users, so the limit to one's own permissions below no longer applies.
 - **Decision:** `RegisterStaffUser` creates the account and attaches its first role in one transaction and logs `access.user_created`. Whoever holds `users.add` without `users.manage` may only give a role whose permissions they all hold: otherwise `users.add` could create a system administrator and so reach every permission. The personal number is 4 to 50 digits (`numeric` would also accept `-12`, `1.5`, `1e5`). The password must be strong and is checked against known leaks (`uncompromised()`).
 - **Consequences:** `uncompromised()` calls the Have I Been Pwned range API over the internet (only a hash prefix leaves the server). Without internet access a registration can wait up to 30 seconds (its timeout) and then the password is let through unchecked; drop it if the server has no internet access by policy. A new account still needs an approved device to log in (D-017).
 
@@ -723,11 +723,11 @@ A living record of the design decisions made while building the backend and data
 - **Decision:**
   - Laravel writes a date as `Y-m-d H:i:s` and drops its offset, so a time sent as `09:00+03:00` was stored as `09:00 UTC`, three hours late, in every timestamptz column. The pgsql connection now uses a grammar whose date format keeps the offset (`App\Database\PostgresGrammar`, `Y-m-d H:i:sP`), so the instant meant is stored, whatever zone a client sends. Values read back are unchanged.
   - Days typed or computed for people ("today", a writing day, a contract's state, a reminder window, a results statement's dates) are days of `reports.timezone` (Asia/Damascus), through `App\Support\BusinessDay`. Between midnight and 03:00 in Damascus the UTC day is still yesterday. A decision dated a past day is placed at the end of that Damascus day.
-- **Consequences:** list date filters and the nomination-number year still use UTC days (section 17).
+- **Consequences:** list date filters and the nomination-number year still use UTC days (section 17). Amended by D-093: the lists' `from` / `to` are Damascus days too.
 
 ### D-082 An import approval is of what its approver reviewed
 
-- **Status:** Accepted (review of Step 11). Amends D-047.
+- **Status:** Accepted (review of Step 11). Amends D-047. Amended by D-092: the revision check stays; whoever changed the rows now approves them.
 - **Decision:** a batch has a `revision` that grows with every change to its rows (a correction, a confirmation, an exclusion, an inclusion, or a revalidation that changes a row's status). Approving sends the `revision` the approver reviewed; any change since gives 422 `batch_changed` with the current revision. Whoever changed rows of a batch cannot approve it (403): another person reviews those changes, as the uploader's.
 - **Consequences:** the frontend sends `revision` (from `GET /imports/{batch}`) with the approval.
 
@@ -806,14 +806,14 @@ A living record of the design decisions made while building the backend and data
 - **Decision:**
   - Every staff user holds **one** role (`staff_users.role_id`, with who gave it and when): an office, the general manager or the system administrator. `PUT /users/{id}/role` replaces it (422 when nobody active would be left able to manage users). The per-user grants and denials (`permission_staff_user`), the many-to-many `role_staff_user`, the automatic roles of D-070 and `individual_only` are gone. A user's permissions are their role's.
   - The offices and their default permissions:
-    - **Recruitment** (`recruitment`): `applications.view` (the full file), `candidates.manage` (people, applications, the managed lists), `applications.start`, `applications.close`, `imports.view`, `imports.manage`, `imports.approve`.
+    - **Recruitment** (`recruitment`): `applications.view` (the full file), `candidates.manage` (people, applications, the managed lists), `applications.start`, `applications.close`, `imports.view`, `imports.manage` (`imports.approve` until D-092 folded it into `imports.manage`).
     - **Exams and Interviews** (`exams_interviews`): `exams.view`, `exam_bank.manage`, `exams.manage`, `attempts.extend`, `exam_results.correct`, `pass_policies.manage`, `exceptions.approve` (exam exceptions and excuses, interview excuses), `interviews.view`, `interviews.manage`, `interviews.correct`.
     - **Contracts** (`contracts`): `contracts.view` (contracts and vacancies), `contracts.manage` (also the contract types list, and the documents of an application, like its contract).
     - **Documenting** (`documenting`): `documents.view`, `documents.manage` (documents and their types).
     - Each office also has `audit.view_related`: the operations of its own sections only (D-086).
   - The **general manager** holds every read-only permission (`permissions.read_only`: the `*.view` ones, `reports.view`, `audit.view`), and the role takes no other (422). Not the question bank: it holds the answers.
-  - The **system administrator** holds every permission, always: computed, not stored, so a permission added later is the administrator's at once; its role is not edited (422). Only it holds `users.manage`, `users.add`, `devices.approve` and `vacancies.manage` by default.
-  - Two eyes stay where they were: the uploader of an import never approves it (D-047), now within Recruitment.
+  - The **system administrator** holds every permission, always: computed, not stored, so a permission added later is the administrator's at once; its role is not edited (422). Only it holds `users.manage`, `users.add` (gone since D-092), `devices.approve` and `vacancies.manage` by default.
+  - Two eyes stay where they were: the uploader of an import never approves it (D-047), now within Recruitment. Superseded by D-092: the uploader approves.
 - **Why:** the owner's offices; one role per user says plainly which section someone works in.
 - **Consequences:** an approval or an exception is no longer a separate person's permission: everyone in the office holds it. The routes check the section's permission (`exams.view` instead of "exam bank, candidates or reports"), so the other offices get 403 on another section.
 
@@ -859,6 +859,62 @@ A living record of the design decisions made while building the backend and data
 
 - **Status:** Accepted
 - **Decision:** the contract types list is changed by the Contracts office (`contracts.manage`), the other lists by Recruitment (`candidates.manage`); 403 for another office. The demo has an account per role (`staff`, `staff.two` of Recruitment, `exams`, `contracts`, `documents`, `manager`, `admin`) and vacancies files covering the demo contracts.
+
+### D-091 A filter applies when it is given, "0" included
+
+- **Status:** Accepted (owner, Step 14: "fix this issue when exists in the whole project: the string "0", Laravel's `when()` will skip the callback because "0" is considered falsy in PHP")
+- **Decision:** the list filters use `whenGiven($value, $callback)`, a macro on the Eloquent and the query builders (`AppServiceProvider`): the callback runs unless the value is null, `''` or `[]`, so `"0"`, `0` and `false` filter. `when()` stays for conditions that really are true or false (`isset(...)`, a flag already read with `$request->boolean()`). Every `->when($filters['x'] ?? null, ...)` became `whenGiven` (contracts, exam sessions, the exam sweep, staff devices, reports, sittings, interviews, candidates, import batches and rows). `ApplicationSearch`, the audit log (D-083) and the report filters already tested `isset`.
+- **Why:** `?q=0` returned the whole list instead of the matches of 0, and a numeric id or a nomination number of 0 would have done the same.
+- **Consequences:** a new filter is written with `whenGiven`; `RequestConventionsTest` checks the macro.
+
+### D-092 The Recruitment officer approves their own import; the administrator adds staff users
+
+- **Status:** Accepted (owner, Step 14: "the recruitment officer approves the import batch himself, he doesn't need approval to store the applications"; "there is no need for users.add, the users.manage can add staff users and it is for admin only"). Supersedes D-047's four eyes and the second person of D-082 and D-085; amends D-058.
+- **Decision:**
+  - `imports.approve` is gone: `imports.manage` uploads, corrects, reviews, excludes, cancels **and approves**, one's own batch too. The checks that the uploader, or whoever changed rows, never approves (`own_batch`, `approver_changed_rows`) are removed. What is approved is still the revision reviewed (D-082: 422 `batch_changed`), and rows that changed since their check or still need review still block the approval. The general manager reads batches (`imports.view`) and gets 403 on the rest.
+  - `users.add` is gone: `POST /new` is in the `users.manage` group (the administrator's). The check that an adder gives only a role whose permissions they hold, there to keep `users.add` from creating an administrator, is removed with it.
+  - The seeder no longer creates either permission; on an existing database run `migrate:fresh --seed`, or delete the two permissions' rows in `permission_role` and then in `permissions` (the link restricts deleting).
+- **Why:** the owner's office works alone on its imports; one permission per section (D-085).
+- **Consequences:** an approval is no longer a second person's check. The audit log still names who uploaded, corrected and approved.
+
+### D-093 Every list's days are Damascus days
+
+- **Status:** Accepted (owner, Step 14: the applications list's `from` / `to` were UTC days while the summary's period is Damascus days, and the counts must mean what the list means). Amends D-081.
+- **Decision:** the `from` / `to` (YYYY-MM-DD, included) of the applications list (and so of its counts, the reports and the bulk start, which take its filters), the interviews, the sittings, the exam sessions and the audit log are days of `reports.timezone`: from `BusinessDay::startOf(from)` to before `BusinessDay::startOfNext(to)`, in UTC. An application opened at 21:30 UTC on the 10th was opened on the 11th in Damascus, and is listed under the 11th.
+- **Why:** staff pick days as they live them; one meaning of a day in every list and report.
+- **Consequences:** the nomination-number year is still the UTC year (section 17).
+
+### D-094 What the frontend asked for in Step 14
+
+- **Status:** Accepted (owner, Step 14, frontend issues 5.1 to 5.10)
+- **Decision:**
+  - **403 in Arabic.** A refusal without its own message (the `can:` middleware's English "This action is unauthorized.", an empty `abort(403)`, an `AuthorizationException` without a message) is `{"message": "ليست لديك صلاحية لهذا الإجراء."}` (`auth.forbidden`) on the API. A refusal that says why (outside the venue's network, a mark only its corrector changes) keeps its message.
+  - **Validation in Arabic.** `lang/ar/validation.php` names `username`, `personal_number`, `first_name`, `last_name`, `password`, `password_confirmation`, `is_active` and `role`, and has the password rules (letters, mixed case, numbers, symbols, a leaked password) and the username and personal number formats in Arabic, for adding a user and for resetting a password.
+  - **Counts per status.** `GET /applications/counts` takes the list's filters and answers `{data: {total, live, statuses: [{status, label, live, count}]}}`, every status listed (0 included) in the lifecycle's order. `status`, `live`, sorting and paging are not used, so each tile keeps its count whichever is chosen. The other offices count by the identity filters only, as they list (D-086).
+  - **Interviews list.** `q` (the candidate's name in any spelling, or the national or nomination number in any digits), `residence_district_id`, `sort` (`scheduled_at`, `held_at` with the not-held last, `nomination_number`, `full_name`), `direction` and `per_page` (1 to 100).
+  - **Reports in the API documentation.** `GET /reports/{report}` binds `{report}` to the `ReportName` enum, so the documentation lists its values (and an unknown one is 404), and the reports take form requests (`ReportRequest`, `ExportReportRequest`), so their query parameters are listed.
+  - **Sittings.** `kind_label` (لجنة مقابلة, مقابلة فردية) next to `kind`. A sitting refused as a duplicate (`duplicate_sitting`) or because the staff account sits elsewhere at once (`staff_overlap`) carries `conflict` {`reason`, `sitting_id`, `member`} next to `errors`, so the frontend opens the sitting in the way without reading the message.
+  - **The interview queue's position** is the place in the whole queue in the order chosen, counted before the filters (a window function in the query): a filtered list shows where each candidate stands in the whole queue.
+  - No staff lookup for `interviews.manage` (5.5): the staff member of a sitting is the signed-in user (D-095), whose id the frontend has from `/auth/me`.
+- **Why:** the frontend's issues of Step 14.
+
+### D-095 The staff member of a sitting is the signed-in user
+
+- **Status:** Accepted (owner, Step 14: "I prefer that the committee member who is staff user (interview officer) will be the signed-in user not other officer"). Amends D-076.
+- **Decision:** a member given by `staff_user_id` must be the signed-in user (422 `staff_member_is_you` on `members.N.staff_user_id`); the other members are entered by name. A change of the committee may keep the staff accounts the sitting already has (seated by whoever created it) and add the signed-in user's.
+- **Why:** an officer sits in their own sittings; seating another officer's account would put them in a sitting they did not plan (and D-084 would then keep them out of their own at the same time).
+- **Consequences:** no list of staff accounts is needed to build a committee.
+
+### D-096 Two interviews of one sitting are 10 minutes apart at least
+
+- **Status:** Accepted (owner, Step 14: "nothing stops two candidates being booked at the same time in the same sitting. Bulk booking even accepts `minutes_between: 0`. I made it min:10 is there anything else I must do?")
+- **Decision:**
+  - `minutes_between` is 10 at least (`Interview::MIN_MINUTES_APART`), default 30 (`Interview::DEFAULT_MINUTES_BETWEEN`).
+  - Every booking path checks the time against the sitting's other interviews that are not cancelled: scheduling, bulk booking (each time, all or none), rescheduling (its own time excluded) and the appointment of an accepted excuse. Less than 10 minutes from another is 422 `time_taken` naming its time; exactly 10 is fine. A cancelled interview frees its time.
+  - Without a time, an interview is booked at the sitting's next free time: its start, or 30 minutes after its latest interview (scheduling, bulk booking's `first_at`, rescheduling into another sitting).
+  - The database keeps it too: a trigger on `interviews` (insert, or a change of sitting or time) takes a lock per sitting (`pg_advisory_xact_lock`), so two bookings at the same moment are checked one after the other, and refuses a time less than 10 minutes from another (`interview_time_taken`). The API turns that refusal into 422 `time_taken_now`.
+- **Why:** min:10 alone only spaced the bulk booking's own times; a single booking, a reschedule, an excuse or a bulk booking next to existing interviews could still take the same time, and two officers booking at once could both pass the check.
+- **Consequences:** run `migrate:fresh` (the interviews migration changed). A one-off interviewer who really needs two candidates closer than 10 minutes cannot book them.
 
 ---
 

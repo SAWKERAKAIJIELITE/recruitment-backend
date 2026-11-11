@@ -31,6 +31,7 @@ class ApplicationIdentityResource extends JsonResource
                 'national_number' => $this->candidate->national_number,
             ],
             'created_at' => $this->created_at,
+            'updated_at' => $this->updated_at,
         ];
     }
 }

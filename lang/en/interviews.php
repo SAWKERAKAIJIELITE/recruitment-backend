@@ -33,4 +33,5 @@ return [
     'held_after_recorded' => 'The interview cannot be held after its result was entered (:time).',
     'committee_name_required' => 'A committee sitting keeps its name.',
     'sitting_in_use' => 'Interviews were booked into this sitting (or moved out of it), so it is not deleted: cancel or move them; the sitting stays as their record.',
+    'staff_member_is_you' => 'A member by staff account is you, the signed-in user: enter the other members by name.',
 ];

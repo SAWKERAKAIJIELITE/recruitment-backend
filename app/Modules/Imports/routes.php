@@ -8,15 +8,14 @@ use Illuminate\Support\Facades\Route;
 
 /*
  * Excel import of candidates (analysis doc §09).
- * - imports.manage: upload, correct, review, exclude, cancel (D-041)
- * - imports.approve: approve, never one's own batch (D-047)
- * - imports.view, or either of them: read batches, rows, the original file and the report (the general manager reads)
+ * - imports.manage: upload, correct, review, exclude, cancel and approve, one's own batch too (D-041, D-092)
+ * - imports.view, or imports.manage: read batches, rows, the original file and the report (the general manager reads)
  */
 Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])
     ->prefix('api/v1/staff/imports')
     ->whereUuid(['batch', 'row'])
     ->group(function () {
-        Route::middleware(RequireAnyPermission::class . ':imports.view,imports.manage,imports.approve')->group(function () {
+        Route::middleware(RequireAnyPermission::class . ':imports.view,imports.manage')->group(function () {
             Route::get('/', [ImportBatchController::class, 'index']);
             Route::get('{batch}', [ImportBatchController::class, 'show']);
             Route::get('{batch}/original', [ImportBatchController::class, 'original']);
@@ -30,6 +29,7 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])
             Route::post('/', [ImportBatchController::class, 'store'])->middleware('throttle:10,1');
             Route::post('{batch}/revalidate', [ImportBatchController::class, 'revalidate']);
             Route::post('{batch}/cancel', [ImportBatchController::class, 'cancel']);
+            Route::post('{batch}/approve', [ImportBatchController::class, 'approve']);
 
             // A row is found only inside its own batch.
             Route::scopeBindings()->group(function () {
@@ -39,6 +39,4 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])
                 Route::post('{batch}/rows/{row}/include', [ImportRowController::class, 'include']);
             });
         });
-
-        Route::post('{batch}/approve', [ImportBatchController::class, 'approve'])->middleware('can:imports.approve');
     });

@@ -37,7 +37,7 @@ class CandidateController extends Controller
         $people = Candidate::query()
             ->with(['birthPlace', 'liveApplication'])
             ->withCount('applications')
-            ->when($filters['q'] ?? null, function ($query, string $q) {
+            ->whenGiven($filters['q'] ?? null, function ($query, string $q) {
                 $like = '%' . addcslashes(ArabicText::searchKey($q), '\\%_') . '%';
 
                 $query->where(fn($inner) => $inner
@@ -45,7 +45,7 @@ class CandidateController extends Controller
                     ->orWhere('name_search_key', 'like', $like));
             })
             ->when(isset($filters['is_active']), fn($query) => $query->where('is_active', $request->boolean('is_active')))
-            ->when($filters['birth_place_id'] ?? null, fn($query, $id) => $query->where('birth_place_id', $id))
+            ->whenGiven($filters['birth_place_id'] ?? null, fn($query, $id) => $query->where('birth_place_id', $id))
             ->when(isset($filters['has_live_application']), fn($query) => $request->boolean('has_live_application')
                 ? $query->whereHas('liveApplication')
                 : $query->whereDoesntHave('liveApplication'))

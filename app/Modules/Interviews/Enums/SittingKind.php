@@ -7,4 +7,12 @@ enum SittingKind: string
 {
     case Committee = 'committee';
     case OneOff = 'one_off';
+
+    public function labelAr(): string
+    {
+        return match ($this) {
+            self::Committee => 'لجنة مقابلة',
+            self::OneOff => 'مقابلة فردية',
+        };
+    }
 }

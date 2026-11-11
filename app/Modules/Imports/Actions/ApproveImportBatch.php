@@ -12,14 +12,13 @@ use App\Modules\Imports\Support\ImportChecker;
 use App\Modules\Imports\Support\ImportProblem;
 use App\Modules\Recruitment\Actions\CreateApplication;
 use App\Modules\Recruitment\Support\NominationNumberGenerator;
-use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Analysis doc §09 step 6, owner's rule (D-047): approving needs the permission imports.approve,
- * and never by the staff member who uploaded the batch.
+ * Analysis doc §09 step 6: the Recruitment officer who manages the import approves it, their own batch too (no
+ * second person, D-092; was D-047's four eyes). What is approved is the revision they reviewed (D-082).
  *
  * Approving a batch turns each valid row into a person (or the person on file),
  * an application and a nomination number, through the same CreateApplication as the API (D-041). The applications
@@ -62,22 +61,6 @@ class ApproveImportBatch
 
             if (! $batch->isPending()) {
                 ImportProblem::fail('batch', 'batch_not_pending', ['status' => __("imports.statuses.{$batch->status->value}")]);
-            }
-
-            // Four eyes (D-047): whoever uploaded the file cannot approve it, nor whoever changed its rows: someone
-            // else must have looked at those changes.
-            if ($batch->uploaded_by === $actor->id) {
-                throw new AuthorizationException(__('imports.own_batch'));
-            }
-
-            $changedRows = DB::table('audit_events')
-                ->where('actor_id', $actor->id)
-                ->whereIn('event', ['import.row_corrected', 'import.person_confirmed', 'import.row_excluded', 'import.row_included'])
-                ->whereRaw("context->>'batch_id' = ?", [$batch->getKey()])
-                ->exists();
-
-            if ($changedRows) {
-                throw new AuthorizationException(__('imports.approver_changed_rows'));
             }
 
             // What the approver reviewed is what is approved: any change since gives 422 and the current revision.

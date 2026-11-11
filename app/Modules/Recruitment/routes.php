@@ -39,6 +39,7 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
     // the candidate is and where the application stands, nothing more (D-086).
     Route::middleware(RequireAnyPermission::class . ':' . ApplicationController::READERS)->group(function () {
         Route::get('applications', [ApplicationController::class, 'index']);
+        Route::get('applications/counts', [ApplicationController::class, 'counts']);
         Route::get('applications/{application}', [ApplicationController::class, 'show'])->whereUuid('application');
     });
 

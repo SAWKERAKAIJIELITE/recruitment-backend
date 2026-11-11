@@ -77,7 +77,7 @@ class StaffDeviceController extends Controller
 
         $devices = StaffDevice::query()
             ->with('staffUser')
-            ->when($filters['status'] ?? null, fn($query, $status) => $query->where('status', $status))
+            ->whenGiven($filters['status'] ?? null, fn($query, $status) => $query->where('status', $status))
             ->latest()
             ->paginate(15);
 

@@ -67,6 +67,7 @@ class ApplicationResource extends JsonResource
             'candidate' => new CandidateResource($this->candidate),
             'history' => StatusEventResource::collection($this->history()),
             'created_at' => $this->created_at,
+            'updated_at' => $this->updated_at,
         ];
     }
 }

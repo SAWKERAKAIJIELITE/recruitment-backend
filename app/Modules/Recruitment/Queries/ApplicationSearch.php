@@ -6,6 +6,7 @@ use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Support\NationalNumber;
 use App\Modules\Recruitment\Support\PhoneNumber;
 use App\Support\ArabicText;
+use App\Support\BusinessDay;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -241,12 +242,13 @@ final class ApplicationSearch
                 ->where('import_rows.import_batch_id', $filters['import_batch_id']));
         }
 
+        // The opening day in Damascus, like every business day (D-081, D-093).
         if ($has('from')) {
-            $query->where('applications.created_at', '>=', $filters['from']);
+            $query->where('applications.created_at', '>=', BusinessDay::startOf($filters['from']));
         }
 
         if ($has('to')) {
-            $query->where('applications.created_at', '<', Carbon::parse($filters['to'])->addDay()->toDateString());
+            $query->where('applications.created_at', '<', BusinessDay::startOfNext($filters['to']));
         }
 
         return $query;

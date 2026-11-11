@@ -18,6 +18,9 @@ use Illuminate\Validation\ValidationException;
  * most 24 hours). The same members cannot sit at overlapping times (a sitting entered twice, even a few seconds
  * apart, overlaps itself), and a staff account cannot be a member of two overlapping sittings: refused (422 here; the
  * database refuses both at commit too, when two staff users enter them at the same moment).
+ *
+ * A member with a staff account is the signed-in user (D-095): the interview officer enters themself by account
+ * and the others by name. A change keeps the staff members the sitting already has.
  */
 class ManageSittings
 {
@@ -29,6 +32,7 @@ class ManageSittings
     {
         return $this->transaction(function () use ($data, $members, $actor, $kind) {
             $this->assertMemberCount($kind, $members);
+            $this->assertStaffMembers($members, $actor, []);
 
             $sitting = new InterviewSitting($data);
             $sitting->kind = $kind;
@@ -60,6 +64,7 @@ class ManageSittings
                 }
 
                 $this->assertMemberCount($sitting->kind, $members);
+                $this->assertStaffMembers($members, $actor, $sitting->members()->whereNotNull('staff_user_id')->pluck('staff_user_id')->all());
                 $sitting->members()->delete();
                 Committee::write($sitting, $members);
                 // The old fingerprint no longer describes the committee; the new one is computed at commit.
@@ -131,6 +136,22 @@ class ManageSittings
         }
     }
 
+    /**
+     * A member by staff account is the signed-in user, or one the sitting already had (kept on a change).
+     *
+     * @param  list<string>  $kept
+     */
+    private function assertStaffMembers(array $members, StaffUser $actor, array $kept): void
+    {
+        foreach ($members as $index => $member) {
+            $account = $member['staff_user_id'] ?? null;
+
+            if ($account !== null && $account !== $actor->id && ! in_array($account, $kept, true)) {
+                $this->fail("members.{$index}.staff_user_id", 'interviews.staff_member_is_you');
+            }
+        }
+    }
+
     /** Ends after it starts, within 24 hours (the database's CHECK, answered here on the right field). */
     private function assertTimes(InterviewSitting $sitting): void
     {
@@ -153,7 +174,7 @@ class ManageSittings
         $duplicate = $overlapping()->whereRaw('interview_committee_key(other.id) = interview_committee_key(?)', [$sitting->id])->value('other.id');
 
         if ($duplicate !== null) {
-            $this->fail('starts_at', 'interviews.duplicate_sitting', ['id' => $duplicate]);
+            $this->conflict('starts_at', 'interviews.duplicate_sitting', ['id' => $duplicate], ['reason' => 'duplicate_sitting', 'sitting_id' => $duplicate]);
         }
 
         $busy = $overlapping()
@@ -164,7 +185,7 @@ class ManageSittings
             ->first(['ours.name', 'other.id']);
 
         if ($busy !== null) {
-            $this->fail('members', 'interviews.staff_overlap', ['name' => $busy->name, 'id' => $busy->id]);
+            $this->conflict('members', 'interviews.staff_overlap', ['name' => $busy->name, 'id' => $busy->id], ['reason' => 'staff_overlap', 'sitting_id' => $busy->id, 'member' => $busy->name]);
         }
     }
 
@@ -189,5 +210,21 @@ class ManageSittings
     private function fail(string $field, string $key, array $replace = []): never
     {
         throw ValidationException::withMessages([$field => [__($key, $replace)]]);
+    }
+
+    /**
+     * A 422 like any other, with the sitting in the way as its own field (D-094): `conflict` {reason, sitting_id,
+     * member (staff_overlap)}.
+     */
+    private function conflict(string $field, string $key, array $replace, array $conflict): never
+    {
+        $message = __($key, $replace);
+        $exception = ValidationException::withMessages([$field => [$message]]);
+
+        throw new ValidationException($exception->validator, response()->json([
+            'message' => $message,
+            'errors' => [$field => [$message]],
+            'conflict' => $conflict,
+        ], 422));
     }
 }

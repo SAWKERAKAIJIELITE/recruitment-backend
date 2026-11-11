@@ -14,6 +14,9 @@ use App\Modules\Reports\Exports\Pdf;
 use App\Modules\Reports\Exports\ReportHeader;
 use App\Modules\Reports\Exports\ReportWorkbook;
 use App\Modules\Reports\Queries\Dashboard;
+use App\Modules\Reports\Enums\ReportName;
+use App\Modules\Reports\Http\Requests\ExportReportRequest;
+use App\Modules\Reports\Http\Requests\ReportRequest;
 use App\Modules\Reports\Support\ReportFilters;
 use App\Modules\Reports\Support\ReportPeriod;
 use App\Modules\Reports\Support\ReportTable;
@@ -24,7 +27,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
@@ -70,9 +72,9 @@ class ReportController extends Controller
      * by job position. Each is counted on its own date: a nomination by its date, an exam decision by its date, an
      * interview by the day held, a contract by its writing date.
      */
-    public function summary(Request $request): JsonResponse
+    public function summary(ReportRequest $request): JsonResponse
     {
-        $filters = ReportFilters::validate($request);
+        $filters = $request->filters();
 
         return response()->json(['data' => Dashboard::build($filters) + ['filters' => ReportFilters::describe($filters)]]);
     }
@@ -88,11 +90,11 @@ class ReportController extends Controller
      * (default) or pdf. Interviews also take `sitting_id`. Sorted by nomination number unless `sort` is sent. At most
      * 20,000 rows in Excel and 2,000 in PDF (422 on `format` beyond: narrow the filters).
      */
-    public function export(Request $request, string $report): BinaryFileResponse|Response
+    public function export(ExportReportRequest $request, ReportName $report): BinaryFileResponse|Response
     {
-        abort_unless(isset(self::REPORTS[$report]), 404);
+        $report = $report->value;
         abort_unless($request->user()->hasPermission(self::READERS[self::REPORTS[$report][0]]), 403);
-        $filters = ReportFilters::validate($request, ['format' => ['nullable', Rule::in(['xlsx', 'pdf'])], 'sitting_id' => ['nullable', 'uuid']]);
+        $filters = $request->filters();
         $format = $filters['format'] ?? 'xlsx';
         $this->assertCountFits($report, $filters, $format);
         $tables = $this->tables($report, $filters);
@@ -114,9 +116,9 @@ class ReportController extends Controller
      * Every report above in one workbook, as the legacy file: the dashboard (with links to the other sheets),
      * بيانات المرشحين, the exams and their three views, the interviews and their three views. Same filters and period.
      */
-    public function workbook(Request $request): BinaryFileResponse
+    public function workbook(ReportRequest $request): BinaryFileResponse
     {
-        $filters = ReportFilters::validate($request);
+        $filters = $request->filters();
         $sheets = [];
 
         foreach (['applications', 'exams', 'interviews'] as $report) {
@@ -150,9 +152,9 @@ class ReportController extends Controller
      * wait for their contract (status awaiting_contract); any filter of the applications list changes that.
      * Ordered by full name unless `sort` is sent. Needs candidates.manage.
      */
-    public function conscription(Request $request): BinaryFileResponse
+    public function conscription(ReportRequest $request): BinaryFileResponse
     {
-        $filters = ReportFilters::validate($request);
+        $filters = $request->filters();
         $filters['status'] ??= [ApplicationStatus::AwaitingContract->value];
         $filters['sort'] ??= 'full_name';
 
@@ -196,7 +198,7 @@ class ReportController extends Controller
         return Interview::query()
             ->with(['sitting.members', ...$relations])
             ->whereIn('application_id', $applications)
-            ->when($sitting, fn ($query, $id) => $query->where('sitting_id', $id))
+            ->whenGiven($sitting, fn ($query, $id) => $query->where('sitting_id', $id))
             ->get();
     }
 
@@ -242,7 +244,7 @@ class ReportController extends Controller
             'interviews' => $within(Interview::query()
                 ->whereIn('application_id', $applications)
                 ->when($view !== 'all', fn ($query) => $query->where('result', $view))
-                ->when($filters['sitting_id'] ?? null, fn ($query, $id) => $query->where('sitting_id', $id)), DB::raw('coalesce(held_at, scheduled_at)'))->count(),
+                ->whenGiven($filters['sitting_id'] ?? null, fn ($query, $id) => $query->where('sitting_id', $id)), DB::raw('coalesce(held_at, scheduled_at)'))->count(),
         };
 
         $this->assertFits(new ReportTable('', [], []), $format, $count);

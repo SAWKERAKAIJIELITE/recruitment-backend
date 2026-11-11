@@ -13,8 +13,10 @@ use Dedoc\Scramble\Support\Generator\SecurityScheme;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Connection;
+use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Events\TransactionCommitted;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Http\Middleware\TrustProxies;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
@@ -45,6 +47,13 @@ class AppServiceProvider extends ServiceProvider
         // Mass assignment safety net: assigning a non-fillable attribute throws instead of being silently
         // dropped (outside production). Business-controlled columns are set with forceFill() on purpose.
         Model::preventSilentlyDiscardingAttributes(app()->environment('production') === false);
+
+        // A filter applies when it was given, whatever its value: when() would skip "0", 0 and false (D-091).
+        $whenGiven = function (mixed $value, callable $callback) {
+            return $value === null || $value === '' || $value === [] ? $this : ($callback($this, $value) ?? $this);
+        };
+        EloquentBuilder::macro('whenGiven', $whenGiven);
+        QueryBuilder::macro('whenGiven', $whenGiven);
 
         // After each commit, tell the offices about the applications it moved (D-089).
         Event::listen(TransactionCommitted::class, fn() => $this->app->make(LifecycleNotices::class)->flush());

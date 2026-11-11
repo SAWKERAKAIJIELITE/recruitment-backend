@@ -20,7 +20,8 @@ class InterviewQueueController extends Controller
      * nominating_entity_id, application_category_id, academic_qualification_id, residence_district_id,
      * residence_area_id); `priority[]=quran_parts:desc` sorts by a value (quran_parts, studying_years, age,
      * waiting_since, nominated_at). Ties: longest waiting first. Takes the filters of the applications list (not
-     * `status`, `live`, `sort`). Each entry shows who the candidate is and where the application stands (D-086).
+     * `status`, `live`, `sort`). Each entry shows who the candidate is and where the application stands (D-086), and
+     * its `position` in the whole queue in that order, counted before the filters (D-094).
      * Book the ones chosen with POST /interview-sittings/{id}/bookings.
      */
     public function index(Request $request): AnonymousResourceCollection
@@ -30,9 +31,6 @@ class InterviewQueueController extends Controller
             ->with(ApplicationIdentityResource::RELATIONS)
             ->paginate((int) ($filters['per_page'] ?? 25))
             ->withQueryString();
-
-        $first = ($page->currentPage() - 1) * $page->perPage();
-        $page->getCollection()->each(fn($application, $index) => $application->setAttribute('queue_position', $first + $index + 1));
 
         return InterviewQueueEntryResource::collection($page);
     }

@@ -5,9 +5,9 @@ namespace App\Modules\Audit\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Modules\Audit\Http\Resources\AuditEventResource;
 use App\Modules\Audit\Models\AuditEvent;
+use App\Support\BusinessDay;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
-use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
 
 /**
@@ -31,7 +31,7 @@ class AuditEventController extends Controller
      *
      * Newest first, 50 per page. `event`: an event or its beginning (`interview.` for every interview event);
      * `actor_id`: a staff user; `related_id`: a record's id the event is about (its details' `id`, `*_id` and
-     * `*_ids`: an application, a booking, a user, ...; or the acting candidate); `category`: operations or security; `from` / `to` (YYYY-MM-DD, UTC days, included).
+     * `*_ids`: an application, a booking, a user, ...; or the acting candidate); `category`: operations or security; `from` / `to` (YYYY-MM-DD, Damascus days, included).
      * With `audit.view_related` only, the operations of the user's sections (Recruitment: applications, people,
      * imports, results lists; Exams and Interviews: exams and interviews; Contracts: contracts and vacancies;
      * Documenting: documents).
@@ -66,6 +66,7 @@ class AuditEventController extends Controller
                         }
                     })
             )
+            //category filter is added on top of that, so audit.view_related for security returns an empty list, not an error.
             ->when($given('category'), fn($query) => $query->where('category', $filters['category']))
             ->when($given('event'), fn($query) => str_ends_with($filters['event'], '.')
                 ? $query->where('event', 'like', $like($filters['event']))
@@ -73,8 +74,8 @@ class AuditEventController extends Controller
             ->when($given('actor_id'), fn($query) => $query->where('actor_id', $filters['actor_id']))
             // Indexed (GIN on related_ids).
             ->when($given('related_id'), fn($query) => $query->whereRaw('related_ids @> ARRAY[?]::text[]', [$filters['related_id']]))
-            ->when($given('from'), fn($query) => $query->where('created_at', '>=', $filters['from']))
-            ->when($given('to'), fn($query) => $query->where('created_at', '<', Carbon::parse($filters['to'])->addDay()->toDateString()))
+            ->when($given('from'), fn($query) => $query->where('created_at', '>=', BusinessDay::startOf($filters['from'])))
+            ->when($given('to'), fn($query) => $query->where('created_at', '<', BusinessDay::startOfNext($filters['to'])))
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->paginate(50)

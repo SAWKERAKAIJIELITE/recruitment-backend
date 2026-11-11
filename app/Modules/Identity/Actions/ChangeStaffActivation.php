@@ -39,7 +39,7 @@ class ChangeStaffActivation
             AccessLog::record('user_deactivated', $actor, ['user_id' => $target->id, 'reason' => trim($reason), 'sessions_ended' => $ended]);
         });
 
-        return $target->fresh('role.permissions');
+        return $target->fresh(['role.permissions', 'deactivatedBy']);
     }
 
     public function activate(StaffUser $target, StaffUser $actor): StaffUser
@@ -55,6 +55,6 @@ class ChangeStaffActivation
             AccessLog::record('user_activated', $actor, ['user_id' => $target->id]);
         });
 
-        return $target->fresh('role.permissions');
+        return $target->fresh(['role.permissions', 'deactivatedBy']);
     }
 }

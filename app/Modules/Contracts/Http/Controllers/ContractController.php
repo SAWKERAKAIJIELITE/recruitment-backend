@@ -50,8 +50,8 @@ class ContractController extends Controller
 
         $contracts = Contract::query()
             ->with(ContractResource::RELATIONS)
-            ->when($filters['state'] ?? null, fn($query, $state) => $query->inState(ContractState::from($state)))
-            ->when($filters['q'] ?? null, function ($query, string $q) {
+            ->whenGiven($filters['state'] ?? null, fn($query, $state) => $query->inState(ContractState::from($state)))
+            ->whenGiven($filters['q'] ?? null, function ($query, string $q) {
                 $like = '%' . addcslashes(ArabicText::searchKey(trim($q)), '\\%_') . '%';
                 $plain = ArabicText::digitsToAscii(trim($q));
 
@@ -61,11 +61,11 @@ class ContractController extends Controller
                         ->where('nomination_number', $plain)
                         ->orWhereHas('candidate', fn($candidate) => $candidate->where('name_search_key', 'like', $like))));
             })
-            ->when($filters['contract_type_id'] ?? null, fn($query, $value) => $query->where('contract_type_id', $value))
-            ->when($filters['job_position_id'] ?? null, fn($query, $value) => $query->whereHas('application', fn($application) => $application->where('job_position_id', $value)))
-            ->when($filters['nominating_entity_id'] ?? null, fn($query, $value) => $query->whereHas('application', fn($application) => $application->where('nominating_entity_id', $value)))
-            ->when($filters['ends_from'] ?? null, fn($query, $date) => $query->where('ends_on', '>=', $date))
-            ->when($filters['ends_to'] ?? null, fn($query, $date) => $query->where('ends_on', '<=', $date))
+            ->whenGiven($filters['contract_type_id'] ?? null, fn($query, $value) => $query->where('contract_type_id', $value))
+            ->whenGiven($filters['job_position_id'] ?? null, fn($query, $value) => $query->whereHas('application', fn($application) => $application->where('job_position_id', $value)))
+            ->whenGiven($filters['nominating_entity_id'] ?? null, fn($query, $value) => $query->whereHas('application', fn($application) => $application->where('nominating_entity_id', $value)))
+            ->whenGiven($filters['ends_from'] ?? null, fn($query, $date) => $query->where('ends_on', '>=', $date))
+            ->whenGiven($filters['ends_to'] ?? null, fn($query, $date) => $query->where('ends_on', '<=', $date))
             ->when($request->boolean('latest'), fn($query) => $query->whereNotExists(fn($renewal) => $renewal->from('contracts as renewal')->whereColumn('renewal.renews_contract_id', 'contracts.id')))
             ->orderByRaw('ends_on asc nulls last')
             ->orderBy('id')

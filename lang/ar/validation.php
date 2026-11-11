@@ -71,6 +71,14 @@ return [
     'not_in' => 'القيمة المختارة في :attribute غير صالحة.',
     'not_regex' => 'صيغة :attribute غير صالحة.',
     'numeric' => 'يجب أن يكون :attribute رقماً.',
+    // The rules of a strong password (Password::min(8)->letters()->mixedCase()->numbers()->symbols()).
+    'password' => [
+        'letters' => 'يجب أن تحتوي :attribute حرفًا واحدًا على الأقل.',
+        'mixed' => 'يجب أن تحتوي :attribute حرفًا كبيرًا وحرفًا صغيرًا على الأقل.',
+        'numbers' => 'يجب أن تحتوي :attribute رقمًا واحدًا على الأقل.',
+        'symbols' => 'يجب أن تحتوي :attribute رمزًا واحدًا على الأقل (مثل ! @ # $).',
+        'uncompromised' => 'ظهرت :attribute هذه في تسريب بيانات: اختر غيرها.',
+    ],
     'present' => 'يجب أن يكون :attribute موجوداً.',
     'prohibited' => 'الحقل :attribute غير مسموح به.',
     'prohibited_if' => 'الحقل :attribute غير مسموح به هنا.',
@@ -96,6 +104,9 @@ return [
     'uuid' => 'يجب أن يكون :attribute معرّفاً (UUID) صحيحاً.',
 
     'custom' => [
+        'username' => ['regex' => 'اسم المستخدم من 3 إلى 50 حرفًا لاتينيًا صغيرًا (a-z)، مع النقطة والشرطة والشرطة السفلية فقط.'],
+        'personal_number' => ['regex' => 'الرقم الذاتي أرقام فقط، من 4 إلى 50 رقمًا.'],
+        'password' => ['min' => ['string' => 'يجب ألا تقل كلمة المرور عن :min أحرف.']],
         'members.*.name' => ['required_without' => 'اكتب اسم العضو، أو اختر حسابه.'],
         'members.*.staff_user_id' => ['prohibits' => 'عضو له حساب اسمه اسم حسابه: لا يُرسل معه اسم.'],
     ],
@@ -150,5 +161,8 @@ return [
         'first_name' => 'الاسم الأول',
         'last_name' => 'الاسم الأخير',
         'password' => 'كلمة المرور',
+        'password_confirmation' => 'تأكيد كلمة المرور',
+        'is_active' => 'حالة الحساب',
+        'role' => 'الدور',
     ],
 ];

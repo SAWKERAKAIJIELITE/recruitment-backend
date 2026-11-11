@@ -32,7 +32,7 @@ class ImportBatchController extends Controller
         $batches = ImportBatch::query()
             ->with(ImportBatchResource::RELATIONS)
             ->withRowCounts()
-            ->when($filters['status'] ?? null, fn ($query, string $status) => $query->where('status', $status))
+            ->whenGiven($filters['status'] ?? null, fn ($query, string $status) => $query->where('status', $status))
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->paginate(25);
@@ -78,8 +78,7 @@ class ImportBatchController extends Controller
     /**
      * Approve the batch
      *
-     * Needs the permission `imports.approve`; the staff member who uploaded the batch cannot
-     * approve it (403).
+     * Needs `imports.manage`: the Recruitment officer approves their own batch too (D-092).
      *
      * Checks the rows again, then turns every valid row into an application with a new nomination number; the
      * applications wait as `received` until Recruitment starts them (POST /applications/start with
@@ -87,8 +86,7 @@ class ImportBatchController extends Controller
      * 422 when rows still need review (confirm or exclude them first), or when a row that was valid is no
      * longer valid (for example, the person got an application meanwhile): look at those rows, then approve
      * again. Invalid and excluded rows are not imported and keep their reasons. All or nothing. Send the batch's
-     * `revision` you reviewed: any change to its rows since gives 422 (D-082). Whoever changed its rows cannot approve
-     * it either (403): another person reviews those changes.
+     * `revision` you reviewed: any change to its rows since gives 422 (D-082).
      */
     public function approve(Request $request, ImportBatch $batch, ApproveImportBatch $approve): ImportBatchResource
     {

@@ -10,7 +10,7 @@ class RegisterUserRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;   // the can:users.add route middleware decides; RegisterStaffUser limits the role
+        return true;   // the can:users.manage route middleware decides
     }
 
     public function rules(): array

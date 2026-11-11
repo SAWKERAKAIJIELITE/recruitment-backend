@@ -27,6 +27,6 @@ class ManageStaffAccess
             AccessLog::record('role_changed', $actor, ['user_id' => $target->id, 'from' => $previous, 'to' => $role->slug]);
         });
 
-        return $target->fresh('role.permissions');
+        return $target->fresh(['role.permissions', 'deactivatedBy']);
     }
 }
