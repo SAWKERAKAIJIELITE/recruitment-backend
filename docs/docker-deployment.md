@@ -120,8 +120,11 @@ What happens on the first start:
 3. `scheduler` and `web` start once `app` is healthy; `web` answers in plain HTTP on `WEB_PORT`
    (`curl http://127.0.0.1:8080/api/v1/ping` on the server).
 
-**On Openship**: the settings of `deploy/docker/env.example` go into the project's environment variables (there is
-no `.env` in the repository), and the domain `rec.1005.date` is attached to the `web` service, port `WEB_PORT`.
+**On Openship**: `APP_KEY`, `DB_PASSWORD` and `DB_SUPERUSER_PASSWORD` go into the environment variables (there is
+no `.env` in the repository); every other setting has its default in `docker-compose.yml` and is set only to
+change it. A key without the containers, in PowerShell:
+`"base64:" + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))`.
+The domain `rec.1005.date` is attached to the `web` service, port `WEB_PORT`.
 Openship's proxy holds ports 80 and 443 and the certificate.
 
 **On a bare server with no proxy** (the standalone layout): set `SITE_ADDRESS=rec.1005.date` and

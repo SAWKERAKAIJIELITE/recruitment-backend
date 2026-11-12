@@ -14,9 +14,9 @@ if [ -z "${APP_KEY:-}" ]; then
     case "$*" in
         *key:generate*) exec "$@" ;;
     esac
-    echo "APP_KEY is empty. Make one with:" >&2
-    echo "  docker compose run --rm --no-deps app php artisan key:generate --show" >&2
-    echo "and put it in .env (APP_KEY=base64:…), then start again." >&2
+    echo "APP_KEY is empty: this container did not receive it." >&2
+    echo "Set APP_KEY=base64:… in the platform's environment variables (Openship) or in .env, then deploy again." >&2
+    echo "A new key: docker compose run --rm --no-deps app php artisan key:generate --show" >&2
     exit 1
 fi
 

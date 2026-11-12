@@ -7,7 +7,8 @@
 #   scheduler  Laravel's scheduler, every minute (exam absences and deadlines, reminders, pruning)
 #   db         PostgreSQL 16, reachable from the app and the scheduler only
 #
-# Settings: copy deploy/docker/env.example to .env (next to this file) and fill it. Then: docker compose up -d --build
+# Settings: the three required ones (APP_KEY, DB_PASSWORD, DB_SUPERUSER_PASSWORD) and any other to change, as the
+# platform's environment variables or in a .env next to this file (deploy/docker/env.example).
 
 name: recruitment
 
@@ -17,12 +18,54 @@ x-app: &app
     dockerfile: Dockerfile
   image: recruitment-app:latest
   restart: unless-stopped
-  env_file: .env
+  # Every setting by name, so that a platform which fills the variables itself (Openship: the project's
+  # environment variables) and a .env file next to this file (docker compose) both reach the containers.
+  # The defaults are those of deploy/docker/env.example; the three «required» ones have none.
   environment:
-    # Inside the compose network the database is the «db» service, whatever .env says.
+    APP_KEY: ${APP_KEY:-}
+    APP_NAME: "${APP_NAME:-نظام التوظيف}"
+    APP_ENV: ${APP_ENV:-production}
+    APP_DEBUG: ${APP_DEBUG:-false}
+    APP_URL: ${APP_URL:-https://rec.1005.date}
+    APP_LOCALE: ${APP_LOCALE:-ar}
+    APP_FALLBACK_LOCALE: ${APP_FALLBACK_LOCALE:-ar}
+    AUTO_MIGRATE: ${AUTO_MIGRATE:-true}
+    LOG_CHANNEL: ${LOG_CHANNEL:-stack}
+    LOG_STACK: ${LOG_STACK:-daily}
+    LOG_DAILY_DAYS: ${LOG_DAILY_DAYS:-30}
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+    # Inside the compose network the database is the «db» service.
     DB_CONNECTION: pgsql
     DB_HOST: db
     DB_PORT: "5432"
+    DB_DATABASE: ${DB_DATABASE:-recruitment}
+    DB_USERNAME: ${DB_USERNAME:-recruitment_app}
+    DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+    SESSION_DRIVER: ${SESSION_DRIVER:-file}
+    CACHE_STORE: ${CACHE_STORE:-database}
+    QUEUE_CONNECTION: ${QUEUE_CONNECTION:-sync}
+    FILESYSTEM_DISK: ${FILESYSTEM_DISK:-local}
+    BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+    MAIL_MAILER: ${MAIL_MAILER:-log}
+    TRUSTED_PROXIES: ${TRUSTED_PROXIES:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1}
+    EXAMS_CANDIDATE_NETWORKS: ${EXAMS_CANDIDATE_NETWORKS:-}
+    EXAMS_LATE_MINUTES: ${EXAMS_LATE_MINUTES:-15}
+    EXAMS_LOGIN_EARLY_MINUTES: ${EXAMS_LOGIN_EARLY_MINUTES:-60}
+    EXAMS_CANDIDATE_TOKEN_MINUTES: ${EXAMS_CANDIDATE_TOKEN_MINUTES:-360}
+    REPORTS_TIMEZONE: ${REPORTS_TIMEZONE:-Asia/Damascus}
+    REPORTS_ORGANIZATION: "${REPORTS_ORGANIZATION:-وزارة الدفاع السورية}"
+    REPORTS_DEPARTMENT: "${REPORTS_DEPARTMENT:-إدارة التوجيه المعنوي  |  فرع القوة البشرية ــ قسم التوظيف}"
+    REPORTS_MILITARY_ENTITY: "${REPORTS_MILITARY_ENTITY:-التوجيه المعنوي}"
+    REPORTS_MAX_XLSX_ROWS: ${REPORTS_MAX_XLSX_ROWS:-20000}
+    REPORTS_MAX_PDF_ROWS: ${REPORTS_MAX_PDF_ROWS:-2000}
+    CONTRACTS_ISSUING_UNIT: "${CONTRACTS_ISSUING_UNIT:-إدارة التوجيه المعنوي}"
+    CONTRACTS_REMINDER_DAYS: ${CONTRACTS_REMINDER_DAYS:-14}
+    CONTRACTS_VACANCY_MONTHS: ${CONTRACTS_VACANCY_MONTHS:-3}
+    IMPORTS_MAX_FILE_KILOBYTES: ${IMPORTS_MAX_FILE_KILOBYTES:-30720}
+    IMPORTS_MAX_ROWS: ${IMPORTS_MAX_ROWS:-2000}
+    DOCUMENTS_MAX_FILE_KILOBYTES: ${DOCUMENTS_MAX_FILE_KILOBYTES:-10240}
+    CONTRACTS_VACANCIES_MAX_FILE_KILOBYTES: ${CONTRACTS_VACANCIES_MAX_FILE_KILOBYTES:-5120}
+    CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://rec.1005.date}
   volumes:
     # The stored files (imports, documents, vacancy files) and the application's logs outlive the containers.
     - storage-app:/var/www/recruitment/storage/app
