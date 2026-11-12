@@ -5,6 +5,9 @@
     # Never HTTPS here, whatever the settings say: the proxy in front speaks plain HTTP to this container, and
     # an HTTPS listener would answer it "Client sent an HTTP request to an HTTPS server".
     auto_https off
+    # Caddy keeps one port for HTTPS (443 unless told otherwise) and refuses plain HTTP on it. Nothing here
+    # speaks HTTPS, so that role goes to an unused port and 443 is free to answer in plain HTTP below.
+    https_port 8443
 
     # A proxy on this server or in Docker's networks is believed about the client's address and about HTTPS
     # (X-Forwarded-For, X-Forwarded-Proto); a client coming straight from the internet is not.
