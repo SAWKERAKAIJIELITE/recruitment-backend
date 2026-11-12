@@ -1,0 +1,9 @@
+# The recruitment system's timed jobs (docs/deployment.md, step 11). Install: sudo cp deploy/cron /etc/cron.d/recruitment
+# The server's clock is UTC; Laravel's schedule (routes/console.php) is in UTC too.
+
+# Laravel's scheduler, every minute: exam absences and deadlines (exams:sweep), contract reminders at 06:00,
+# expired tokens and login challenges once a day.
+* * * * * recruitment cd /var/www/recruitment && php artisan schedule:run >> /dev/null 2>&1
+
+# The backup, every night at 23:30 UTC (02:30 in Damascus).
+30 23 * * * root /usr/local/sbin/recruitment-backup >> /var/log/recruitment-backup.log 2>&1

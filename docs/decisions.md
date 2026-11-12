@@ -82,7 +82,7 @@ A living record of the design decisions made while building the backend and data
 ### D-009 Authentication with Sanctum personal access tokens
 
 - **Status:** Accepted
-- **Decision:** Bearer tokens issued at login, stored hashed in `personal_access_tokens`. Lifetime is set per token at login (staff: one day since D-036, `staff_auth.token_lifetime_minutes`); Sanctum's global `expiration` is disabled so each actor type can have its own lifetime.
+- **Decision:** Bearer tokens issued at login, stored hashed in `personal_access_tokens`. Lifetime is set per token at login (staff: until the business day ends since D-099; one day under D-036); Sanctum's global `expiration` is disabled so each actor type can have its own lifetime.
 - **Why:** the Electron app has no cookie origin; opaque database-backed tokens can be revoked instantly (logout, deactivation, device revocation); native to Laravel.
 - **Rejected:** Sanctum cookie mode (CORS, CSRF and domain constraints with Electron); JWT (revocation needs a blocklist, and with a single backend it adds nothing).
 - **Consequence:** clients must store the token safely (Electron: OS-protected storage).
@@ -308,7 +308,7 @@ A living record of the design decisions made while building the backend and data
 
 ### D-036 Staff token lifetime: one day
 
-- **Status:** Accepted (owner's change in the code; replaces "one week" in D-009 and OD-5)
+- **Status:** Superseded by D-099 (a staff token now lasts until 00:00 in Damascus). Was: Accepted (owner's change in the code; replaces "one week" in D-009 and OD-5)
 - **Decision:** `staff_auth.token_lifetime_minutes` is 24 hours.
 - **Why:** shorter exposure if a token leaks; staff log in from their approved device each working day.
 
@@ -583,7 +583,7 @@ A living record of the design decisions made while building the backend and data
 
 ### D-064 Contracts and renewals
 
-- **Status:** Accepted (analysis doc §08 "كتابة العقد الأول"; owner: contracts can be renewed; when one ends without renewal, staff record it)
+- **Status:** Accepted (analysis doc §08 "كتابة العقد الأول"; owner: contracts can be renewed; when one ends without renewal, staff record it). Amended by D-098: a contract carries the contract form's details.
 - **Decision:**
   - The first contract (`sequence` 1) is written only for an application `awaiting_contract`: type (managed list `contract_types`), reference number (unique), writing date, start, end (optional), the contract file (a document of the same application, composite key), notes. The application becomes `contract_written`, with the contract as the cause (`contract_id`, D-038), dated the writing day.
   - A renewal is a new contract renewing the latest one (`renews_contract_id`, unique: renewed once; next `sequence`; same application by composite key; starts at the previous end or later; the previous needs an end date). Renewing late is allowed. Renewals do not move the application.
@@ -802,7 +802,7 @@ A living record of the design decisions made while building the backend and data
 
 ### D-085 Offices: one role per staff user, no personal permissions
 
-- **Status:** Accepted (owner, Step 13: "recruitment staffs are separated by offices (Recruitment, Exams and Interviews, Contracts, Documenting), each staff has all control over his section only, he didn't see other's data"; "general Manager has views permissions only"; "Admin can do all other staffs can do"; "the individual only permissions no longer needed"; the Documenting office owns the documents section). Supersedes D-070, and the individual-only permissions of D-037, D-047, D-059, D-063 and D-075; amends D-020 and D-057.
+- **Status:** Accepted (owner, Step 13: "recruitment staffs are separated by offices (Recruitment, Exams and Interviews, Contracts, Documenting), each staff has all control over his section only, he didn't see other's data"; "general Manager has views permissions only"; "Admin can do all other staffs can do"; "the individual only permissions no longer needed"; the Documenting office owns the documents section). Supersedes D-070, and the individual-only permissions of D-037, D-047, D-059, D-063 and D-075; amends D-020 and D-057. Amended by D-097: the Exams and Interviews office has a role for each of its sections too.
 - **Decision:**
   - Every staff user holds **one** role (`staff_users.role_id`, with who gave it and when): an office, the general manager or the system administrator. `PUT /users/{id}/role` replaces it (422 when nobody active would be left able to manage users). The per-user grants and denials (`permission_staff_user`), the many-to-many `role_staff_user`, the automatic roles of D-070 and `individual_only` are gone. A user's permissions are their role's.
   - The offices and their default permissions:
@@ -905,16 +905,81 @@ A living record of the design decisions made while building the backend and data
 - **Why:** an officer sits in their own sittings; seating another officer's account would put them in a sitting they did not plan (and D-084 would then keep them out of their own at the same time).
 - **Consequences:** no list of staff accounts is needed to build a committee.
 
-### D-096 Two interviews of one sitting are 10 minutes apart at least
+### D-096 Two interviews of one sitting are 5 minutes apart at least
 
-- **Status:** Accepted (owner, Step 14: "nothing stops two candidates being booked at the same time in the same sitting. Bulk booking even accepts `minutes_between: 0`. I made it min:10 is there anything else I must do?")
+- **Status:** Accepted (owner, Step 14: "nothing stops two candidates being booked at the same time in the same sitting. Bulk booking even accepts `minutes_between: 0`. I made it min:10 is there anything else I must do?"). Revised in Step 15 (owner: "is it better to create composite unique index on scheduled_at and sitting_id, or doing similar to what you did to prevent two sitting to have same starts_at (tstzrange) or lock the interviews table"): an exclusion constraint replaces Step 14's trigger and lock. The owner then set the gap to 5 minutes (commit 2035d52); the database follows the constant (Step 16).
 - **Decision:**
-  - `minutes_between` is 10 at least (`Interview::MIN_MINUTES_APART`), default 30 (`Interview::DEFAULT_MINUTES_BETWEEN`).
-  - Every booking path checks the time against the sitting's other interviews that are not cancelled: scheduling, bulk booking (each time, all or none), rescheduling (its own time excluded) and the appointment of an accepted excuse. Less than 10 minutes from another is 422 `time_taken` naming its time; exactly 10 is fine. A cancelled interview frees its time.
+  - `minutes_between` is 5 at least (`Interview::MIN_MINUTES_APART`), default 30 (`Interview::DEFAULT_MINUTES_BETWEEN`).
+  - Every booking path checks the time against the sitting's other interviews that are not cancelled: scheduling, bulk booking (each time, all or none), rescheduling (its own time excluded) and the appointment of an accepted excuse. Less than 5 minutes from another is 422 `time_taken` naming its time; exactly 5 is fine. A cancelled interview frees its time.
   - Without a time, an interview is booked at the sitting's next free time: its start, or 30 minutes after its latest interview (scheduling, bulk booking's `first_at`, rescheduling into another sitting).
-  - The database keeps it too: a trigger on `interviews` (insert, or a change of sitting or time) takes a lock per sitting (`pg_advisory_xact_lock`), so two bookings at the same moment are checked one after the other, and refuses a time less than 10 minutes from another (`interview_time_taken`). The API turns that refusal into 422 `time_taken_now`.
-- **Why:** min:10 alone only spaced the bulk booking's own times; a single booking, a reschedule, an excuse or a bulk booking next to existing interviews could still take the same time, and two officers booking at once could both pass the check.
-- **Consequences:** run `migrate:fresh` (the interviews migration changed). A one-off interviewer who really needs two candidates closer than 10 minutes cannot book them.
+  - The database keeps it too, like the sittings' own overlaps (D-084): `interviews_time_apart EXCLUDE USING gist (sitting_id WITH =, interview_slot(scheduled_at) WITH &&) WHERE (status <> 'cancelled')`, where `interview_slot(t)` is `[t, t + MIN_MINUTES_APART minutes)` (an IMMUTABLE SQL function: an index expression must be, and adding minutes to an instant does not depend on the time zone). The migration writes the function from `Interview::MIN_MINUTES_APART`, so the code and the database agree; a new gap needs the function written again: `migrate:fresh` in development, a new migration once in production (D-101). Two bookings at the same moment: the second waits for the first, then fails; the API turns that (SQLSTATE 23P01) into 422 `time_taken_now`.
+- **Why:** the 30-minute default only spaces one bulk booking's own candidates. Without the rule, two single bookings without a time both land on the sitting's start, a second bulk booking starts there again, and a typed time can equal another's: that is not a race, one officer does it. Two officers at once is the race. The constraint answers both, with no trigger and no lock in the code.
+- **Rejected:** a unique index on (sitting_id, scheduled_at): it refuses only the exact same instant (09:00 and 09:05 pass) and must leave cancelled interviews out anyway; locking the interviews table for each insert: it makes every booking of every sitting wait for one another, and still needs the check; Step 14's trigger with a per-sitting advisory lock: correct, but more code than one declarative constraint.
+- **Consequences:** run `migrate:fresh` (the interviews migration changed). A one-off interviewer who really needs two candidates closer than 5 minutes cannot book them.
+
+### D-097 The exams and the interviews each have a role in their office
+
+- **Status:** Accepted (owner, Step 15: "a separate interview officer from exam officer could be existed in the same office"). Amends D-085.
+- **Decision:**
+  - Two more roles of the Exams and Interviews office, besides `exams_interviews` (both sections): `exams` (موظف الاختبارات: `exams.view`, `exam_bank.manage`, `exams.manage`, `attempts.extend`, `exam_results.correct`, `pass_policies.manage`, `exceptions.approve`) and `interviews` (موظف المقابلات: `interviews.view`, `interviews.manage`, `interviews.correct`, `interviews.excuse`). Each has `audit.view_related`, so it reads its own section's operations (D-086 by permission). `StaffRole::office()` gives the office of a role.
+  - Accepting an interview absence excuse needs the new permission `interviews.excuse` (قبول عذر الغياب عن المقابلة), no longer `exceptions.approve`, which stays the exams' (an exception for a failure, an exam absence excuse). `exams_interviews` holds both.
+  - The offices are told of moves by section (D-089): the exam statuses reach `exams_interviews` and `exams`, the interview statuses (from `awaiting_interview`) `exams_interviews` and `interviews`.
+  - The demo adds `exams.only` (exams) and `interviews` (interviews).
+- **Why:** one officer may do only one of the two jobs; a role per job keeps "one role per user" (D-085).
+- **Consequences:** run `migrate:fresh --seed` (or give `interviews.excuse` to `exams_interviews` by the roles API: a role receives its defaults only when created). The frontend checks `interviews.excuse` for the interview excuse.
+
+### D-098 The contract form, ملف التثبيت and the contracts report
+
+- **Status:** Accepted (owner, Step 15: "I have the contract template" (تعاقد عمل); "contract officer can export a file called ملف التثبيت, these fields رقم الكتاب و تاريخ منح الرقم و تاريخ مباشرة العمل و ملاحظات فرع الخدمة aren't filled by the program"; who enters the form's data: "Contracts officer"; job code and salary: "Code per position, salary typed"; "Yes, a filled PDF"; the frontend's contracts report, «الجهة الملتحق بها» and contracts filters). Resolves OD-18; amends D-064.
+- **Decision:**
+  - **The form's details are the contract's**, entered by the Contracts office from the documents the form asks for (the ID, the family statement, the certificate), each optional (blank on the form when missing): `unit_id` (الجهة الملتحق بها, السوية التنظيمية الثانية: the managed list `units`, changed by the Contracts office, seeded from the «الجهة» list of the owner's ملف التثبيت), `level_3` to `level_6`, `workplace`, `work_pattern`, `job_specialty`, `work_schedule`, `salary_usd`, `certificate_type` (the template's list: إعدادية to دكتوراه), `university`, `gpa` (0-100), `certificate_date`, `wives_count` (0-4), `children_count`, `origin` (البلد الأصلي; the place of birth when not given). A renewal copies them from the contract it renews unless sent (null clears one); corrections are audited like the other fields. CHECKs keep the ranges.
+  - **The unit joined is not the nominating entity**: the nominating entities are where a nomination comes from (مديرية الأوقاف, المعهد الشرعي, ...), the units are where the contractor works (الفرقة 50, هيئة التوجيه المعنوي, ...).
+  - **The job code** (الرمز الوظيفي) is the job position's (`job_positions.job_code`), set by the Contracts office (`PUT /job-positions/{id}/job-code`, audited) and shown with the list, on contracts, the form and ملف التثبيت.
+  - **The form** (`GET /contracts/{id}/form`, contracts.view): the template filled as one A4 PDF, right to left: الجهة (the issuing body, `contracts.issuing_unit`), الرقم الذاتي (the application's employee number), رقم الاستمارة (the contract's reference number), the two parties, the person and the job, the period and its length in words, the conditions as printed, the three signature boxes empty, dated the writing day in the Umm al-Qura and the Gregorian calendars. Audited (`contract.form_printed`).
+  - **ملف التثبيت** (`GET /contracts/confirmation-file`, contracts.view): the owner's «نموذج تثبيت متعاقد مدني» in its 33 columns from row 7, one contract per row, the list's filters choosing them; every column filled but رقم الكتاب, تاريخ منح الرقم, تاريخ مباشرة العمل and ملاحظات فرع الخدمة (and the template's untitled column AD). الحالة الاجتماعية is 1 for married, 0 otherwise; التولد is month/day/year as its title asks. At most 20,000 rows. Audited (`contract.confirmation_file`).
+  - **The contracts report**: `GET /reports/contracts` (Excel or PDF, contracts.view), the applications' filters and a period by writing date: one row per contract (the first and renewals), with the unit, type, reference, sequence (الأول, تجديد N), dates, state today, end date and reason, and totals. The whole workbook has it as its last sheet.
+  - **The contracts list** takes `written_from` / `written_to`, `residence_district_id`, `residence_area_id` (the application's) and `unit_id` (`Contracts\Support\ContractSearch`, shared with ملف التثبيت).
+  - Every PDF is right to left: mPDF ignores the `directionality` option the reports passed, so they were laid out left to right until now (`SetDirectionality('rtl')`).
+- **Open points:** «الجهة» at the head of both files is taken as the issuing body (configurable), not the unit joined; رقم الاستمارة is taken as the contract's reference number. Say if either is wrong.
+- **Consequences:** run `migrate:fresh --seed` (new columns and the units list).
+
+### D-099 What the frontend asked for in Step 15
+
+- **Status:** Accepted (owner, Step 15, the frontend's items 8 to 18 and the owner's points 2 and 15)
+- **Decision:**
+  - **Sittings** take `direction` (asc, desc) on their starting time.
+  - **Import batches** filter by `uploaded_by`, `nominating_entity_id` (the batch's or one of its rows') and `from` / `to` (Damascus days); **a batch's rows** take `q`: the name read (any spelling, a part), the national number (exact) or the row number.
+  - **The question bank in Arabic**: attribute names for the bank's and the plans' fields (with the position of an option or a part: «الخيار رقم 2») and the `decimal`, `list`, `required_array_keys` and `missing` messages (and other common rules). A question shows `created_by` (who added it) and each version its author, as {id, username, full_name} (it was an id).
+  - **Sidebar counts** (`GET /badges`, any staff user): the unread notifications; with `interviews.view`, interviews to book (the queue) and to record (booked, their time come); with `contracts.view`, applications awaiting their contract and contracts ending soon or expired. A section the user does not see is null.
+  - **A staff token lasts until the business day ends** (the next 00:00 in Damascus), returned as `expires_at` at login. Supersedes D-036.
+  - **The audit log**: each event has `event_label` in Arabic (`AuditEvents`, a test checks every recorded event has one), `per_page` 10 to 200, and `GET /audit-events/events` lists the events with labels and categories (one's own sections' only with `audit.view_related`).
+  - **The dashboard**: `series` by `group_by` day (the latest 92), week (from Saturday, 104) or month (60), besides `monthly`; the applications list sorts by `updated_at` (the latest change: a correction or a status move).
+  - **Arabic refusals**: approving, registering (its 429) and revoking devices; and every throttle's 429 («محاولات كثيرة»), keeping `Retry-After`.
+- **Why:** the frontend's items of Step 15.
+
+### D-100 An application's stages and its exam rounds
+
+- **Status:** Accepted (the frontend's items "An application's stages" and "Exceptions and excuses on an exam round", Step 15)
+- **Decision:**
+  - The full application (`GET /applications/{id}` with `applications.view`) has `stages`: nomination, exam, interview, first contract, each with its `state` (pending, current, done, failed, absent, ended, closed), Arabic `label` and `state_label`, the date it got there, the exam's and the interview's `rounds`, and whether the exam passed by exception. Built from the history (`ApplicationStages::steps`), so the frontend does not work it out.
+  - Every history event names the record behind it: `exam_booking_id` (an exam result, absence, exception or accepted excuse: its round), `interview_id`, `contract_id`.
+  - An exception or an accepted excuse (exam or interview) takes an optional `decision_number` (رقم القرار), kept on its event (a CHECK allows it on those decisions only) and shown in the history.
+  - An application's exam rounds (`GET /applications/{id}/exam-bookings`) show their session (`starts_at`, `location`) and the `decision` that followed each (exception or accepted excuse: date, reason, decision number, who). Every booking shows its session.
+- **Not done:** the decision's attachment. The exams office cannot read or upload an application's documents (D-086): either it may attach a document to its decision, or the Documenting office uploads it and the decision names it (OD-20).
+
+### D-101 Production: the first administrator, one origin, and a deployment that was run
+
+- **Status:** Accepted (owner, Step 16: "test the project through the whole application lifecycle and its branches", "after that I want detailed guide for deployment this project on vps locally").
+- **Decision:**
+  - **The first administrator comes from the shell:** `php artisan staff:create-admin <username>` (names and personal number as options or asked; the password asked twice with `secret()`, never an argument). The API's rules (`RegisterUserRequest`), refused before `db:seed` (no roles), a confirmation when an active administrator exists already, audited `access.user_created` with `via: console`. Without it a new installation had no way in: adding a user needs an administrator logged in from an approved device. Then `staff:approve-device` approves that administrator's first device; everyone else is added from the application.
+  - **One origin in production:** nginx serves the frontend's build at `/` and only `public/index.php` for `/api/…`, so the browser makes no cross-origin request. For a frontend on another origin, `config/cors.php` (published) allows `CORS_ALLOWED_ORIGINS` (default `*`, for development) on `api/*`, without credentials (Bearer tokens), and exposes `Content-Disposition` (download names) and `Retry-After` (429).
+  - **401 in Arabic:** a request without a valid token gets «انتهت الجلسة أو لم يُسجَّل الدخول: سجّل الدخول من جديد.» (`lang/ar/auth.php`), like the 403 and the 429 (D-099). The three are written with readable Arabic (D-018): the authentication and throttle middleware run before the `api` group's `UnescapedUnicodeJson`, so their responses carried `\u` escapes.
+  - **Production settings that differ from the defaults:** `SESSION_DRIVER=file` (the API keeps no session; only the documentation pages, not served in production, would start one), `QUEUE_CONNECTION=sync` (nothing is queued: no worker), `CACHE_STORE=database` (rate limits, the scheduler's locks). The template is `deploy/env.production.example`.
+  - **The deployment is files in the repository** (`deploy/`: the `.env` template, the PHP-FPM pool and OPcache settings, the nginx site, the cron file, the backup and update scripts) and a guide (`docs/deployment.md`) that installs them. They were installed on a fresh Ubuntu 24.04 (PHP 8.3-FPM, nginx 1.24, PostgreSQL 16, a certificate from an internal authority) and checked by `tools/live-lifecycle.php`: the whole lifecycle through HTTPS with real device registrations and signed logins, every office as its own user, and the cron scheduler marking an absence.
+  - **The lifecycle is tested end to end** in PHPUnit too (`tests/Feature/Lifecycle/ApplicationJourneyTest.php`): four candidates through every office and every way back, a file closed from every status that waits (and not from `contract_written`), and steps out of turn refused.
+  - **Once in production, migrations are append-only:** never `migrate:fresh` (or `refresh`, `reset`, `db:wipe`) on its database. A change (a new interview gap of D-096, say) is a new migration.
+- **Why:** the owner's Step 16 request; installing it for real found the missing first administrator, the error bodies written with `\u` escapes, and the download names a cross-origin frontend could not read.
+- **Rejected:** a web installer or a seeded default administrator with a known password (a shared secret in every installation); a queue worker and Supervisor (nothing to run); serving the API on its own sub-domain (CORS and two certificates for nothing).
 
 ---
 
@@ -926,7 +991,7 @@ A living record of the design decisions made while building the backend and data
 | OD-2  | Registration spam on the unauthenticated endpoint                                                   | **Resolved:** throttle by IP and a cap on pending devices (built). Admin-issued enrolment codes remain a fallback if abuse appears.                                                                                                                |
 | OD-3  | Emergency web portal vs device binding (analysis doc §11)                                          | **Deferred:** the owner wants a web fallback *after the main work*. Until then there is none. A browser holds no installed key, so it would have to register as its own, weaker kind of device (for example a non-extractable WebCrypto key).    |
 | OD-4  | How are candidate codes delivered?                                                                  | **Resolved differently:** one password per session, told on the day; candidates use their national number (D-072).                                                                                                                              |
-| OD-5  | Token lifetime                                                                                      | **Resolved:** staff one day (D-036); candidates 6 hours (`exams.candidate_token_minutes`), every exam request also checking the attempt's deadline (D-072).                                                                                       |
+| OD-5  | Token lifetime                                                                                      | **Resolved:** staff until the business day ends, 00:00 in Damascus (D-099; one day under D-036); candidates 6 hours (`exams.candidate_token_minutes`), every exam request also checking the attempt's deadline (D-072).                                                                                       |
 | OD-6  | May a user own several devices?                                                                     | **Resolved:** no. One approved device per user.                                                                                                                                                                                                    |
 | OD-7  | Repeat applications: may a person apply again for a job title they already applied for, and when?   | **Resolved:** one live application per person; a new one only after the contract ended without renewal or authorised staff closed the application (D-037).                                                                                         |
 | OD-8  | Format rule for the national ID (length, check digits)                                              | **Resolved:** 11 to 20 digits, stored as text (D-032, owner in Step 8; was exactly 11). No check digit is validated.                                                                                                                              |
@@ -939,8 +1004,10 @@ A living record of the design decisions made while building the backend and data
 | OD-15 | The legacy exams sheet computes results differently from the analysis doc | **Resolved (owner):** the doc's rules are right (D-052): one subject from 58 tolerated, average strictly above 70. Results copied from old sheets can differ. |
 | OD-16 | One exam session for all subjects, or a session per subject? | **Resolved (owner):** one session; التجويد is oral the same day and marked by hand (D-054). |
 | OD-17 | Difficulty levels in the question distribution | **Resolved (owner):** easy, medium and hard, every exam subject or part asks all three (D-054). |
-| OD-18 | The interview evaluation form and the first contract form from management | **Resolved / waiting (owner, Step 11):** no interview evaluation form is needed (the template's three grades and the committee's summary stay, D-059); the contract form is still awaited from the client, so contract fields may grow (D-064). |
+| OD-18 | The interview evaluation form and the first contract form from management | **Resolved (owner, Steps 11 and 15):** no interview evaluation form is needed (the template's three grades and the committee's summary stay, D-059); the contract form (تعاقد عمل) and ملف التثبيت arrived in Step 15 (D-098). |
 | OD-19 | The شعبة التجنيد list's الجهة العسكرية and اسم الام والنسبة | **Resolved (owner, Step 11):** "التوجيه المعنوي" under الجهة العسكرية; the stored mother's name holds name and family name together (D-069). |
+| OD-20 | The attachment of an exception or an accepted excuse (analysis doc: "decision number and an optional attachment") | **Open:** the decision number is kept (D-100). The exams office does not reach an application's documents (D-086): may it attach one to its decision, or does the Documenting office upload it for the decision to name? |
+| OD-21 | ملف التثبيت and the contract form: «الجهة» at the head, رقم الاستمارة | **Assumed (D-098), to confirm:** «الجهة» is the issuing body (`contracts.issuing_unit`, default إدارة التوجيه المعنوي), not the unit joined; رقم الاستمارة is the contract's reference number. |
 
 ---
 

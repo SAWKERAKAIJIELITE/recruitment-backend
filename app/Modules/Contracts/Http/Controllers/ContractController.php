@@ -13,7 +13,7 @@ use App\Modules\Contracts\Http\Requests\EndContractRequest;
 use App\Modules\Contracts\Http\Requests\RenewContractRequest;
 use App\Modules\Contracts\Http\Resources\ContractResource;
 use App\Modules\Contracts\Models\Contract;
-use App\Modules\Contracts\Queries\ContractSearch;
+use App\Modules\Contracts\Support\ContractSearch;
 use App\Modules\Recruitment\Models\Application;
 use App\Support\BusinessDay;
 use Illuminate\Http\JsonResponse;

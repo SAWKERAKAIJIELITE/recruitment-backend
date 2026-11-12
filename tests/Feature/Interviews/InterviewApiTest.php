@@ -569,43 +569,44 @@ class InterviewApiTest extends TestCase
         $this->asStaff($this->staff)->postJson($url, ['application_ids' => [$ids[1]]])->assertCreated()->assertJsonPath('data.0.scheduled_at', '2026-11-01T09:50:00+00:00');
     }
 
-    public function test_the_interviews_of_a_sitting_are_ten_minutes_apart(): void
+    public function test_the_interviews_of_a_sitting_are_five_minutes_apart(): void
     {
+        $this->assertSame(5, Interview::MIN_MINUTES_APART);
         $sitting = $this->sitting();                                                                                      // 08:00 to 16:00
-        $taken = fn(string $time) => __('interviews.time_taken', ['time' => $time, 'minutes' => 10]);
+        $taken = fn(string $time) => __('interviews.time_taken', ['time' => $time, 'minutes' => 5]);
         $at = fn(string $time) => ['sitting_id' => $sitting, 'scheduled_at' => "2026-10-30T{$time}:00Z"];
         $ten = $this->schedule($this->awaitingInterview('11111111111'), $at('10:00'))->assertCreated()->json('data.id');
         $next = $this->awaitingInterview('22222222222');
 
         $this->schedule($next, $at('10:00'))->assertStatus(422)->assertJsonPath('errors.scheduled_at.0', $taken('2026-10-30T10:00:00+00:00'));
-        $this->schedule($next, $at('10:05'))->assertStatus(422)->assertJsonValidationErrors('scheduled_at');
-        $this->schedule($next, $at('09:51'))->assertStatus(422)->assertJsonValidationErrors('scheduled_at');
-        $this->schedule($next, $at('10:10'))->assertCreated();                                                            // 10 minutes apart: fine
+        $this->schedule($next, $at('10:04'))->assertStatus(422)->assertJsonValidationErrors('scheduled_at');
+        $this->schedule($next, $at('09:56'))->assertStatus(422)->assertJsonValidationErrors('scheduled_at');
+        $this->schedule($next, $at('10:05'))->assertCreated();                                                            // 5 minutes apart: fine
         $this->schedule($this->awaitingInterview('33333333333'), ['sitting_id' => $sitting])
-            ->assertCreated()->assertJsonPath('data.scheduled_at', '2026-10-30T10:40:00+00:00');                         // no time: 30 minutes after the latest
+            ->assertCreated()->assertJsonPath('data.scheduled_at', '2026-10-30T10:35:00+00:00');                         // no time: 30 minutes after the latest
 
         // Moving one: not next to another, but next to its own time is fine.
         $moved = $this->schedule($this->awaitingInterview('44444444444'), $at('11:30'))->json('data.id');
-        $this->reschedule($moved, ['scheduled_at' => '2026-10-30T10:45:00Z'])->assertStatus(422)->assertJsonPath('errors.scheduled_at.0', $taken('2026-10-30T10:40:00+00:00'));
-        $this->reschedule($moved, ['scheduled_at' => '2026-10-30T11:25:00Z'])->assertOk();
+        $this->reschedule($moved, ['scheduled_at' => '2026-10-30T10:38:00Z'])->assertStatus(422)->assertJsonPath('errors.scheduled_at.0', $taken('2026-10-30T10:35:00+00:00'));
+        $this->reschedule($moved, ['scheduled_at' => '2026-10-30T11:27:00Z'])->assertOk();
 
         // A cancelled interview frees its time.
         $this->asStaff($this->staff)->postJson("/api/v1/staff/interviews/{$ten}/cancel", ['reason' => 'اعتذار اللجنة'])->assertOk();
         $this->schedule($this->awaitingInterview('55555555555'), $at('10:00'))->assertCreated();
 
-        // Booking many: each time is checked against the others, and every 10 minutes at least.
+        // Booking many: each time is checked against the others, and every 5 minutes at least.
         $two = [$this->awaitingInterview('66666666666')->id, $this->awaitingInterview('77777777777')->id];
         $book = fn(array $body) => $this->asStaff($this->staff)->postJson("/api/v1/staff/interview-sittings/{$sitting}/bookings", $body + ['application_ids' => $two]);
-        $book(['first_at' => '2026-10-30T11:45:00Z', 'minutes_between' => 9])->assertStatus(422)->assertJsonValidationErrors('minutes_between');
-        $book(['first_at' => '2026-10-30T11:30:00Z', 'minutes_between' => 10])
-            ->assertStatus(422)->assertJsonPath('errors', ['application_ids.0' => [$taken('2026-10-30T11:25:00+00:00')]]);
-        $book(['first_at' => '2026-10-30T11:00:00Z', 'minutes_between' => 20])
-            ->assertStatus(422)->assertJsonPath('errors', ['application_ids.1' => [$taken('2026-10-30T11:25:00+00:00')]]);   // 11:20 is next to it
+        $book(['first_at' => '2026-10-30T11:45:00Z', 'minutes_between' => 4])->assertStatus(422)->assertJsonValidationErrors('minutes_between');
+        $book(['first_at' => '2026-10-30T11:25:00Z', 'minutes_between' => 5])
+            ->assertStatus(422)->assertJsonPath('errors', ['application_ids.0' => [$taken('2026-10-30T11:27:00+00:00')]]);
+        $book(['first_at' => '2026-10-30T11:10:00Z', 'minutes_between' => 15])
+            ->assertStatus(422)->assertJsonPath('errors', ['application_ids.1' => [$taken('2026-10-30T11:27:00+00:00')]]);   // 11:25 is next to it
         $this->assertSame(0, Interview::query()->whereIn('application_id', $two)->count());                             // all or nothing
-        $book([])->assertCreated()->assertJsonPath('data.0.scheduled_at', '2026-10-30T11:55:00+00:00')->assertJsonPath('data.1.scheduled_at', '2026-10-30T12:25:00+00:00');
+        $book([])->assertCreated()->assertJsonPath('data.0.scheduled_at', '2026-10-30T11:57:00+00:00')->assertJsonPath('data.1.scheduled_at', '2026-10-30T12:27:00+00:00');
     }
 
-    public function test_the_database_keeps_the_interviews_of_a_sitting_ten_minutes_apart(): void
+    public function test_the_database_keeps_the_interviews_of_a_sitting_five_minutes_apart(): void
     {
         $sitting = $this->sitting();
         $booked = $this->schedule($this->awaitingInterview('11111111111'), ['sitting_id' => $sitting, 'scheduled_at' => '2026-10-30T10:00:00Z'])->json('data.id');
@@ -614,17 +615,18 @@ class InterviewApiTest extends TestCase
         $refused = function (callable $write) {
             try {
                 DB::transaction($write);
-                $this->fail('The database accepted two interviews of a sitting less than 10 minutes apart.');
+                $this->fail('The database accepted two interviews of a sitting less than 5 minutes apart.');
             } catch (QueryException $e) {
                 $this->assertSame('23P01', $e->getCode());   // exclusion_violation
                 $this->assertStringContainsString('interviews_time_apart', $e->getMessage());
             }
         };
 
-        $refused(fn() => $insert('2026-10-30 10:09:59'));
-        $refused(fn() => $insert('2026-10-30 09:50:01'));
-        DB::transaction(fn() => $insert('2026-10-30 10:10:00'));
-        $refused(fn() => DB::table('interviews')->where('id', $booked)->update(['scheduled_at' => '2026-10-30 10:05:00']));
+        // The database's gap is the model's (the migration builds interview_slot() from MIN_MINUTES_APART).
+        $refused(fn() => $insert('2026-10-30 10:04:59'));
+        $refused(fn() => $insert('2026-10-30 09:55:01'));
+        DB::transaction(fn() => $insert('2026-10-30 10:05:00'));
+        $refused(fn() => DB::table('interviews')->where('id', $booked)->update(['scheduled_at' => '2026-10-30 10:03:00']));
         // Another sitting's interview may take the same time.
         $elsewhere = $this->sitting();
         $third = $this->awaitingInterview('55555555555');
@@ -640,8 +642,8 @@ class InterviewApiTest extends TestCase
                 DB::table('interviews')->insert(['id' => (string) Str::uuid7(), 'application_id' => $racing->id, 'round' => 1, 'sitting_id' => $sitting, 'scheduled_at' => '2026-10-30 12:00:00', 'status' => 'scheduled', 'created_by' => $this->staff->id]);
             }
         });
-        $this->schedule($third, ['sitting_id' => $sitting, 'scheduled_at' => '2026-10-30T12:05:00Z'])
-            ->assertStatus(422)->assertJsonPath('errors.scheduled_at.0', __('interviews.time_taken_now', ['minutes' => 10]));
+        $this->schedule($third, ['sitting_id' => $sitting, 'scheduled_at' => '2026-10-30T12:03:00Z'])
+            ->assertStatus(422)->assertJsonPath('errors.scheduled_at.0', __('interviews.time_taken_now', ['minutes' => 5]));
         $this->assertSame(0, Interview::query()->whereIn('application_id', [$third->id, $racing->id])->count());          // nothing of either was kept
     }
 

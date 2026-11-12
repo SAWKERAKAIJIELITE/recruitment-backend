@@ -8,7 +8,7 @@ use Illuminate\Foundation\Http\FormRequest;
 /**
  * Book several applications into a committee sitting, in the order given (for example the order of the interview
  * queue): `application_ids`, `first_at` (default: the sitting's start, or 30 minutes after its latest interview),
- * `minutes_between` (10 to 480, default 30: two interviews of a sitting are 10 minutes apart at least, D-096).
+ * `minutes_between` (5 to 480, default 30: two interviews of a sitting are 5 minutes apart at least, D-096).
  */
 class BookSittingRequest extends FormRequest
 {

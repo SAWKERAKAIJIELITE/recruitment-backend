@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\UnescapedUnicodeJson;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -30,12 +31,18 @@ return Application::configure(basePath: dirname(__DIR__))
                 && in_array($e->getMessage(), ['', 'This action is unauthorized.', __('This action is unauthorized.')], true);
 
             return $generic && ($request->is('api/*') || $request->expectsJson())
-                ? response()->json(['message' => __('auth.forbidden')], 403)
+                ? response()->json(['message' => __('auth.forbidden')], 403, [], JSON_UNESCAPED_UNICODE)
                 : null;
         });
 
-        // The throttle's 429 in Arabic too, with its Retry-After (Step 15).
+        // Not signed in, or the token ended (at 00:00 in Damascus, D-099): 401 in Arabic too (D-101).
+        $exceptions->render(fn (AuthenticationException $e, Request $request) => $request->is('api/*') || $request->expectsJson()
+            ? response()->json(['message' => __('auth.unauthenticated')], 401, [], JSON_UNESCAPED_UNICODE)
+            : null);
+
+        // The throttle's 429 in Arabic too, with its Retry-After (Step 15). These three are rendered outside the `api`
+        // group's UnescapedUnicodeJson (the auth and throttle middleware run before it), hence the flag (D-018).
         $exceptions->render(fn (ThrottleRequestsException $e, Request $request) => $request->is('api/*') || $request->expectsJson()
-            ? response()->json(['message' => __('access.too_many_attempts')], 429, $e->getHeaders())
+            ? response()->json(['message' => __('access.too_many_attempts')], 429, $e->getHeaders(), JSON_UNESCAPED_UNICODE)
             : null);
     })->create();

@@ -126,7 +126,7 @@ class InterviewController extends Controller
      * Only for an application awaiting its interview (passed the exams, or by exception), and one waiting interview at
      * a time. Book it into a sitting (`sitting_id`: a committee, or a one-off sitting's single interviewer), at the
      * candidate's time `scheduled_at` (default: the sitting's start, or 30 minutes after its latest interview). 422 on
-     * `scheduled_at` before the sitting starts or at or after its end, or less than 10 minutes from another interview
+     * `scheduled_at` before the sitting starts or at or after its end, or less than 5 minutes from another interview
      * of the sitting (D-096); on `sitting_id` once the sitting has ended.
      */
     public function store(ScheduleInterviewRequest $request, Application $application, ManageInterviews $interviews): JsonResponse
@@ -141,7 +141,7 @@ class InterviewController extends Controller
      *
      * With a `reason` (kept in its reschedules). Another sitting (`sitting_id`; the time defaults to its next free
      * time, as when scheduling), a new time (`scheduled_at`; alone, in the same sitting), or both, within the sitting's
-     * time and 10 minutes at least from its other interviews. 422 `same_appointment` when nothing changes; 422 on
+     * time and 5 minutes at least from its other interviews. 422 `same_appointment` when nothing changes; 422 on
      * `interview` once its sitting has ended (record it, absent if so, or cancel it), on `sitting_id` when the new
      * sitting has ended.
      */

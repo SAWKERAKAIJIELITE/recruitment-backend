@@ -52,7 +52,7 @@ class ManageInterviews
 
     /**
      * Books several applications into one sitting, in the order given (the priority order the staff chose),
-     * from `$firstAt` (default: the sitting's next free time) every `$minutesBetween` minutes, each 10 minutes at
+     * from `$firstAt` (default: the sitting's next free time) every `$minutesBetween` minutes, each MIN_MINUTES_APART (5) minutes at
      * least from the sitting's other interviews. All or nothing.
      *
      * @param  list<string>  $applicationIds
@@ -262,7 +262,7 @@ class ManageInterviews
 
     /**
      * The sitting and the time an appointment leads to. Without a time: the sitting's next free time; when
-     * rescheduling, a new time alone keeps the sitting. The time must be 10 minutes at least from the sitting's other
+     * rescheduling, a new time alone keeps the sitting. The time must be MIN_MINUTES_APART (5) minutes at least from the sitting's other
      * interviews.
      *
      * @return array{InterviewSitting, CarbonInterface}
@@ -294,7 +294,7 @@ class ManageInterviews
         return $latest === null ? $sitting->starts_at : Date::parse($latest)->addMinutes(Interview::DEFAULT_MINUTES_BETWEEN);
     }
 
-    /** No other interview of the sitting (not cancelled) less than 10 minutes away (D-096). */
+    /** No other interview of the sitting (not cancelled) less than MIN_MINUTES_APART (5) minutes away (D-096). */
     private function assertTimeFree(InterviewSitting $sitting, CarbonInterface $time, string $field, ?Interview $except): void
     {
         $other = Interview::query()

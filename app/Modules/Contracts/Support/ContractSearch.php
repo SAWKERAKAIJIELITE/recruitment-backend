@@ -1,9 +1,8 @@
 <?php
 
-namespace App\Modules\Contracts\Queries;
+namespace App\Modules\Contracts\Support;
 
 use App\Modules\Contracts\Enums\ContractState;
-use App\Modules\Contracts\Models\Contract;
 use App\Support\ArabicText;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\Rule;

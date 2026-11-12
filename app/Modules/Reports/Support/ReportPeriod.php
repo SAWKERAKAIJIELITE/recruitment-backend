@@ -118,6 +118,46 @@ final readonly class ReportPeriod
         return array_slice($months, -self::MAX_MONTHS);
     }
 
+    /**
+     * The buckets of the dashboard's series (D-099): days, weeks (from Saturday) or months of the report time zone, over
+     * the period, or from $earliest up to today; the latest MAX_BUCKETS of them.
+     *
+     * @return list<array{key: string, start: string, end: string}> the first and the last day of each, included
+     */
+    public function buckets(string $groupBy, ?CarbonInterface $earliest): array
+    {
+        $tz = (string) config('reports.timezone');
+        $from = ($this->start ?? ($earliest === null ? CarbonImmutable::now($tz) : CarbonImmutable::parse($earliest)->setTimezone($tz)))->setTimezone($tz)->startOfDay();
+        $to = ($this->end?->subSecond() ?? CarbonImmutable::now($tz))->setTimezone($tz)->startOfDay();
+
+        [$first, $step, $key] = match ($groupBy) {
+            'day' => [$from, fn (CarbonImmutable $day) => $day->addDay(), fn (CarbonImmutable $day) => $day->toDateString()],
+            'week' => [$from->startOfWeek(CarbonInterface::SATURDAY), fn (CarbonImmutable $day) => $day->addWeek(), fn (CarbonImmutable $day) => $day->toDateString()],
+            default => [$from->startOfMonth(), fn (CarbonImmutable $day) => $day->addMonth(), fn (CarbonImmutable $day) => $day->format('Y-m')],
+        };
+
+        // Started at most MAX_BUCKETS before the last one: a long period never builds thousands to keep a few.
+        $last = match ($groupBy) {
+            'day' => $to,
+            'week' => $to->startOfWeek(CarbonInterface::SATURDAY),
+            default => $to->startOfMonth(),
+        };
+        $earliestKept = match ($groupBy) {
+            'day' => $last->subDays(self::MAX_BUCKETS[$groupBy] - 1),
+            'week' => $last->subWeeks(self::MAX_BUCKETS[$groupBy] - 1),
+            default => $last->subMonths(self::MAX_BUCKETS['month'] - 1),
+        };
+        $first = $first->max($earliestKept);
+
+        $buckets = [];
+
+        for ($bucket = $first; $bucket->lessThanOrEqualTo($last); $bucket = $step($bucket)) {
+            $buckets[] = ['key' => $key($bucket), 'start' => $bucket->toDateString(), 'end' => $step($bucket)->subDay()->toDateString()];
+        }
+
+        return $buckets;
+    }
+
     /** The month (YYYY-MM, report time zone) of an instant. */
     public static function monthOf(CarbonInterface $moment): string
     {

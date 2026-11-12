@@ -1,5 +1,6 @@
 <?php
 
+use App\Modules\Interviews\Models\Interview;
 use App\Modules\Recruitment\Support\StatusEventCauseColumns;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
@@ -94,15 +95,16 @@ return new class extends Migration
         DB::statement("ALTER TABLE interviews ADD CONSTRAINT interviews_cancelled CHECK ((status = 'cancelled') = (cancelled_at IS NOT NULL) AND (cancelled_at IS NULL OR (cancelled_by IS NOT NULL AND btrim(coalesce(cancel_reason, '')) <> '')))");
         // One interview waiting at a time per application.
         DB::statement("CREATE UNIQUE INDEX interviews_one_scheduled ON interviews (application_id) WHERE status = 'scheduled'");
-        // Two interviews of one sitting (not cancelled) are 10 minutes apart at least (D-096; Interview::MIN_MINUTES_APART):
-        // each holds [scheduled_at, scheduled_at + 10 minutes), and two of one sitting never overlap. A constraint, like
+        // Two interviews of one sitting (not cancelled) are Interview::MIN_MINUTES_APART (5) minutes apart at least (D-096):
+        // each holds [scheduled_at, scheduled_at + that), and two of one sitting never overlap. A constraint, like
         // the sittings' own: two officers booking close times at once cannot both pass (the second waits, then fails).
         // interview_slot() is IMMUTABLE, as an index expression must be: adding minutes to an instant does not depend
         // on the time zone (PostgreSQL marks `timestamptz + interval` only STABLE because days and months would).
-        DB::unprepared(<<<'SQL'
+        $minutes = Interview::MIN_MINUTES_APART;
+        DB::unprepared(<<<SQL
             CREATE OR REPLACE FUNCTION interview_slot(at timestamptz) RETURNS tstzrange
                 LANGUAGE sql IMMUTABLE PARALLEL SAFE
-                AS $$ SELECT tstzrange(at, at + interval '10 minutes') $$
+                AS \$\$ SELECT tstzrange(at, at + interval '{$minutes} minutes') \$\$
             SQL
         );
         DB::statement("ALTER TABLE interviews ADD CONSTRAINT interviews_time_apart EXCLUDE USING gist (sitting_id WITH =, interview_slot(scheduled_at) WITH &&) WHERE (status <> 'cancelled')");
@@ -474,6 +476,7 @@ return new class extends Migration
             DB::unprepared("DROP FUNCTION IF EXISTS {$function}()");
         }
         DB::unprepared('DROP FUNCTION IF EXISTS interview_sitting_needs_members(uuid)');
+        DB::unprepared('DROP FUNCTION IF EXISTS interview_slot(timestamptz)');
         DB::unprepared('DROP FUNCTION IF EXISTS interview_staff_sittings_overlap(uuid)');
         DB::unprepared('DROP FUNCTION IF EXISTS interview_committee_key(uuid)');
         DB::unprepared('DROP FUNCTION IF EXISTS interview_text_key(text)');

@@ -127,7 +127,7 @@ class InterviewSittingController extends Controller
      *
      * In the order given (take it from the interview queue), from `first_at` (default: the sitting's start, or 30
      * minutes after its latest interview) every `minutes_between` minutes (10 to 480, default 30), each before the
-     * sitting's end and 10 minutes at least from the sitting's other interviews (D-096). Each application must be
+     * sitting's end and 5 minutes at least from the sitting's other interviews (D-096). Each application must be
      * awaiting its interview with none booked. All or nothing: one refused application (422 on `application_ids.N`,
      * also when its time would reach the end or come too close to another interview) books none. 422 on `sitting`
      * once the sitting has ended.

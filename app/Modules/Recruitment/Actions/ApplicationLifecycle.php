@@ -259,6 +259,7 @@ class ApplicationLifecycle
         ?string $reason,
         ?StatusChangeCause $cause,
         CarbonInterface $occurredAt,
+        ?string $decisionNumber = null,
     ): ApplicationStatusEvent {
         $attributes = [
             'application_id' => $application->getKey(),
@@ -268,6 +269,7 @@ class ApplicationLifecycle
             'reason' => $reason,
             'actor_id' => $actor?->id,
             'occurred_at' => $occurredAt,
+            'decision_number' => $decisionNumber,
         ];
 
         if ($cause !== null) {
