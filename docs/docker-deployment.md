@@ -78,7 +78,8 @@ Fill the values marked «change»:
 
 | Setting                      | Value                                                                                                                                                    |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WEB_PORT`                 | The `web` container's port, the same number inside the container and on the server (8080; never 80 or 443, which the proxy holds). In the platform, point the domain `rec.1005.date` at this port. Another number if 8080 is taken.      |
+| `WEB_PORT`                 | The server's port that reaches the `web` container (8080; never 80 or 443, which the proxy holds). In the platform, point the domain `rec.1005.date` at port 8080 of `web`. Another number if 8080 is taken. |
+| `API_DOCS_ENABLED`         | `true` serves the API's documentation page at `/docs/api`, to anyone who knows the address: for a test deployment. `false` (the default) in production. Set it on `app`, `scheduler` and `web`. |
 | `TRUSTED_PROXIES`          | The private ranges (already set): the proxy in front is believed about the client's address and HTTPS. Empty in the standalone layout.                 |
 | `APP_URL`                  | `https://rec.1005.date` (already set).                                                                                                                 |
 | `DB_PASSWORD`              | The application's database password. Used when the database is first created: decide it **before** the first start.                                |
@@ -278,7 +279,8 @@ kept to 5 files of 10 MB each.
 - **PHP 8.2.35** instead of 8.3 (`composer.json` asks for `^8.2`; the build runs `composer check-platform-reqs`).
   Another version: `PHP_VERSION` at the top of the `Dockerfile`.
 - **Caddy** instead of nginx. The limits are the same (34 MB uploads, 180 s).
-  Only `/api/…` reaches PHP, so the documentation pages (`/docs`, `/docs/api`) and `/up` are not reachable.
+  Only `/api/…` reaches PHP, so the documentation pages (`/docs`, `/docs/api`) and `/up` are not reachable;
+  `API_DOCS_ENABLED=true` opens `/docs/api` (and its `/docs/api.json`) and nothing else.
   A request for `/.env` or any unknown path gets the frontend's `index.html` (a single-page app), never a backend file.
 - **The settings** are the containers' environment (from `.env`), not a file inside the image: no `.env`, no key
   and no password is ever in an image.
@@ -288,7 +290,7 @@ kept to 5 files of 10 MB each.
   from `TRUSTED_PROXIES` (the same ranges in the template); otherwise the hall check and the rate limits see the
   proxy. In the standalone layout `TRUSTED_PROXIES` is empty: Caddy sees the clients itself.
 - **An internal name instead of a public one** (no Let's Encrypt): put the organization's certificate in the
-  `web` container and add `tls /path/cert.pem /path/key.pem` to the site block of `deploy/docker/Caddyfile`, or
+  `web` container and add `tls /path/cert.pem /path/key.pem` to the site block of `deploy/docker/caddy/Caddyfile.standalone`, or
   use `tls internal` and install Caddy's root certificate on the PCs.
 
 ## 12. Troubleshooting
@@ -303,7 +305,8 @@ kept to 5 files of 10 MB each.
 | The domain answers 502/404 from the platform's proxy               | The domain is not attached to the `web` service's port.                                        | In the platform, send `rec.1005.date` to `web`, port `WEB_PORT`; on the server, `curl http://127.0.0.1:8080/api/v1/ping` must answer.                                    |
 | **502** from Caddy                                            | `app` is starting (migrations) or down.                                                      | `docker compose ps`; `docker compose logs --tail=50 app`.                                                                                                              |
 | **500**, JSON `{"message":"Server Error"}`                  | An exception.                                                                                  | The application's log (step 10).                                                                                                                                           |
-| **413** on an upload                                          | Above 34 MB.                                                                                   | Raise `max_size` (Caddyfile), `upload_max_filesize`/`post_max_size` (`deploy/docker/php/app.ini`) and `*_MAX_FILE_KILOBYTES` together; `docker compose up -d --build`. |
+| «Client sent an HTTP request to an HTTPS server» (400)             | The `web` container was listening with HTTPS behind the proxy (an older image, or the standalone layout used behind a proxy). | Deploy the current version: in the default layout Caddy speaks plain HTTP only.                                                                                            |
+| **413** on an upload                                          | Above 34 MB.                                                                                   | Raise `max_size` (`deploy/docker/caddy/site.caddy`), `upload_max_filesize`/`post_max_size` (`deploy/docker/php/app.ini`) and `*_MAX_FILE_KILOBYTES` together; `docker compose up -d --build`. |
 | A change in `.env` has no effect                                  | The containers still have the old environment.                                                 | `docker compose up -d` (not `restart`).                                                                                                                                |
 | New code has no effect                                              | The image was not rebuilt.                                                                     | `docker compose build && docker compose up -d`.                                                                                                                          |
 | Candidates are refused from the halls                               | Their address is not in `EXAMS_CANDIDATE_NETWORKS`, or the server does not see real addresses. | `docker compose logs web` shows the address seen (`remote_ip`); add its network. If every client shows a `172.…` address, Docker is hiding them (Docker Desktop, or `userland-proxy` with IPv6): use Docker Engine on Linux. |

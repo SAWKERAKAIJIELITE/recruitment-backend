@@ -13,7 +13,7 @@ COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
 # Where Caddy keeps its state and certificates (the caddy-config and caddy-data volumes).
 ENV XDG_CONFIG_HOME=/config XDG_DATA_HOME=/data
 
-COPY deploy/docker/Caddyfile /etc/caddy/Caddyfile
+COPY deploy/docker/caddy/ /etc/caddy/
 # Caddy looks for the front controller at the same path as PHP; nothing else of the backend is in this image.
 COPY public /var/www/recruitment/public
 # The frontend's web build: whatever is in deploy/docker/frontend when the image is built (a placeholder page

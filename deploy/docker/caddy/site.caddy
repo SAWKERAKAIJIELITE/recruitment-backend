@@ -1,0 +1,51 @@
+# What the site serves, in both layouts (imported by Caddyfile and Caddyfile.standalone): the frontend's build
+# at /, the API at /api, on one address.
+
+encode zstd gzip
+
+# The largest upload: candidate imports up to 30 MB (IMPORTS_MAX_FILE_KILOBYTES), documents 10 MB.
+request_body {
+    max_size 34MB
+}
+
+header {
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy no-referrer
+    Strict-Transport-Security "max-age=31536000"
+    -Server
+}
+
+# The API's documentation page (Scramble: /docs/api), only when API_DOCS_ENABLED=true. Laravel checks the same
+# setting, so the page stays closed unless both the web and the app containers have it.
+@docs {
+    path /docs/api /docs/api.json
+    expression {$API_DOCS_ENABLED:false}
+}
+
+# In the order written: the first block that matches answers.
+route {
+    # The API. Only Laravel's front controller (public/index.php) runs; nothing else of the backend is in this
+    # container.
+    handle /api/* {
+        root * /var/www/recruitment/public
+        php_fastcgi app:9000 {
+            # Large imports, approvals and exports take time (PHP's max_execution_time is 180 too).
+            read_timeout 180s
+        }
+    }
+
+    handle @docs {
+        root * /var/www/recruitment/public
+        php_fastcgi app:9000
+    }
+
+    # The frontend, a single-page app: an unknown path is its index.html.
+    handle {
+        root * /srv/frontend
+        try_files {path} /index.html
+        file_server
+    }
+}
+
+log

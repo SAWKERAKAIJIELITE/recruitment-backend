@@ -66,6 +66,8 @@ x-app: &app
     DOCUMENTS_MAX_FILE_KILOBYTES: ${DOCUMENTS_MAX_FILE_KILOBYTES:-10240}
     CONTRACTS_VACANCIES_MAX_FILE_KILOBYTES: ${CONTRACTS_VACANCIES_MAX_FILE_KILOBYTES:-5120}
     CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://rec.1005.date}
+    # true: the API's documentation page (/docs/api) is served. The web service has the same setting.
+    API_DOCS_ENABLED: ${API_DOCS_ENABLED:-false}
   volumes:
     # The stored files (imports, documents, vacancy files) and the application's logs outlive the containers.
     - storage-app:/var/www/recruitment/storage/app
@@ -138,14 +140,12 @@ services:
     image: recruitment-web:latest
     restart: unless-stopped
     environment:
-      # «:8080»: plain HTTP on that port, for the proxy in front. A name instead (docker-compose.standalone.yml) makes Caddy
-      # obtain its own certificate.
-      SITE_ADDRESS: ${SITE_ADDRESS:-:8080}
+      # true: the API's documentation page (/docs/api) is served. The app service has the same setting.
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-false}
     ports:
-      # The one port the proxy in front sends rec.1005.date to.
-      # The same number inside and outside the container (never 80 or 443, which the proxy itself holds): a
-      # platform that publishes the container's own port number then publishes this one.
-      - "${WEB_PORT:-8080}:${WEB_PORT:-8080}"
+      # The one port the proxy in front sends rec.1005.date to: plain HTTP, 8080 inside the container (never 80
+      # or 443 of the server, which the proxy itself holds).
+      - "${WEB_PORT:-8080}:8080"
     volumes:
       # Caddy's state (and its certificates in the standalone layout).
       - caddy-data:/data

@@ -1,0 +1,20 @@
+# The web container behind the platform's proxy (Openship), the default layout (docs/docker-deployment.md):
+# plain HTTP only. The proxy in front holds ports 80/443 of the server and the certificate of rec.1005.date.
+
+{
+    # Never HTTPS here, whatever the settings say: the proxy in front speaks plain HTTP to this container, and
+    # an HTTPS listener would answer it "Client sent an HTTP request to an HTTPS server".
+    auto_https off
+
+    # A proxy on this server or in Docker's networks is believed about the client's address and about HTTPS
+    # (X-Forwarded-For, X-Forwarded-Proto); a client coming straight from the internet is not.
+    servers {
+        trusted_proxies static private_ranges
+    }
+}
+
+# 8080 is the port the compose file publishes. 80 and 443 answer too, in plain HTTP and inside the container
+# only, for a platform that keeps sending the domain to one of them.
+http://:8080, http://:80, http://:443 {
+    import site.caddy
+}

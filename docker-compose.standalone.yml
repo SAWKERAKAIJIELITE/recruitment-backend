@@ -5,6 +5,7 @@
 
 services:
   web:
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile.standalone", "--adapter", "caddyfile"]
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-rec.1005.date}
     ports: !override
