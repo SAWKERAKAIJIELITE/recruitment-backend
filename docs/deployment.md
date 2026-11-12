@@ -7,6 +7,10 @@ steps 2 to 17 were run on an Ubuntu 24.04 machine and the result checked end to 
 systemd, so the service, firewall and clock commands (`systemctl`, `ufw`, `timedatectl`, chrony) were not exercised
 there; they are Ubuntu's standard ones.
 
+> **With Docker instead** (the deployment at `rec.1005.date`): [docker-deployment.md](docker-deployment.md) runs the
+> same layout in containers (PHP 8.2, PostgreSQL 16, Caddy with an automatic certificate). Administrator accounts,
+> for both kinds of installation: [admin-accounts.md](admin-accounts.md).
+
 ```
  staff PCs (the EXE)  ─┐                         ┌─ /            → /var/www/frontend   (the web build, if any)
  exam-hall PCs        ─┼─ HTTPS 443 ─▶  nginx  ──┤

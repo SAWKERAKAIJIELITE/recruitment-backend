@@ -71,6 +71,10 @@ return [
     // X-Forwarded-For gives the client's real address, which login throttling and the venue check rely on.
     'trusted_proxies' => array_values(array_filter(array_map('trim', explode(',', (string) env('TRUSTED_PROXIES', ''))))),
 
+    // The API's documentation page (/docs/api) outside the local environment: off unless API_DOCS_ENABLED=true.
+    // The page is open to anyone who can reach it, so this is for test deployments.
+    'api_docs_enabled' => (bool) env('API_DOCS_ENABLED', false),
+
     /*
     |--------------------------------------------------------------------------
     | Application Locale Configuration

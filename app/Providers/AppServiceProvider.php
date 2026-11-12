@@ -63,6 +63,10 @@ class AppServiceProvider extends ServiceProvider
             TrustProxies::at(in_array('*', $proxies, true) ? '*' : $proxies);
         }
 
+        // The documentation page outside the local environment (Scramble's RestrictedDocsAccess asks this gate):
+        // only when API_DOCS_ENABLED=true. The user is optional: the page is opened without logging in.
+        Gate::define('viewApiDocs', fn (?Authenticatable $user = null) => (bool) config('app.api_docs_enabled'));
+
         Scramble::configure()->withDocumentTransformers(function (OpenApi $openApi) {
             $openApi->secure(SecurityScheme::http('bearer'));
         });

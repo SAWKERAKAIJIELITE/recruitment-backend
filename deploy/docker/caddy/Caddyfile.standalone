@@ -1,0 +1,7 @@
+# The web container on a server with no proxy in front (docker-compose.standalone.yml): Caddy holds ports 80 and
+# 443 itself and obtains and renews the Let's Encrypt certificate of SITE_ADDRESS (the name must point at the
+# server, and both ports must be reachable from the internet). «localhost»: a certificate Caddy signs itself.
+
+{$SITE_ADDRESS:rec.1005.date} {
+    import site.caddy
+}
