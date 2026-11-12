@@ -78,7 +78,7 @@ Fill the values marked «change»:
 
 | Setting                      | Value                                                                                                                                                    |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WEB_PORT`                 | The server's port of the `web` container (8080). In the platform, point the domain `rec.1005.date` at this port. Another number if 8080 is taken.      |
+| `WEB_PORT`                 | The `web` container's port, the same number inside the container and on the server (8080; never 80 or 443, which the proxy holds). In the platform, point the domain `rec.1005.date` at this port. Another number if 8080 is taken.      |
 | `TRUSTED_PROXIES`          | The private ranges (already set): the proxy in front is believed about the client's address and HTTPS. Empty in the standalone layout.                 |
 | `APP_URL`                  | `https://rec.1005.date` (already set).                                                                                                                 |
 | `DB_PASSWORD`              | The application's database password. Used when the database is first created: decide it **before** the first start.                                |

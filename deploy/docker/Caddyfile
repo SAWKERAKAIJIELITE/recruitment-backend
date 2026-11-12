@@ -1,7 +1,7 @@
 # The web container (docs/docker-deployment.md): the frontend's build at /, the API at /api, on one HTTPS address.
 #
 # SITE_ADDRESS (docker-compose.yml):
-#   :80             plain HTTP, behind the platform's proxy (Openship), which holds the certificate. The default.
+#   :8080           plain HTTP on port WEB_PORT, behind the platform's proxy (Openship), which holds the certificate. The default.
 #   rec.1005.date   Caddy obtains and renews a Let's Encrypt certificate itself (docker-compose.standalone.yml:
 #                   ports 80 and 443 reachable from the internet, the name pointing here).
 #   localhost       a certificate Caddy signs itself (a local test).
@@ -14,7 +14,7 @@
     }
 }
 
-{$SITE_ADDRESS::80} {
+{$SITE_ADDRESS::8080} {
     encode zstd gzip
 
     # The largest upload: candidate imports up to 30 MB (IMPORTS_MAX_FILE_KILOBYTES), documents 10 MB.

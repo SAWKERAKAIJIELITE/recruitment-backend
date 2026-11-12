@@ -95,12 +95,14 @@ services:
     image: recruitment-web:latest
     restart: unless-stopped
     environment:
-      # «:80»: plain HTTP, for the proxy in front. A name instead (docker-compose.standalone.yml) makes Caddy
+      # «:8080»: plain HTTP on that port, for the proxy in front. A name instead (docker-compose.standalone.yml) makes Caddy
       # obtain its own certificate.
-      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      SITE_ADDRESS: ${SITE_ADDRESS:-:${WEB_PORT:-8080}}
     ports:
       # The one port the proxy in front sends rec.1005.date to.
-      - "${WEB_PORT:-8080}:80"
+      # The same number inside and outside the container (never 80 or 443, which the proxy itself holds): a
+      # platform that publishes the container's own port number then publishes this one.
+      - "${WEB_PORT:-8080}:${WEB_PORT:-8080}"
     volumes:
       # Caddy's state (and its certificates in the standalone layout).
       - caddy-data:/data
