@@ -18,7 +18,8 @@ on the server); that guide still explains the settings, the first day and the ha
 | `scheduler` | the same image as `app`           | Laravel's scheduler: exam absences and deadlines, contract reminders, pruning. There is no queue worker.         |
 | `db`        | `postgres:16-bookworm`            | The database. Not published on the server: only `app` and `scheduler` reach it.                              |
 
-The files: [Dockerfile](../Dockerfile), [docker-compose.yml](../docker-compose.yml), [.dockerignore](../.dockerignore)
+The files: [Dockerfile](../Dockerfile) (the `app` image), [deploy/docker/web.Dockerfile](../deploy/docker/web.Dockerfile)
+(the `web` image), [docker-compose.yml](../docker-compose.yml), [.dockerignore](../.dockerignore)
 and everything under [deploy/docker/](../deploy/docker).
 
 > **Status of this guide.** The files were written and statically checked (shell syntax, the lock file against

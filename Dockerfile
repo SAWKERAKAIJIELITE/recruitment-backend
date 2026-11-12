@@ -1,7 +1,5 @@
-# The recruitment backend in containers (docs/docker-deployment.md). Two images come out of this file:
-#
-#   app  PHP-FPM 8.2 with the code and its dependencies (also used by the scheduler)
-#   web  Caddy: HTTPS for the site's address, the frontend at /, /api/… passed to the app
+# The recruitment backend's app image (docs/docker-deployment.md): PHP-FPM 8.2 with the code and its dependencies,
+# also used by the scheduler. The web server's image is deploy/docker/web.Dockerfile.
 #
 # Build both with: docker compose build
 
@@ -48,9 +46,3 @@ USER www-data
 EXPOSE 9000
 ENTRYPOINT ["recruitment-entrypoint"]
 CMD ["php-fpm"]
-
-# ---- the web server -----------------------------------------------------------------------------------------------
-FROM caddy:2-alpine AS web
-COPY deploy/docker/Caddyfile /etc/caddy/Caddyfile
-# Caddy looks for the front controller at the same path as PHP; nothing else of the backend is in this image.
-COPY public /var/www/recruitment/public

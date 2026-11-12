@@ -12,7 +12,7 @@ name: recruitment
 x-app: &app
   build:
     context: .
-    target: app
+    dockerfile: Dockerfile
   image: recruitment-app:latest
   restart: unless-stopped
   env_file: .env
@@ -86,7 +86,7 @@ services:
   web:
     build:
       context: .
-      target: web
+      dockerfile: deploy/docker/web.Dockerfile
     image: recruitment-web:latest
     restart: unless-stopped
     environment:
