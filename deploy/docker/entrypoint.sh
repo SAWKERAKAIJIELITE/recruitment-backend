@@ -17,6 +17,9 @@ if [ -z "${APP_KEY:-}" ]; then
     echo "APP_KEY is empty: this container did not receive it." >&2
     echo "Set APP_KEY=base64:… in the platform's environment variables (Openship) or in .env, then deploy again." >&2
     echo "A new key: docker compose run --rm --no-deps app php artisan key:generate --show" >&2
+    # Names only, never values: which settings this container did receive (to see what the platform passes).
+    echo "Settings received with a value: $(env | grep -E '^(APP|DB|LOG|REPORTS|EXAMS)_[A-Z_]*=.' | cut -d= -f1 | sort | tr '
+' ' ')" >&2
     exit 1
 fi
 
