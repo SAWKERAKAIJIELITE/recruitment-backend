@@ -1,0 +1,114 @@
+# The recruitment system on one server with Docker (docs/docker-deployment.md).
+#
+#   web        Caddy: HTTPS for SITE_ADDRESS (rec.1005.date), the frontend at /, /api/… passed to PHP
+#   app        PHP-FPM 8.2 running Laravel; brings the schema up to date when it starts
+#   scheduler  Laravel's scheduler, every minute (exam absences and deadlines, reminders, pruning)
+#   db         PostgreSQL 16, reachable from the app and the scheduler only
+#
+# Settings: copy deploy/docker/env.example to .env (next to this file) and fill it. Then: docker compose up -d --build
+
+name: recruitment
+
+x-app: &app
+  build:
+    context: .
+    target: app
+  image: recruitment-app:latest
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    # Inside the compose network the database is the «db» service, whatever .env says.
+    DB_CONNECTION: pgsql
+    DB_HOST: db
+    DB_PORT: "5432"
+  volumes:
+    # The stored files (imports, documents, vacancy files) and the application's logs outlive the containers.
+    - storage-app:/var/www/recruitment/storage/app
+    - storage-logs:/var/www/recruitment/storage/logs
+  logging: &logging
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  db:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      # The superuser, used for administration and backups only (docker compose exec db psql -U postgres).
+      POSTGRES_PASSWORD: ${DB_SUPERUSER_PASSWORD:?set DB_SUPERUSER_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+      # The application's own role and database, made on the first start by deploy/docker/postgres/init-db.sh.
+      APP_DB_NAME: ${DB_DATABASE:-recruitment}
+      APP_DB_USER: ${DB_USERNAME:-recruitment_app}
+      APP_DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    # Sized for a server with 4 GB of memory.
+    command: >
+      postgres
+      -c shared_buffers=1GB
+      -c effective_cache_size=2GB
+      -c work_mem=16MB
+      -c maintenance_work_mem=256MB
+    shm_size: 1g
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./deploy/docker/postgres/init-db.sh:/docker-entrypoint-initdb.d/10-recruitment.sh:ro
+    healthcheck:
+      # Over TCP: true only once the first start's setup is over and the real server listens.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$APP_DB_USER\" -d \"$$APP_DB_NAME\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    logging: *logging
+
+  app:
+    <<: *app
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # PHP-FPM listens only after the migrations and the caches are done (deploy/docker/entrypoint.sh).
+      test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1', 9000) ? 0 : 1);"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 120s
+
+  scheduler:
+    <<: *app
+    command: ["php", "artisan", "schedule:work"]
+    depends_on:
+      app:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      target: web
+    image: recruitment-web:latest
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-rec.1005.date}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      # The frontend's web build (a placeholder page until FRONTEND_DIR points at the real one).
+      - ${FRONTEND_DIR:-./deploy/docker/frontend}:/srv/frontend:ro
+      # The certificates Caddy obtains: keep this volume, or every restart asks Let's Encrypt again.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  db-data:
+  storage-app:
+  storage-logs:
+  caddy-data:
+  caddy-config:

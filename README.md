@@ -47,12 +47,15 @@ Staff and candidates are separate actors with separate tables, login pipelines a
 composer install
 cp .env.example .env            # then edit the values below
 php artisan key:generate
-docker compose up -d            # PostgreSQL, see docker-compose.yml
-docker compose exec db psql -U postgres -c "CREATE DATABASE recruitment_test;"
+docker run -d --name recruitment-dev-db -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:5432:5432 postgres:16   # a development PostgreSQL
+docker exec recruitment-dev-db psql -U postgres -c "CREATE DATABASE recruitment_test;"
 php artisan migrate --seed
 php artisan serve
 php artisan test
 ```
+
+`docker-compose.yml` is the production stack (`docs/docker-deployment.md`), not a development database. Adding
+administrator accounts: `docs/admin-accounts.md`.
 
 Key `.env` values:
 
