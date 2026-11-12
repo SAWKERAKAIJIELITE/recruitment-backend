@@ -5,7 +5,7 @@ the container form of [deployment.md](deployment.md) (the same layout, without i
 on the server); that guide still explains the settings, the first day and the hardening in detail.
 
 ```
-                                   ┌─ /        → the frontend's web build (FRONTEND_DIR)
+                                   ┌─ /        → the frontend's web build (in the web image)
  browsers / the EXE ─ HTTPS 443 ─▶ web (Caddy) ┤
                                    └─ /api/…   → app (PHP-FPM 8.2, Laravel) ──▶ db (PostgreSQL 16)
                                                  scheduler (php artisan schedule:work, every minute) ──┘
@@ -16,7 +16,7 @@ on the server); that guide still explains the settings, the first day and the ha
 | `web`       | `caddy:2-alpine` + `public/`    | HTTPS (a Let's Encrypt certificate, obtained and renewed automatically), the frontend, `/api/…` passed to PHP. |
 | `app`       | `php:8.2.35-fpm-bookworm` + code  | Laravel. On start: migrations, the catalogue on a new database, the caches.                                      |
 | `scheduler` | the same image as `app`           | Laravel's scheduler: exam absences and deadlines, contract reminders, pruning. There is no queue worker.         |
-| `db`        | `postgres:16-bookworm`            | The database. Not published on the server: only `app` and `scheduler` reach it.                              |
+| `db`        | `postgres:16-bookworm` + init script | The database. Not published on the server: only `app` and `scheduler` reach it.                              |
 
 The files: [Dockerfile](../Dockerfile) (the `app` image), [deploy/docker/web.Dockerfile](../deploy/docker/web.Dockerfile)
 (the `web` image), [docker-compose.yml](../docker-compose.yml), [.dockerignore](../.dockerignore)
@@ -77,8 +77,12 @@ Fill the values marked «change»:
 | `DB_PASSWORD`              | The application's database password. Used when the database is first created: decide it **before** the first start.                                |
 | `DB_SUPERUSER_PASSWORD`    | The `postgres` superuser's password (administration and backups).                                                                                      |
 | `EXAMS_CANDIDATE_NETWORKS` | The exam halls' addresses **as the server sees them**: their public addresses when the halls come over the internet. Empty refuses every candidate. |
-| `FRONTEND_DIR`             | The folder of the frontend's web build, if there is one. Unset: a placeholder page.                                                                      |
 | `APP_KEY`                  | Below.                                                                                                                                                   |
+
+**The frontend.** The `web` image serves whatever is in `deploy/docker/frontend` when it is built: a placeholder
+page in the repository. To serve the real frontend, copy its web build there (`index.html` and its assets) before
+`docker compose build`. Nothing is mounted from the server's folders: every container uses its image and named
+volumes only.
 
 Build the images, then make the key and paste it into `.env` (`APP_KEY=base64:…`). Set it once and keep it:
 

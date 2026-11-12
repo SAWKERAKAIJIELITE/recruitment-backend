@@ -33,7 +33,11 @@ x-app: &app
 
 services:
   db:
-    image: postgres:16-bookworm
+    # postgres:16-bookworm with deploy/docker/postgres/init-db.sh inside (no file is mounted from the server).
+    build:
+      context: .
+      dockerfile: deploy/docker/postgres/Dockerfile
+    image: recruitment-db:latest
     restart: unless-stopped
     environment:
       # The superuser, used for administration and backups only (docker compose exec db psql -U postgres).
@@ -53,7 +57,6 @@ services:
     shm_size: 1g
     volumes:
       - db-data:/var/lib/postgresql/data
-      - ./deploy/docker/postgres/init-db.sh:/docker-entrypoint-initdb.d/10-recruitment.sh:ro
     healthcheck:
       # Over TCP: true only once the first start's setup is over and the real server listens.
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$APP_DB_USER\" -d \"$$APP_DB_NAME\""]
@@ -96,8 +99,6 @@ services:
       - "443:443"
       - "443:443/udp"
     volumes:
-      # The frontend's web build (a placeholder page until FRONTEND_DIR points at the real one).
-      - ${FRONTEND_DIR:-./deploy/docker/frontend}:/srv/frontend:ro
       # The certificates Caddy obtains: keep this volume, or every restart asks Let's Encrypt again.
       - caddy-data:/data
       - caddy-config:/config

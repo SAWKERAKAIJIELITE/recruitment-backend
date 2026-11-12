@@ -4,3 +4,6 @@ FROM caddy:2-alpine
 COPY deploy/docker/Caddyfile /etc/caddy/Caddyfile
 # Caddy looks for the front controller at the same path as PHP; nothing else of the backend is in this image.
 COPY public /var/www/recruitment/public
+# The frontend's web build: whatever is in deploy/docker/frontend when the image is built (a placeholder page
+# in the repository).
+COPY deploy/docker/frontend /srv/frontend
