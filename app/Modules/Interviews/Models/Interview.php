@@ -30,6 +30,15 @@ class Interview extends Model implements StatusChangeCause
 {
     use HasUuids;
 
+    /**
+     * Two interviews of one sitting are at least this many minutes apart (D-096): the interviewer sees one candidate
+     * at a time. The database checks the same (exclusion constraint interviews_time_apart).
+     */
+    public const MIN_MINUTES_APART = 5;
+
+    /** A booking without a time: this long after the sitting's latest interview (and bulk booking's default step). */
+    public const DEFAULT_MINUTES_BETWEEN = 30;
+
     protected $guarded = ['*'];
 
     protected $attributes = ['status' => 'scheduled'];

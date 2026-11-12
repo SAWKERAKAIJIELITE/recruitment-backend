@@ -5,7 +5,6 @@ namespace Tests\Feature\Identity;
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use App\Modules\Identity\Models\Permission;
-use App\Modules\Identity\Models\Role;
 use App\Modules\Identity\Models\StaffUser;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -41,14 +40,6 @@ class StaffUserRegistrationTest extends TestCase
         ];
     }
 
-    /** A user who may add users but not manage access (users.add given to the role). */
-    private function adder(string $role = 'recruitment'): StaffUser
-    {
-        Role::where('slug', $role)->firstOrFail()->permissions()->attach(Permission::where('slug', 'users.add')->value('id'));
-
-        return StaffUserFactory::new()->withRole($role)->create();
-    }
-
     public function test_an_account_is_created_with_its_role_and_audited(): void
     {
         Log::spy();
@@ -64,17 +55,6 @@ class StaffUserRegistrationTest extends TestCase
         $this->assertSame('004512', $user->personal_number);
         $this->assertNotSame('Str0ng!Pass', $user->password);   // hashed
         Log::shouldHaveReceived('notice')->withArgs(fn (string $event) => str_contains($event, 'user_created'))->once();
-    }
-
-    public function test_without_users_manage_only_roles_within_ones_own_permissions(): void
-    {
-        $adder = $this->adder();   // recruitment, whose role was given users.add
-
-        $this->asStaff($adder)->postJson(self::URL, $this->body(['role' => 'system_admin']))->assertForbidden();
-        $this->asStaff($adder)->postJson(self::URL, $this->body(['role' => 'general_manager', 'username' => 'gm.two', 'personal_number' => '7777']))->assertForbidden();   // audit.view is not the adder's
-        $this->assertSame(0, StaffUser::whereIn('username', ['new.clerk', 'gm.two'])->count());
-
-        $this->asStaff($adder)->postJson(self::URL, $this->body())->assertCreated();   // the adder's own role
     }
 
     public function test_the_personal_number_is_digits_only_and_unique(): void
@@ -97,8 +77,32 @@ class StaffUserRegistrationTest extends TestCase
         $this->asStaff($admin)->postJson(self::URL, $this->body(['password_confirmation' => 'Other!Pass1']))->assertStatus(422)->assertJsonValidationErrors('password');
     }
 
-    public function test_adding_users_needs_users_add(): void
+    public function test_the_messages_are_arabic_with_arabic_field_names(): void
     {
-        $this->asStaff(StaffUserFactory::new()->withRole('recruitment')->create())->postJson(self::URL, $this->body())->assertForbidden();
+        $admin = StaffUserFactory::new()->withRole('system_admin')->create();
+
+        $errors = $this->asStaff($admin)->postJson(self::URL, ['password' => 'abc', 'password_confirmation' => 'abd', 'username' => 'Ab'])->assertStatus(422)->json('errors');
+
+        $this->assertSame('الحقل الرقم الذاتي مطلوب.', $errors['personal_number'][0]);
+        $this->assertSame('الحقل الاسم الأول مطلوب.', $errors['first_name'][0]);
+        $this->assertContains(__('validation.custom.username.regex'), $errors['username']);
+        $this->assertSame([
+            'تأكيد كلمة المرور غير مطابق.',
+            'يجب ألا تقل كلمة المرور عن 8 أحرف.',
+            'يجب أن تحتوي كلمة المرور حرفًا كبيرًا وحرفًا صغيرًا على الأقل.',
+            'يجب أن تحتوي كلمة المرور رمزًا واحدًا على الأقل (مثل ! @ # $).',
+            'يجب أن تحتوي كلمة المرور رقمًا واحدًا على الأقل.',
+        ], $errors['password']);
+    }
+
+    public function test_adding_users_is_the_administrators(): void
+    {
+        foreach (['recruitment', 'general_manager', 'exams_interviews'] as $role) {
+            $this->asStaff(StaffUserFactory::new()->withRole($role)->create())->postJson(self::URL, $this->body())
+                ->assertForbidden()
+                ->assertJsonPath('message', __('auth.forbidden'));
+        }
+
+        $this->assertFalse(Permission::query()->where('slug', 'users.add')->exists());   // users.manage adds them (D-092)
     }
 }

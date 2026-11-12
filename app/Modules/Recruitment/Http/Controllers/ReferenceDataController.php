@@ -17,9 +17,10 @@ use Illuminate\Validation\Rule;
 
 /**
  * The managed lists. {type} is a ReferenceType value (an unknown one is 404): districts, areas, nominating-entities, job-positions,
- * application-categories, academic-qualifications, specializations, marital-statuses, health-conditions, contract-types.
- * Any signed-in staff user can read them; changing them needs candidates.manage (Recruitment), and contract-types
- * contracts.manage (the Contracts office; 403 otherwise, D-085). Marital statuses are
+ * application-categories, academic-qualifications, specializations, marital-statuses, health-conditions, contract-types,
+ * units. Any signed-in staff user can read them; changing them needs candidates.manage (Recruitment), and contract-types
+ * and units contracts.manage (the Contracts office; 403 otherwise, D-085, D-098). Job positions show their `job_code`.
+ * Marital statuses are
  * seeded and only read here: the change endpoints do not know them (404, D-048).
  */
 class ReferenceDataController extends Controller
@@ -94,7 +95,7 @@ class ReferenceDataController extends Controller
         return new ReferenceItemResource($this->withDistrict($manage->restore($this->find($list, $id))));
     }
 
-    /** The list, if the user's office changes it (contract types: contracts.manage; the others: candidates.manage). */
+    /** The list, if the user's office changes it (contract types, units: contracts.manage; the others: candidates.manage). */
     private function editable(Request $request, EditableReferenceType $type): ReferenceType
     {
         abort_unless($request->user()->hasPermission($type->managedBy()), 403);

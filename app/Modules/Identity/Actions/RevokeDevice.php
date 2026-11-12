@@ -18,7 +18,7 @@ class RevokeDevice
             $device = StaffDevice::query()->whereKey($device->id)->lockForUpdate()->firstOrFail();
 
             if ($device->status === DeviceStatus::Revoked) {
-                throw ValidationException::withMessages(['device' => ['The device is already revoked.']]);
+                throw ValidationException::withMessages(['device' => [__('access.device_already_revoked')]]);
             }
 
             $device->forceFill([

@@ -9,6 +9,7 @@ use App\Modules\Imports\Models\ImportRow;
 use App\Modules\Recruitment\Models\District;
 use App\Modules\Recruitment\Models\HealthCondition;
 use App\Modules\Recruitment\Models\JobPosition;
+use App\Modules\Recruitment\Models\NominatingEntity;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -63,6 +64,44 @@ class ImportRowsTest extends TestCase
     private function rowUrl(array $row, string $suffix = ''): string
     {
         return self::URL."/{$row['batch_id']}/rows/{$row['id']}{$suffix}";
+    }
+
+    // ---- finding rows and batches (Step 15) ----
+
+    public function test_a_batchs_rows_are_found_by_name_national_number_or_row(): void
+    {
+        $id = $this->uploadRows([
+            LegacyWorkbook::row(['F' => 'أحمد محمد علي', 'J' => '01111111111']),
+            LegacyWorkbook::row(['F' => 'إبراهيم خالد يوسف', 'J' => '02222222222']),
+            LegacyWorkbook::row(['F' => 'سامر ياسين', 'J' => '03333333333']),
+        ]);
+        $found = fn(string $q) => array_column($this->asStaff($this->staff)->getJson(self::URL."/{$id}/rows?q=" . urlencode($q))->assertOk()->json('data'), 'row_number');
+
+        $this->assertSame([7], $found('ابراهيم'));                // another spelling of the name, a part of it
+        $this->assertSame([8], $found('ياسين'));
+        $this->assertSame([7], $found('٠٢٢٢٢٢٢٢٢٢٢'));            // the national number in Arabic-Indic digits
+        $this->assertSame([], $found('0222222222'));              // the national number is exact
+        $this->assertSame([6], $found('6'));                      // the row in the sheet
+        $this->assertSame([], $found('غير موجود'));
+        $this->assertSame([6], array_column($this->asStaff($this->staff)->getJson(self::URL."/{$id}/rows?status=valid&q=أحمد")->json('data'), 'row_number'));
+    }
+
+    public function test_batches_are_filtered_by_uploader_entity_and_day(): void
+    {
+        $this->travelTo('2026-11-09 21:30:00');               // 00:30 on the 10th in Damascus
+        $mine = $this->uploadRows([LegacyWorkbook::row()]);
+        $other = $this->hiringStaff();
+        $this->travelTo('2026-11-11 08:00:00');
+        $entity = NominatingEntity::create(['name_ar' => 'مركز التحفيظ']);
+        $theirs = $this->asStaff($other)->post(self::URL, ['file' => LegacyWorkbook::file([LegacyWorkbook::row(['B' => 'مركز التحفيظ', 'J' => '05555555555'])], [], 'other.xlsx')], ['Accept' => 'application/json'])->assertCreated()->json('data.id');
+        $ids = fn(string $query) => array_column($this->asStaff($this->staff)->getJson(self::URL."?{$query}")->assertOk()->json('data'), 'id');
+
+        $this->assertSame([$theirs], $ids("uploaded_by={$other->id}"));
+        $this->assertSame([$theirs], $ids("nominating_entity_id={$entity->id}"));   // a row's entity
+        $this->assertSame([$mine], $ids('from=2026-11-10&to=2026-11-10'));          // Damascus days
+        $this->assertSame([$theirs], $ids('from=2026-11-11'));
+        $this->assertSame([], $ids('to=2026-11-09'));
+        $this->asStaff($this->staff)->getJson(self::URL.'?uploaded_by=me')->assertStatus(422)->assertJsonValidationErrors('uploaded_by');
     }
 
     // ---- reading cells ----

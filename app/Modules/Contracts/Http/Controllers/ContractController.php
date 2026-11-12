@@ -3,22 +3,26 @@
 namespace App\Modules\Contracts\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Modules\Audit\Support\AuditTrail;
 use App\Modules\Contracts\Actions\ManageContracts;
-use App\Modules\Contracts\Enums\ContractState;
+use App\Modules\Contracts\Exports\ConfirmationFile;
+use App\Modules\Contracts\Exports\ContractForm;
 use App\Modules\Contracts\Http\Requests\ContractRequest;
 use App\Modules\Contracts\Http\Requests\CorrectContractRequest;
 use App\Modules\Contracts\Http\Requests\EndContractRequest;
 use App\Modules\Contracts\Http\Requests\RenewContractRequest;
 use App\Modules\Contracts\Http\Resources\ContractResource;
 use App\Modules\Contracts\Models\Contract;
+use App\Modules\Contracts\Queries\ContractSearch;
 use App\Modules\Recruitment\Models\Application;
-use App\Support\ArabicText;
 use App\Support\BusinessDay;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Date;
-use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /**
  * Contracts (analysis doc §08; D-064). Reading: contracts.view (the Contracts office and the general manager). Writing, renewing,
@@ -29,50 +33,75 @@ class ContractController extends Controller
     /**
      * List contracts
      *
-     * Soonest end first (no end date last), 25 per page. Filters: `state` (upcoming, active, ending_soon, expired,
-     * renewed, ended; `expired` = the end date passed, not renewed and not ended by staff), `q` (name, nomination or
-     * reference number), `contract_type_id`, `job_position_id`, `nominating_entity_id`, `ends_from` / `ends_to`
-     * (YYYY-MM-DD, included), `latest` (1: only the latest contract of each application).
+     * Soonest end first (no end date last), 25 per page (`per_page` 5 to 100). Filters: `state` (upcoming, active,
+     * ending_soon, expired, renewed, ended; `expired` = the end date passed, not renewed and not ended by staff), `q`
+     * (name, nomination or reference number), `contract_type_id`, `unit_id`, `job_position_id`, `nominating_entity_id`,
+     * `residence_district_id`, `residence_area_id` (the application's), `written_from` / `written_to` (the writing
+     * date) and `ends_from` / `ends_to` (the end date; YYYY-MM-DD, included), `latest` (1: only the latest contract of
+     * each application).
      */
     public function index(Request $request): AnonymousResourceCollection
     {
-        $filters = $request->validate([
-            'state' => ['nullable', Rule::enum(ContractState::class)],
-            'q' => ['nullable', 'string', 'max:150'],
-            'contract_type_id' => ['nullable', 'integer'],
-            'job_position_id' => ['nullable', 'integer'],
-            'nominating_entity_id' => ['nullable', 'integer'],
-            'ends_from' => ['nullable', 'date_format:Y-m-d'],
-            'ends_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:ends_from'],
-            'latest' => ['nullable', Rule::in(['0', '1', 'true', 'false'])],
+        $filters = $request->validate(ContractSearch::rules() + [
             'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
         ]);
 
-        $contracts = Contract::query()
-            ->with(ContractResource::RELATIONS)
-            ->whenGiven($filters['state'] ?? null, fn($query, $state) => $query->inState(ContractState::from($state)))
-            ->whenGiven($filters['q'] ?? null, function ($query, string $q) {
-                $like = '%' . addcslashes(ArabicText::searchKey(trim($q)), '\\%_') . '%';
-                $plain = ArabicText::digitsToAscii(trim($q));
-
-                $query->where(fn($inner) => $inner
-                    ->where('contracts.reference_number', $plain)
-                    ->orWhereHas('application', fn($application) => $application
-                        ->where('nomination_number', $plain)
-                        ->orWhereHas('candidate', fn($candidate) => $candidate->where('name_search_key', 'like', $like))));
-            })
-            ->whenGiven($filters['contract_type_id'] ?? null, fn($query, $value) => $query->where('contract_type_id', $value))
-            ->whenGiven($filters['job_position_id'] ?? null, fn($query, $value) => $query->whereHas('application', fn($application) => $application->where('job_position_id', $value)))
-            ->whenGiven($filters['nominating_entity_id'] ?? null, fn($query, $value) => $query->whereHas('application', fn($application) => $application->where('nominating_entity_id', $value)))
-            ->whenGiven($filters['ends_from'] ?? null, fn($query, $date) => $query->where('ends_on', '>=', $date))
-            ->whenGiven($filters['ends_to'] ?? null, fn($query, $date) => $query->where('ends_on', '<=', $date))
-            ->when($request->boolean('latest'), fn($query) => $query->whereNotExists(fn($renewal) => $renewal->from('contracts as renewal')->whereColumn('renewal.renews_contract_id', 'contracts.id')))
+        $contracts = ContractSearch::apply(Contract::query()->with(ContractResource::RELATIONS), $filters)
             ->orderByRaw('ends_on asc nulls last')
             ->orderBy('id')
             ->paginate((int) ($filters['per_page'] ?? 25))
             ->withQueryString();
 
         return ContractResource::collection($contracts);
+    }
+
+    /**
+     * ملف التثبيت (Excel)
+     *
+     * The owner's «نموذج تثبيت متعاقد مدني» (D-098): one contract per row, every column filled but the four of شعبة
+     * الخدمة (رقم الكتاب, تاريخ منح الرقم, تاريخ مباشرة العمل, ملاحظات فرع الخدمة). Takes the list's filters (for
+     * example `written_from` / `written_to` for the contracts written in a period, `latest` 1), ordered by writing date
+     * then reference number. At most 20,000 rows (422 on `format` beyond: narrow the filters). Audited.
+     */
+    public function confirmationFile(Request $request): BinaryFileResponse
+    {
+        $filters = $request->validate(ContractSearch::rules());
+        $query = ContractSearch::apply(Contract::query(), $filters);
+        $max = (int) config('reports.max_rows.xlsx');
+
+        if (($count = (clone $query)->count()) > $max) {
+            throw ValidationException::withMessages(['format' => [__('reports.too_many_rows', ['count' => $count, 'max' => $max])]]);
+        }
+
+        $contracts = $query->with(ConfirmationFile::RELATIONS)->orderBy('written_on')->orderBy('reference_number')->get();
+        AuditTrail::record('contract.confirmation_file', $request->user(), ['rows' => $contracts->count(), 'filters' => array_filter($filters, fn($value) => $value !== null)]);
+
+        return response()
+            ->download(ConfirmationFile::write($contracts, $request->user()), ConfirmationFile::filename(), [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'X-Content-Type-Options' => 'nosniff',
+            ])
+            ->deleteFileAfterSend();
+    }
+
+    /**
+     * The contract form (PDF)
+     *
+     * تعاقد عمل, the owner's template filled (D-098): the contract's form details, the person's and the application's,
+     * the period and its length, dated the writing day in the Hijri and Gregorian calendars. The signatures and the photo
+     * are left for the paper; a detail not entered is left blank. Audited.
+     */
+    public function form(Request $request, Contract $contract): Response
+    {
+        $pdf = ContractForm::render($contract);
+        AuditTrail::record('contract.form_printed', $request->user(), ['contract_id' => $contract->id, 'application_id' => $contract->application_id]);
+        $name = __('contracts.form_title', [], 'ar') . ' ' . $contract->reference_number . '.pdf';
+
+        return response($pdf, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="contract.pdf"; filename*=UTF-8\'\'' . rawurlencode($name),
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
     }
 
     /** Every contract of one application, the first first. */

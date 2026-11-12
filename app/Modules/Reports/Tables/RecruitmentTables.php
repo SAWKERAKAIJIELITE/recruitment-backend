@@ -2,6 +2,7 @@
 
 namespace App\Modules\Reports\Tables;
 
+use App\Modules\Contracts\Models\Contract;
 use App\Modules\Interviews\Enums\InterviewGrade;
 use App\Modules\Interviews\Enums\InterviewStatus;
 use App\Modules\Interviews\Models\Interview;
@@ -30,6 +31,9 @@ final class RecruitmentTables
         'candidate.birthPlace', 'nominatingEntity', 'jobPosition', 'category', 'academicQualification', 'specialization',
         'maritalStatus', 'healthCondition', 'residenceDistrict', 'residenceArea', 'statusEvents',
     ];
+
+    /** What the contracts table reads from a contract. */
+    public const CONTRACT_RELATIONS = ['application.candidate', 'application.jobPosition', 'application.nominatingEntity', 'type', 'unit', 'renewal'];
 
     public const EXAM_VIEWS = ['all', 'passed', 'failed', 'absent'];
 
@@ -299,6 +303,54 @@ final class RecruitmentTables
             $breakdown($t('by_nominating_entity'), __('reports.columns.nominating_entity', [], 'ar'), $summary['by_nominating_entity']),
             $breakdown($t('by_job_position'), __('reports.columns.job_position', [], 'ar'), $summary['by_job_position']),
         ];
+    }
+
+    /**
+     * The contracts (D-098): one row per contract written in the period, the first and the renewals, in writing order:
+     * the person, the job, the unit joined, the contract's type, reference, sequence, dates and state today, and its
+     * end without renewal when staff recorded one.
+     *
+     * @param  Collection<int, Contract>  $contracts  loaded with CONTRACT_RELATIONS
+     */
+    public static function contracts(Collection $contracts): ReportTable
+    {
+        $kept = $contracts->sortBy(fn (Contract $contract) => [$contract->written_on->toDateString(), $contract->application->nomination_number, $contract->sequence])->values();
+        $rows = $kept->map(function (Contract $contract) {
+            $application = $contract->application;
+
+            return [
+                $application->nomination_number,
+                $application->candidate->full_name,
+                $application->candidate->national_number,
+                $application->jobPosition->name_ar,
+                $application->nominatingEntity->name_ar,
+                $contract->unit?->name_ar,
+                $contract->type->name_ar,
+                $contract->reference_number,
+                $contract->sequence === 1 ? __('reports.first_contract', [], 'ar') : __('reports.renewal_number', ['number' => $contract->sequence - 1], 'ar'),
+                $contract->written_on->toDateString(),
+                $contract->starts_on->toDateString(),
+                $contract->ends_on?->toDateString(),
+                $contract->state()->labelAr(),
+                $contract->ended_on?->toDateString(),
+                $contract->end_reason,
+            ];
+        })->all();
+
+        $columns = [
+            ['nomination_number', 14], ['full_name', 24], ['national_number', 14], ['job_position', 16], ['nominating_entity', 16],
+            ['unit', 18], ['contract_type', 14], ['reference_number', 14], ['contract_sequence', 10], ['written_on', 12],
+            ['starts_on', 12], ['ends_on', 12], ['contract_state', 14], ['ended_on', 12], ['end_reason', 26],
+        ];
+
+        $totals = [
+            __('reports.total_contracts', [], 'ar') => count($rows),
+            __('reports.total_first_contracts', [], 'ar') => $kept->where('sequence', 1)->count(),
+            __('reports.total_renewals', [], 'ar') => $kept->where('sequence', '>', 1)->count(),
+            __('reports.total_ended_contracts', [], 'ar') => $kept->whereNotNull('ended_on')->count(),
+        ];
+
+        return new ReportTable(__('reports.tables.contracts', [], 'ar'), self::columns($columns), $rows, $totals, wide: true);
     }
 
     /** @param list<array{0: string, 1: int}> $columns key => width */

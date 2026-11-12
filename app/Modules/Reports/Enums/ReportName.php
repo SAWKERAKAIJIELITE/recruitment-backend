@@ -14,5 +14,6 @@ enum ReportName: string
     case InterviewsPassed = 'interviews-passed';
     case InterviewsFailed = 'interviews-failed';
     case InterviewsAbsent = 'interviews-absent';
+    case Contracts = 'contracts';
     case Dashboard = 'dashboard';
 }

@@ -4,6 +4,7 @@ use App\Http\Middleware\UnescapedUnicodeJson;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Exceptions\ThrottleRequestsException;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
@@ -32,4 +33,9 @@ return Application::configure(basePath: dirname(__DIR__))
                 ? response()->json(['message' => __('auth.forbidden')], 403)
                 : null;
         });
+
+        // The throttle's 429 in Arabic too, with its Retry-After (Step 15).
+        $exceptions->render(fn (ThrottleRequestsException $e, Request $request) => $request->is('api/*') || $request->expectsJson()
+            ? response()->json(['message' => __('access.too_many_attempts')], 429, $e->getHeaders())
+            : null);
     })->create();

@@ -76,6 +76,7 @@ return new class extends Migration
             $table->timestampsTz();
 
             $table->index('created_at');
+            $table->index('updated_at');   // the latest changes first (D-099)
 
             // The area must belong to the district: the pair must exist in areas (district_id, id).
             $table->foreign(['residence_district_id', 'residence_area_id'], 'applications_residence_area_in_district')
@@ -100,6 +101,8 @@ return new class extends Migration
             $table->enum('to_status', self::STATUSES);
             $table->enum('decision_type', self::DECISION_TYPES);
             $table->text('reason')->nullable();
+            // The number of the decision's paper, for an exception or an accepted excuse (رقم القرار; D-100).
+            $table->string('decision_number', 100)->nullable();
             $table->foreignUuid('actor_id')->nullable()->constrained('staff_users')->restrictOnDelete();
             // What caused the move (exam attempt, interview, contract, ...) is one real foreign-key column per
             // cause, added by the module that owns the cause's table (StatusEventCauseColumns, D-038).
@@ -123,6 +126,8 @@ return new class extends Migration
         DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_started_awaits_exam CHECK (decision_type <> 'started' OR (to_status = 'awaiting_exam' AND actor_id IS NOT NULL))");
         // Person-made decisions need a real reason and the staff user who made them.
         DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_decisions_are_accountable CHECK (decision_type NOT IN ('exception', 'excuse_accepted', 'closure', 'correction') OR (btrim(coalesce(reason, '')) <> '' AND actor_id IS NOT NULL))");
+        // Only an exception or an accepted excuse has a decision number, and it is never blank (D-100).
+        DB::statement("ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_decision_number CHECK (decision_number IS NULL OR (decision_type IN ('exception', 'excuse_accepted') AND btrim(decision_number) <> ''))");
         // A decision cannot be dated after it was recorded (D-039).
         DB::statement('ALTER TABLE application_status_events ADD CONSTRAINT application_status_events_not_recorded_before_it_happened CHECK (occurred_at <= created_at)');
 

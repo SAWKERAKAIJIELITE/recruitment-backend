@@ -7,6 +7,7 @@ use App\Modules\Identity\Models\DeviceLoginChallenge;
 use App\Modules\Identity\Models\StaffDevice;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Identity\Support\DeviceCrypto;
+use App\Support\BusinessDay;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -15,7 +16,7 @@ use Illuminate\Validation\ValidationException;
 class LoginStaff
 {
     /**
-     * @return array{token: string, user: StaffUser}
+     * @return array{token: string, expires_at: \Carbon\CarbonInterface, user: StaffUser}
      *
      * @throws ValidationException one generic message for every failure reason
      */
@@ -67,8 +68,9 @@ class LoginStaff
             $device->forceFill(['last_seen_at' => now()])->save();
             $locked->forceFill(['last_login_at' => now()])->save();
 
-            // Staff tokens live for a day (config); the global Sanctum expiration is disabled on purpose.
-            $newToken = $locked->createToken($data->tokenName, ['*'], now()->addMinutes((int) config('staff_auth.token_lifetime_minutes')));
+            // Staff tokens live until the business day ends (00:00 in Damascus, D-099): an officer is not signed out in
+            // the middle of a working day. The global Sanctum expiration is disabled on purpose.
+            $newToken = $locked->createToken($data->tokenName, ['*'], BusinessDay::startOfNext(BusinessDay::today()));
             $newToken->accessToken->forceFill(['staff_device_id' => $device->id])->save();
             AuditTrail::record('auth.staff_login', $locked, ['user_id' => $locked->id, 'device_id' => $device->id]);
 
@@ -77,6 +79,7 @@ class LoginStaff
 
         return [
             'token' => $newToken->plainTextToken,
+            'expires_at' => $newToken->accessToken->expires_at,
             'user' => $user,
         ];
     }

@@ -52,7 +52,8 @@ class ApplicationController extends Controller
      * - Ranges (included): `studying_years_min`/`_max`, `quran_parts_min`/`_max`, `birth_date_from`/`_to`,
      *   `age_min`/`age_max` (whole years today), `from`/`to` (opening date, Damascus days). `studying_years`: exact.
      * - `created_by`: the staff user who opened it; `import_batch_id`: imported by that batch.
-     * - `sort`: `created_at` (default, newest first), `nomination_number`, `full_name`, `birth_date`, `status`;
+     * - `sort`: `created_at` (default, newest first), `updated_at` (the latest change first: a correction or a status
+     *   move), `nomination_number`, `full_name`, `birth_date`, `status`;
      *   `direction`: `asc` or `desc`. `per_page`: 5 to 100 (25).
      */
     public function index(Request $request): AnonymousResourceCollection

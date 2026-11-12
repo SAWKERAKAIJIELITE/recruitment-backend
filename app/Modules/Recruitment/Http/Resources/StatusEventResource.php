@@ -22,6 +22,12 @@ class StatusEventResource extends JsonResource
             'to_status_label' => $this->to_status->labelAr(),
             'decision_type' => $this->decision_type,
             'reason' => $this->reason,
+            /** رقم القرار of an exception or an accepted excuse (D-100). */
+            'decision_number' => $this->decision_number,
+            /** The record behind the move (D-038, D-100): an exam booking (its round: an exam result, an exception, an accepted excuse), an interview, a contract. */
+            'exam_booking_id' => $this->getAttribute('exam_booking_id'),
+            'interview_id' => $this->getAttribute('interview_id'),
+            'contract_id' => $this->getAttribute('contract_id'),
             'actor' => $this->whenLoaded('actor', fn() => $this->actor === null ? null : [
                 'id' => $this->actor->id,
                 'username' => $this->actor->username,

@@ -11,6 +11,7 @@ use App\Modules\Interviews\Http\Requests\StoreSittingRequest;
 use App\Modules\Interviews\Http\Requests\UpdateSittingRequest;
 use App\Modules\Interviews\Http\Resources\InterviewResource;
 use App\Modules\Interviews\Http\Resources\InterviewSittingResource;
+use App\Modules\Interviews\Models\Interview;
 use App\Modules\Interviews\Models\InterviewSitting;
 use App\Support\BusinessDay;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
@@ -32,7 +33,8 @@ class InterviewSittingController extends Controller
      *
      * Every sitting; `kind` committee or one_off narrows it, `member` (a staff user's id) keeps the sittings that
      * staff user sits on, `open` 1 keeps those not ended yet (to book into; 0: the ended ones). `from` / `to`
-     * (YYYY-MM-DD, Damascus days, included) on the starting time; soonest first; 25 per page.
+     * (YYYY-MM-DD, Damascus days, included) on the starting time. By the starting time, soonest first, or latest
+     * first with `direction` desc; 25 per page.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -42,7 +44,9 @@ class InterviewSittingController extends Controller
             'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
             'member' => ['nullable', 'uuid'],
             'open' => ['nullable', 'boolean'],
+            'direction' => ['nullable', Rule::in(['asc', 'desc'])],
         ]);
+        $direction = $filters['direction'] ?? 'asc';
 
         $sittings = InterviewSitting::query()
             ->with('members')
@@ -52,8 +56,8 @@ class InterviewSittingController extends Controller
             ->whenGiven($filters['from'] ?? null, fn($query, $date) => $query->where('starts_at', '>=', BusinessDay::startOf($date)))
             ->whenGiven($filters['to'] ?? null, fn($query, $date) => $query->where('starts_at', '<', BusinessDay::startOfNext($date)))
             ->when(isset($filters['open']), fn($query) => $query->where('ends_at', $request->boolean('open') ? '>' : '<=', Date::now()))
-            ->orderBy('starts_at')
-            ->orderBy('id')
+            ->orderBy('starts_at', $direction)
+            ->orderBy('id', $direction)
             ->paginate(25)
             ->withQueryString();
 
@@ -121,10 +125,12 @@ class InterviewSittingController extends Controller
     /**
      * Book several applications into a sitting
      *
-     * In the order given (take it from the interview queue), from `first_at` (default: the sitting's start) every
-     * `minutes_between` minutes (default 30), each before the sitting's end. Each application must be awaiting its
-     * interview with none booked. All or nothing: one refused application (422 on `application_ids.N`, also when
-     * its time would reach the end) books none. 422 on `sitting` once the sitting has ended.
+     * In the order given (take it from the interview queue), from `first_at` (default: the sitting's start, or 30
+     * minutes after its latest interview) every `minutes_between` minutes (10 to 480, default 30), each before the
+     * sitting's end and 10 minutes at least from the sitting's other interviews (D-096). Each application must be
+     * awaiting its interview with none booked. All or nothing: one refused application (422 on `application_ids.N`,
+     * also when its time would reach the end or come too close to another interview) books none. 422 on `sitting`
+     * once the sitting has ended.
      */
     public function book(BookSittingRequest $request, InterviewSitting $sitting, ManageInterviews $interviews): JsonResponse
     {
@@ -132,7 +138,7 @@ class InterviewSittingController extends Controller
             $sitting,
             $request->validated('application_ids'),
             $request->validated('first_at') === null ? null : Date::parse($request->validated('first_at')),
-            (int) ($request->validated('minutes_between') ?? 30),
+            (int) ($request->validated('minutes_between') ?? Interview::DEFAULT_MINUTES_BETWEEN),
             $request->user(),
         );
 

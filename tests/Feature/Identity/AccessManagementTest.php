@@ -62,8 +62,8 @@ class AccessManagementTest extends TestCase
     public function test_each_office_controls_its_own_section_only(): void
     {
         $sections = [
-            'recruitment' => ['candidates.manage', 'applications.start', 'applications.close', 'imports.manage', 'imports.approve'],
-            'exams_interviews' => ['exams.manage', 'exam_bank.manage', 'interviews.manage', 'exceptions.approve', 'attempts.extend', 'interviews.correct', 'exam_results.correct', 'pass_policies.manage'],
+            'recruitment' => ['candidates.manage', 'applications.start', 'applications.close', 'imports.manage'],
+            'exams_interviews' => ['exams.manage', 'exam_bank.manage', 'interviews.manage', 'exceptions.approve', 'interviews.excuse', 'attempts.extend', 'interviews.correct', 'exam_results.correct', 'pass_policies.manage'],
             'contracts' => ['contracts.manage'],
             'documenting' => ['documents.manage'],
         ];
@@ -84,6 +84,30 @@ class AccessManagementTest extends TestCase
         // Recruitment sees the full file; the other offices do not.
         $this->assertTrue(StaffUserFactory::new()->withRole('recruitment')->create()->hasPermission('applications.view'));
         $this->assertFalse(StaffUserFactory::new()->withRole('exams_interviews')->create()->hasPermission('applications.view'));
+    }
+
+    public function test_the_exams_and_the_interviews_each_have_a_role_in_their_office(): void
+    {
+        $exams = ['exams.view', 'exam_bank.manage', 'exams.manage', 'attempts.extend', 'exam_results.correct', 'pass_policies.manage', 'exceptions.approve'];
+        $interviews = ['interviews.view', 'interviews.manage', 'interviews.correct', 'interviews.excuse'];
+        $examOfficer = StaffUserFactory::new()->withRole('exams')->create();
+        $interviewOfficer = StaffUserFactory::new()->withRole('interviews')->create();
+
+        $this->assertEqualsCanonicalizing([...$exams, 'audit.view_related'], $examOfficer->permissionSlugs()->all());
+        $this->assertEqualsCanonicalizing([...$interviews, 'audit.view_related'], $interviewOfficer->permissionSlugs()->all());
+        $this->assertEqualsCanonicalizing([...$exams, ...$interviews, 'audit.view_related'], StaffUserFactory::new()->withRole('exams_interviews')->create()->permissionSlugs()->all());
+
+        // The routes follow: each reaches its own section only.
+        $this->asStaff($examOfficer)->getJson('/api/v1/staff/exam-sessions')->assertOk();
+        $this->asStaff($examOfficer)->getJson('/api/v1/staff/interviews')->assertForbidden();
+        $this->asStaff($interviewOfficer)->getJson('/api/v1/staff/interviews')->assertOk();
+        $this->asStaff($interviewOfficer)->getJson('/api/v1/staff/exam-sessions')->assertForbidden();
+
+        // Both are of the Exams and Interviews office, as offices.
+        $roles = collect($this->asStaff($this->admin)->getJson(self::BASE.'/roles')->assertOk()->json('data'))->keyBy('slug');
+        $this->assertSame(['موظف الاختبارات', true], [$roles['exams']['label_ar'], $roles['exams']['office']]);
+        $this->assertSame(['موظف المقابلات', true], [$roles['interviews']['label_ar'], $roles['interviews']['office']]);
+        $this->asStaff($this->admin)->putJson(self::BASE."/users/{$examOfficer->id}/role", ['role' => 'interviews'])->assertOk()->assertJsonPath('user.role.slug', 'interviews');
     }
 
     public function test_the_general_manager_only_views_and_the_administrator_holds_everything(): void
@@ -183,7 +207,8 @@ class AccessManagementTest extends TestCase
         $this->asStaff($this->admin)
             ->deleteJson(self::BASE.'/roles/contracts/permissions/users.manage')
             ->assertStatus(422)
-            ->assertJsonValidationErrors('permission');
+            ->assertJsonValidationErrors('user')
+            ->assertJsonPath('errors.user.0', __('auth.permission'));
 
         // The failed change was rolled back.
         $this->assertContains('users.manage', $this->rolePermissions('contracts'));
@@ -282,7 +307,7 @@ class AccessManagementTest extends TestCase
             ->assertOk()
             ->assertJsonPath('user.is_active', false)
             ->assertJsonPath('user.deactivation.reason', 'انتهاء التكليف')
-            ->assertJsonPath('user.deactivation.by', $this->admin->id)
+            ->assertJsonPath('user.deactivation.by', ['id' => $this->admin->id, 'username' => $this->admin->username, 'full_name' => $this->admin->full_name])
             ->assertJsonPath('user.role.slug', 'recruitment');   // the role stays
         $this->assertSame(0, $staff->tokens()->count());
         $this->asStaff($this->admin)->postJson("{$url}/deactivate", ['reason' => 'مرة ثانية'])->assertStatus(422);

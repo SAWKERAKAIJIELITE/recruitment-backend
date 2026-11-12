@@ -18,12 +18,13 @@ class ExamDecisionController extends Controller
      * Accept an exam absence excuse
      *
      * The application goes back to awaiting its exam (the absence stays). `session_id` books it at once into that
-     * session (a new round). `occurred_at`: when it was decided (default now).
+     * session (a new round). `occurred_at`: when it was decided (default now); `decision_number`: the decision's paper
+     * (رقم القرار, optional; D-100).
      */
     public function excuse(ExamExcuseRequest $request, Application $application, ExamDecisions $decisions): JsonResponse
     {
         $occurredAt = $request->validated('occurred_at') === null ? null : Date::parse($request->validated('occurred_at'));
-        $booking = $decisions->acceptExcuse($application, $request->validated('reason'), $occurredAt, $request->validated('session_id'), $request->user());
+        $booking = $decisions->acceptExcuse($application, $request->validated('reason'), $occurredAt, $request->validated('session_id'), $request->user(), $request->validated('decision_number'));
 
         return response()->json([
             'application_status' => $application->fresh()->current_status->value,
@@ -35,12 +36,13 @@ class ExamDecisionController extends Controller
      * Admit a failed exam to the interview by exception
      *
      * The application moves to awaiting its interview, marked as an exception; the exam's computed result stays
-     * failed. `occurred_at`: when it was decided (default now).
+     * failed. `occurred_at`: when it was decided (default now); `decision_number`: the decision's paper (رقم القرار,
+     * optional; D-100).
      */
     public function exception(ExamExceptionRequest $request, Application $application, ExamDecisions $decisions): JsonResponse
     {
         $occurredAt = $request->validated('occurred_at') === null ? null : Date::parse($request->validated('occurred_at'));
-        $decisions->approveException($application, $request->validated('reason'), $occurredAt, $request->user());
+        $decisions->approveException($application, $request->validated('reason'), $occurredAt, $request->user(), $request->validated('decision_number'));
 
         return response()->json(['application_status' => $application->fresh()->current_status->value]);
     }

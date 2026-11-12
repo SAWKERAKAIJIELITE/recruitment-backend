@@ -7,6 +7,7 @@ use App\Modules\Contracts\Actions\ManageVacancies;
 use App\Modules\Contracts\Actions\RemindExpiringContracts;
 use App\Modules\Contracts\Models\Contract;
 use App\Modules\Contracts\Models\ContractType;
+use App\Modules\Contracts\Models\Unit;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Models\Application;
@@ -47,6 +48,9 @@ class ContractsDemoSeeder extends Seeder
 
         $staff = StaffUser::query()->where('username', 'contracts')->firstOrFail();
         $types = ContractType::query()->orderBy('id')->pluck('id')->all();
+        $units = Unit::query()->orderBy('id')->pluck('id')->all();
+        // The job codes of the demo's job positions (D-098).
+        JobPosition::query()->orderBy('id')->get()->each(fn(JobPosition $position, int $index) => $position->forceFill(['job_code' => sprintf('JC-%03d', 101 + $index)])->save());
         $waiting = Application::query()->where('current_status', ApplicationStatus::AwaitingContract)->orderBy('created_at')->get();
         $today = CarbonImmutable::today();
         $this->uploadVacancies($today->subDays(self::DAYS_BACK), StaffUser::query()->where('username', 'admin')->firstOrFail());
@@ -68,6 +72,23 @@ class ContractsDemoSeeder extends Seeder
                     'starts_on' => $writtenAt->addDay()->toDateString(),
                     'ends_on' => $endsIn === null ? null : $today->addDays($endsIn)->toDateString(),
                     'notes' => $index === 0 ? 'العقد الأول بعد المقابلة' : null,
+                    // The contract form's details (D-098); the last contract has none, as one written before the form.
+                    ...($index === count($plans) - 1 ? [] : [
+                        'unit_id' => $units === [] ? null : $units[$index % count($units)],
+                        'level_3' => 'الفرع ' . ($index + 1),
+                        'level_4' => 'القسم ' . ($index + 1),
+                        'workplace' => ['دمشق', 'حلب', 'حمص', 'اللاذقية', 'حماة'][$index % 5],
+                        'work_pattern' => 'مدني متعاقد',
+                        'job_specialty' => 'توجيه معنوي',
+                        'work_schedule' => $index % 2 === 0 ? 'دوام كامل' : 'دوام جزئي',
+                        'salary_usd' => [350, 400, 300, 450, 375][$index % 5],
+                        'certificate_type' => ['bachelor_4', 'secondary', 'institute', 'master', 'bachelor_5'][$index % 5],
+                        'university' => $index % 5 === 1 ? null : 'جامعة دمشق',
+                        'gpa' => [72.5, 65, 80.25, 77, 69.4][$index % 5],
+                        'certificate_date' => $writtenAt->subYears(2 + $index)->toDateString(),
+                        'wives_count' => $index % 3 === 0 ? 0 : 1,
+                        'children_count' => $index % 3 === 0 ? 0 : $index,
+                    ]),
                 ], $staff);
 
                 if ($then === 'renew') {

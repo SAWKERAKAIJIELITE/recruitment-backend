@@ -37,7 +37,7 @@ class OfficesTest extends TestCase
     public function test_the_other_offices_see_who_the_candidate_is_and_where_the_application_stands(): void
     {
         $application = $this->person('01234567890', start: true);
-        $identity = ['id', 'nomination_number', 'status', 'status_label', 'job_position', 'candidate', 'created_at'];
+        $identity = ['id', 'nomination_number', 'status', 'status_label', 'job_position', 'candidate', 'created_at', 'updated_at'];
 
         foreach (['exams_interviews', 'contracts', 'documenting'] as $office) {
             $user = $this->staffOf($office);
@@ -84,7 +84,7 @@ class OfficesTest extends TestCase
 
         app(ApplicationLifecycle::class)->move($application, S::AwaitingInterview, D::Outcome);
         $entry = $this->asStaff($exams)->getJson('/api/v1/staff/interviews/queue')->assertOk()->json('data.0');
-        $this->assertSame(['position', 'waiting_since', 'id', 'nomination_number', 'status', 'status_label', 'job_position', 'candidate', 'created_at'], array_keys($entry));
+        $this->assertSame(['position', 'waiting_since', 'id', 'nomination_number', 'status', 'status_label', 'job_position', 'candidate', 'created_at', 'updated_at'], array_keys($entry));
 
         // Recruitment does not see the exams section's queues.
         $this->asStaff($this->hiringStaff())->getJson('/api/v1/staff/exams/queue')->assertForbidden();

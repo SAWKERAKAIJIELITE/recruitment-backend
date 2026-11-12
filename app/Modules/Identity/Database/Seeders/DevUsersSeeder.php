@@ -25,6 +25,8 @@ class DevUsersSeeder extends Seeder
             ['staff', 'موظف التوظيف', 'recruitment', '9012'],
             ['staff.two', 'معتمد الاستيراد', 'recruitment', '9013'],
             ['exams', 'موظف الاختبارات', 'exams_interviews', '3456'],
+            ['exams.only', 'موظف الاختبارات', 'exams', '3457'],
+            ['interviews', 'موظف المقابلات', 'interviews', '3458'],
             ['contracts', 'موظف العقود', 'contracts', '7890'],
             ['documents', 'موظف التوثيق', 'documenting', '2468'],
         ];

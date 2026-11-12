@@ -49,6 +49,7 @@ return [
     'attendance' => ['present' => 'حاضر', 'absent' => 'غائب'],
     'pass_kinds' => ['regular' => 'نظامي', 'exception' => 'باستثناء (:date)'],
     'tables' => [
+        'contracts' => 'العقود',
         'dashboard' => 'لوحة التحكم والتقارير',
         'applications' => 'قاعدة بيانات المرشحين',
         'exams_all' => 'سجل الاختبارات ونتائجها',
@@ -91,6 +92,16 @@ return [
     ],
     'results' => ['passed' => 'ناجح', 'failed' => 'راسب', 'absent' => 'غائب'],
     'columns' => [
+        'unit' => 'الجهة الملتحق بها',
+        'contract_type' => 'نوع العقد',
+        'reference_number' => 'رقم المرجع',
+        'contract_sequence' => 'العقد',
+        'written_on' => 'تاريخ الكتابة',
+        'starts_on' => 'تاريخ البدء',
+        'ends_on' => 'تاريخ الانتهاء',
+        'contract_state' => 'حالة العقد',
+        'ended_on' => 'تاريخ الإنهاء',
+        'end_reason' => 'سبب الإنهاء',
         'nomination_number' => 'رقم الترشيح',
         'full_name' => 'الاسم الكامل',
         'national_number' => 'الرقم الوطني',
@@ -146,4 +157,11 @@ return [
         'overall_grade' => 'التقدير',
         'status' => 'حالة الطلب',
     ],
+    // The contracts report (D-098).
+    'first_contract' => 'الأول',
+    'renewal_number' => 'تجديد :number',
+    'total_contracts' => 'عدد العقود',
+    'total_first_contracts' => 'العقود الأولى',
+    'total_renewals' => 'التجديدات',
+    'total_ended_contracts' => 'المنتهية دون تجديد',
 ];

@@ -23,8 +23,8 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
     Route::get('reports/conscription-list', [ReportController::class, 'conscription'])->middleware('can:candidates.manage');
 
     // Each report its section's: applications (applications.view), exams (exams.view), interviews (interviews.view),
-    // dashboard (reports.view).
+    // contracts (contracts.view, D-098), dashboard (reports.view).
     // {report} binds to the ReportName enum: an unknown report is 404.
     Route::get('reports/{report}', [ReportController::class, 'export'])
-        ->middleware(RequireAnyPermission::class . ':applications.view,exams.view,interviews.view,reports.view');
+        ->middleware(RequireAnyPermission::class . ':applications.view,exams.view,interviews.view,contracts.view,reports.view');
 });

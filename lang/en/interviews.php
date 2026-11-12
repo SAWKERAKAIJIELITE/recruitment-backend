@@ -34,4 +34,6 @@ return [
     'committee_name_required' => 'A committee sitting keeps its name.',
     'sitting_in_use' => 'Interviews were booked into this sitting (or moved out of it), so it is not deleted: cancel or move them; the sitting stays as their record.',
     'staff_member_is_you' => 'A member by staff account is you, the signed-in user: enter the other members by name.',
+    'time_taken' => 'This time is close to another interview of the sitting (:time): interviews are :minutes minutes apart at least.',
+    'time_taken_now' => 'A close time in the sitting was just booked: interviews are :minutes minutes apart at least; choose another time.',
 ];

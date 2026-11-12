@@ -3,6 +3,7 @@
 namespace App\Modules\Exams\Models;
 
 use App\Modules\Exams\Enums\Difficulty;
+use App\Modules\Identity\Models\StaffUser;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -37,6 +38,12 @@ class ExamQuestion extends Model
     public function part(): BelongsTo
     {
         return $this->belongsTo(ExamSubjectPart::class, 'part_id')->withTrashed();
+    }
+
+    /** Who added the question (its first version's author). */
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(StaffUser::class, 'created_by');
     }
 
     public function versions(): HasMany

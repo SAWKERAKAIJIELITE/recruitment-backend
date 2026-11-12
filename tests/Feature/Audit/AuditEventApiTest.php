@@ -2,12 +2,14 @@
 
 namespace Tests\Feature\Audit;
 
+use App\Modules\Audit\Support\AuditEvents;
 use App\Modules\Audit\Support\AuditTrail;
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Tests\Support\RecruitmentTestHelpers;
 use Tests\Support\StaffTestHelpers;
 use Tests\TestCase;
@@ -105,6 +107,54 @@ class AuditEventApiTest extends TestCase
         $this->assertSame(['exam_attempt.started'], $found($candidate));             // the acting candidate
         $this->assertSame(['import.row_excluded'], $found('0'));                     // "0" still filters
         $this->assertSame(['{7,b1,b2}'], DB::table('audit_events')->where('event', 'exam_session.booked')->pluck('related_ids')->all());
+    }
+
+    public function test_every_event_has_an_arabic_label(): void
+    {
+        // Every event the code records (literal names, and both names of a ternary), and AccessLog's under access.
+        $recorded = [];
+
+        foreach (File::allFiles(app_path()) as $file) {
+            $code = $file->getContents();
+            preg_match_all("/AuditTrail::record\(\s*([^,]+),/", $code, $calls);
+
+            foreach ($calls[1] as $argument) {
+                preg_match_all("/'([a-z_]+\.[a-z_]+)'/", $argument, $names);
+                array_push($recorded, ...$names[1]);
+            }
+
+            preg_match_all("/AccessLog::record\(\s*'([a-z_]+)'/", $code, $access);
+            array_push($recorded, ...array_map(fn(string $event) => "access.{$event}", $access[1]));
+        }
+
+        $recorded = array_values(array_unique($recorded));
+        $this->assertGreaterThan(80, count($recorded));
+        $this->assertSame([], array_values(array_diff($recorded, array_keys(AuditEvents::LABELS))), 'events without a label');
+        $this->assertSame([], array_values(array_diff(array_keys(AuditEvents::LABELS), $recorded)), 'labels of events never recorded');
+    }
+
+    public function test_the_log_shows_labels_pages_and_its_events(): void
+    {
+        $admin = StaffUserFactory::new()->withRole('system_admin')->create();
+        foreach (range(1, 12) as $index) {
+            AuditTrail::record('interview.recorded', $admin, ['interview_id' => "i-{$index}"]);
+        }
+        AuditTrail::record('auth.staff_login', $admin, ['user_id' => $admin->id]);
+
+        $this->asStaff($admin)->getJson(self::URL . '?per_page=10')->assertOk()
+            ->assertJsonCount(10, 'data')->assertJsonPath('meta.per_page', 10)->assertJsonPath('meta.total', 13)
+            ->assertJsonPath('data.0.event', 'auth.staff_login')->assertJsonPath('data.0.event_label', 'تسجيل دخول موظف')
+            ->assertJsonPath('data.1.event_label', 'تسجيل نتيجة مقابلة');
+        $this->asStaff($admin)->getJson(self::URL . '?per_page=5')->assertStatus(422)->assertJsonValidationErrors('per_page');
+
+        // The catalogue for the event filter: everything with audit.view, one's own sections' operations otherwise.
+        $all = collect($this->asStaff($admin)->getJson(self::URL . '/events')->assertOk()->json('data'));
+        $this->assertCount(count(AuditEvents::LABELS), $all);
+        $this->assertSame(['event' => 'device.approved', 'label' => 'اعتماد جهاز', 'category' => 'security'], $all->firstWhere('event', 'device.approved'));
+        $mine = collect($this->asStaff(StaffUserFactory::new()->withRole('interviews')->create())->getJson(self::URL . '/events')->assertOk()->json('data'))->pluck('event');
+        $this->assertTrue($mine->every(fn(string $event) => str_starts_with($event, 'interview')));
+        $this->assertContains('interview_sitting.created', $mine);
+        $this->asStaff($this->hiringStaff())->getJson(self::URL . '/events')->assertOk()->assertJsonMissing(['event' => 'exam_session.created']);
     }
 
     public function test_the_log_is_never_changed(): void

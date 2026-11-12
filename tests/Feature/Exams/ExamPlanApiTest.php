@@ -119,6 +119,10 @@ class ExamPlanApiTest extends TestCase
         $put([['subject_id' => $quran->id, 'parts' => [['part_id' => $recitation->id, 'max_score' => 50]]]])->assertStatus(422)->assertJsonValidationErrors('subjects.0.parts.0.max_score');
         $put([['subject_id' => $quran->id, 'parts' => [['part_id' => $recitation->id, 'assessment' => 'oral']]]])->assertStatus(422)->assertJsonValidationErrors('subjects.0.parts.0.assessment');
         $put([['subject_id' => $quran->id, 'parts' => [['part_id' => $recitation->id, 'weight' => 0, 'questions' => $q]]]])->assertStatus(422)->assertJsonValidationErrors('subjects.0.parts.0.weight');
+
+        // In Arabic, with the fields named (Step 15).
+        $this->assertSame('يجب أن يحتوي عدد أسئلة المادة رقم 1 على: easy, medium, hard.', $put([['subject_id' => $hadith->id, 'questions' => ['easy' => 1]]])->json('errors')['subjects.0.questions'][0]);
+        $this->assertSame('يجب أن يكون العلامة العظمى للجزء رقم 1 من المادة رقم 1 عدداً منازله العشرية 0-2.', $put([['subject_id' => $quran->id, 'parts' => [['part_id' => $tajweed->id, 'max_score' => 10.555]]]])->json('errors')['subjects.0.parts.0.max_score'][0]);
     }
 
     public function test_every_difficulty_is_asked_at_least_once(): void

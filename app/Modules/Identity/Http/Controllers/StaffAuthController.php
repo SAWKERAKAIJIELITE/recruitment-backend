@@ -30,7 +30,8 @@ class StaffAuthController extends Controller
     /**
      * Log in
      *
-     * Step 2 of login. Requires a signature made with the device's private key.
+     * Step 2 of login. Requires a signature made with the device's private key. The token lasts until the business
+     * day ends (`expires_at`: the next 00:00 in Damascus, D-099); after that, log in again.
      *
      * @unauthenticated
      */
@@ -48,6 +49,8 @@ class StaffAuthController extends Controller
         return response()->json([
             'token' => $result['token'],
             'token_type' => 'Bearer',
+            /** When the token stops working: the next 00:00 in Damascus. */
+            'expires_at' => $result['expires_at']->toIso8601String(),
             'user' => new StaffUserResource($result['user']),
         ]);
     }

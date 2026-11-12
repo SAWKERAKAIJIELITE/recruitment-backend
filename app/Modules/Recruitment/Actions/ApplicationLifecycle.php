@@ -117,8 +117,9 @@ class ApplicationLifecycle
         ?string $reason = null,
         ?StatusChangeCause $cause = null,
         ?CarbonInterface $occurredAt = null,
+        ?string $decisionNumber = null,
     ): ApplicationStatusEvent {
-        return DB::transaction(function () use ($application, $to, $type, $actor, $reason, $cause, $occurredAt) {
+        return DB::transaction(function () use ($application, $to, $type, $actor, $reason, $cause, $occurredAt, $decisionNumber) {
             // Lock the row and read the status from the database: two simultaneous moves cannot both win.
             $locked = Application::query()->whereKey($application->getKey())->lockForUpdate()->firstOrFail();
             $from = $locked->current_status;
@@ -146,7 +147,8 @@ class ApplicationLifecycle
             $latest = $this->latestEvent($locked);
             $occurredAt = $this->checkedDate($occurredAt, $latest);
 
-            $event = $this->append($locked, $latest->id, $to, $type, $actor, $reason, $cause, $occurredAt);
+            $decisionNumber = $decisionNumber === null || trim($decisionNumber) === '' ? null : trim($decisionNumber);
+            $event = $this->append($locked, $latest->id, $to, $type, $actor, $reason, $cause, $occurredAt, $decisionNumber);
 
             $this->reload($application);
 

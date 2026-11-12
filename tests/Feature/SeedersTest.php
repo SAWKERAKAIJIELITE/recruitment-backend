@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Modules\Contracts\Database\Seeders\ContractsDemoSeeder;
 use App\Modules\Contracts\Database\Seeders\ContractTypesSeeder;
+use App\Modules\Contracts\Database\Seeders\UnitsSeeder;
 use App\Modules\Contracts\Models\Contract;
 use App\Modules\Documents\Database\Seeders\DocumentsDemoSeeder;
 use App\Modules\Documents\Database\Seeders\DocumentTypesSeeder;
@@ -43,7 +44,7 @@ class SeedersTest extends TestCase
     private function seedDemo(): void
     {
         Storage::fake(config('imports.disk'));
-        $this->seed([RolesAndPermissionsSeeder::class, ReferenceDataSeeder::class, ContractTypesSeeder::class, DevUsersSeeder::class, RecruitmentDemoSeeder::class, ImportsDemoSeeder::class, ContractsDemoSeeder::class]);
+        $this->seed([RolesAndPermissionsSeeder::class, ReferenceDataSeeder::class, ContractTypesSeeder::class, UnitsSeeder::class, DevUsersSeeder::class, RecruitmentDemoSeeder::class, ImportsDemoSeeder::class, ContractsDemoSeeder::class]);
     }
 
     // ---- reference data (every environment) ----

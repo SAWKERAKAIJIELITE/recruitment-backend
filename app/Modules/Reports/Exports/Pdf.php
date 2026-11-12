@@ -27,6 +27,8 @@ final class Pdf
             'margin_footer' => 6,
         ]);
 
+        // Right to left: mPDF ignores the 'directionality' option above, so the document and its tables are set here.
+        $pdf->SetDirectionality('rtl');
         $pdf->SetTitle($header->title);
         $pdf->SetAuthor($header->issuer->full_name);
         $pdf->SetHTMLFooter('<table width="100%" style="font-size:8pt;color:#555"><tr>'

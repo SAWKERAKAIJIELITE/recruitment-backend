@@ -28,7 +28,7 @@ use Illuminate\Validation\Rule;
 /**
  * Interviews (analysis doc §07, §08; D-059). Reading: interviews.view.
  * Scheduling, rescheduling, cancelling and recording: interviews.manage. Correcting a recorded result:
- * interviews.correct. Accepting an absence excuse: exceptions.approve.
+ * interviews.correct. Accepting an absence excuse: interviews.excuse (D-097).
  */
 class InterviewController extends Controller
 {
@@ -125,8 +125,9 @@ class InterviewController extends Controller
      *
      * Only for an application awaiting its interview (passed the exams, or by exception), and one waiting interview at
      * a time. Book it into a sitting (`sitting_id`: a committee, or a one-off sitting's single interviewer), at the
-     * candidate's time `scheduled_at` (default: the sitting's start). 422 on `scheduled_at` before the sitting starts
-     * or at or after its end, on `sitting_id` once the sitting has ended.
+     * candidate's time `scheduled_at` (default: the sitting's start, or 30 minutes after its latest interview). 422 on
+     * `scheduled_at` before the sitting starts or at or after its end, or less than 10 minutes from another interview
+     * of the sitting (D-096); on `sitting_id` once the sitting has ended.
      */
     public function store(ScheduleInterviewRequest $request, Application $application, ManageInterviews $interviews): JsonResponse
     {
@@ -138,10 +139,11 @@ class InterviewController extends Controller
     /**
      * Reschedule an interview
      *
-     * With a `reason` (kept in its reschedules). Another sitting (`sitting_id`; the time defaults to its start), a new
-     * time (`scheduled_at`; alone, in the same sitting), or both, within the sitting's time. 422 `same_appointment`
-     * when nothing changes; 422 on `interview` once its sitting has ended (record it, absent if so, or cancel it), on
-     * `sitting_id` when the new sitting has ended.
+     * With a `reason` (kept in its reschedules). Another sitting (`sitting_id`; the time defaults to its next free
+     * time, as when scheduling), a new time (`scheduled_at`; alone, in the same sitting), or both, within the sitting's
+     * time and 10 minutes at least from its other interviews. 422 `same_appointment` when nothing changes; 422 on
+     * `interview` once its sitting has ended (record it, absent if so, or cancel it), on `sitting_id` when the new
+     * sitting has ended.
      */
     public function reschedule(RescheduleInterviewRequest $request, Interview $interview, ManageInterviews $interviews): InterviewResource
     {
@@ -180,8 +182,9 @@ class InterviewController extends Controller
     /**
      * Accept an interview absence excuse
      *
-     * Permission exceptions.approve. The application goes back to awaiting its interview; the absent
+     * Permission interviews.excuse (D-097). The application goes back to awaiting its interview; the absent
      * result stays. With `appointment`, the next round is booked in the same step and returned (otherwise 204).
+     * `decision_number`: the decision's paper (رقم القرار, optional; D-100).
      */
     public function excuse(InterviewExcuseRequest $request, Application $application, ManageInterviews $interviews): JsonResponse|InterviewResource
     {
@@ -194,6 +197,7 @@ class InterviewController extends Controller
             $request->validated('occurred_at') === null ? null : Date::parse($request->validated('occurred_at')),
             $request->validated('appointment'),
             $request->user(),
+            $request->validated('decision_number'),
         );
 
         return $next === null ? response()->json(null, 204) : $this->resource($next);

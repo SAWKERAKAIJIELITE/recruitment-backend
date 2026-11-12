@@ -15,7 +15,9 @@ use App\Modules\Exams\Http\Resources\ExamBookingResource;
 use App\Modules\Exams\Models\ExamAttempt;
 use App\Modules\Exams\Models\ExamBooking;
 use App\Modules\Exams\Queries\ExamQueue;
+use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Http\Resources\ApplicationIdentityResource;
+use App\Modules\Recruitment\Models\ApplicationStatusEvent;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\ValidationException;
@@ -48,10 +50,25 @@ class ExamBookingController extends Controller
         return new ExamBookingResource($booking->fresh(ExamBookingResource::relations()));
     }
 
-    /** Every exam booking of an application, by round. */
+    /**
+     * An application's exam rounds
+     *
+     * Every exam booking of the application, by round: its session (time and place), the attempt, the hand marks, the
+     * result, and the decision that followed it (an exception or an accepted excuse, with its decision number; D-100).
+     */
     public function forApplication(string $application): AnonymousResourceCollection
     {
-        return ExamBookingResource::collection(ExamBooking::query()->with(ExamBookingResource::relations())->where('application_id', $application)->orderBy('round')->get());
+        $bookings = ExamBooking::query()->with(ExamBookingResource::relations())->where('application_id', $application)->orderBy('round')->get();
+        $decisions = ApplicationStatusEvent::query()
+            ->with('actor')
+            ->where('application_id', $application)
+            ->whereIn('decision_type', [DecisionType::Exception, DecisionType::ExcuseAccepted])
+            ->whereNotNull('exam_booking_id')
+            ->get()
+            ->keyBy('exam_booking_id');
+        $bookings->each(fn(ExamBooking $booking) => $booking->setRelation('decision', $decisions->get($booking->id)));
+
+        return ExamBookingResource::collection($bookings);
     }
 
     /**

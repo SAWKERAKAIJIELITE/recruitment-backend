@@ -61,6 +61,17 @@ class DeviceManagementTest extends TestCase
         $this->assertDatabaseHas('staff_devices', ['reported_mac' => '00:11:22:aa:bb:cc']);
     }
 
+    public function test_the_device_refusals_are_arabic(): void
+    {
+        $this->postJson(self::REGISTER, $this->registration('not a key'))->assertStatus(422)
+            ->assertJsonPath('errors.public_key.0', 'المفتاح العام يجب أن يكون مفتاح EC من نوع P-256 (prime256v1) بصيغة PEM.');
+
+        config(['staff_auth.max_pending_devices' => 0]);
+        $this->postJson(self::REGISTER, $this->registration($this->newDeviceKey()['public_pem']))->assertStatus(429)
+            ->assertJsonPath('message', __('access.registration_unavailable'));
+        $this->assertStringContainsString('تسجيل الأجهزة متوقف مؤقتًا', __('access.registration_unavailable'));
+    }
+
     public function test_registration_requires_a_mac_address(): void
     {
         $pem = $this->newDeviceKey()['public_pem'];

@@ -26,19 +26,22 @@ use Illuminate\Support\Facades\Notification;
  */
 final class LifecycleNotices
 {
-    /** The office whose section each status belongs to. */
+    /**
+     * The roles whose section each status belongs to: in the Exams and Interviews office, the role of both its sections
+     * and that of the exams, or of the interviews (D-097).
+     */
     private const SECTIONS = [
-        'received' => StaffRole::Recruitment,
-        'awaiting_exam' => StaffRole::ExamsInterviews,
-        'exam_failed' => StaffRole::ExamsInterviews,
-        'exam_absent' => StaffRole::ExamsInterviews,
-        'awaiting_interview' => StaffRole::ExamsInterviews,
-        'interview_failed' => StaffRole::ExamsInterviews,
-        'interview_absent' => StaffRole::ExamsInterviews,
-        'awaiting_contract' => StaffRole::Contracts,
-        'contract_written' => StaffRole::Contracts,
-        'contract_ended' => StaffRole::Recruitment,
-        'closed' => StaffRole::Recruitment,
+        'received' => [StaffRole::Recruitment],
+        'awaiting_exam' => [StaffRole::ExamsInterviews, StaffRole::Exams],
+        'exam_failed' => [StaffRole::ExamsInterviews, StaffRole::Exams],
+        'exam_absent' => [StaffRole::ExamsInterviews, StaffRole::Exams],
+        'awaiting_interview' => [StaffRole::ExamsInterviews, StaffRole::Interviews],
+        'interview_failed' => [StaffRole::ExamsInterviews, StaffRole::Interviews],
+        'interview_absent' => [StaffRole::ExamsInterviews, StaffRole::Interviews],
+        'awaiting_contract' => [StaffRole::Contracts],
+        'contract_written' => [StaffRole::Contracts],
+        'contract_ended' => [StaffRole::Recruitment],
+        'closed' => [StaffRole::Recruitment],
     ];
 
     /** @var list<array{application_id: string, from: ?ApplicationStatus, to: ApplicationStatus, type: DecisionType, actor_id: ?string}> committed, not told yet */
@@ -47,7 +50,8 @@ final class LifecycleNotices
     /** Inside batch(): the commits wait, and are told together at its end. */
     private int $holding = 0;
 
-    public static function section(ApplicationStatus $status): StaffRole
+    /** @return list<StaffRole> */
+    public static function section(ApplicationStatus $status): array
     {
         return self::SECTIONS[$status->value];
     }
@@ -115,7 +119,7 @@ final class LifecycleNotices
 
         foreach ($groups as $group) {
             $first = $group->first();
-            $roles = collect([StaffRole::Recruitment, self::section($first['to'])]);
+            $roles = collect([StaffRole::Recruitment, ...self::section($first['to'])]);
 
             if (in_array($first['to']->value, $documented, true)) {
                 $roles->push(StaffRole::Documenting);
@@ -144,7 +148,7 @@ final class LifecycleNotices
         return StaffUser::query()
             ->where('is_active', true)
             ->join('roles', 'roles.id', '=', 'staff_users.role_id')
-            ->whereIn('roles.slug', [StaffRole::Recruitment->value, StaffRole::ExamsInterviews->value, StaffRole::Contracts->value, StaffRole::Documenting->value])
+            ->whereIn('roles.slug', array_map(fn(StaffRole $role) => $role->value, StaffRole::offices()))
             ->get(['staff_users.*', 'roles.slug as role_slug'])
             ->groupBy('role_slug');
     }

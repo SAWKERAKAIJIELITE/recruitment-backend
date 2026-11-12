@@ -271,6 +271,7 @@ class ContractApiTest extends TestCase
         $this->assertSame(['R-5'], $found('state=upcoming'));
         $this->assertSame(['R-2', 'R-1', 'R-3', 'R-5'], $found('latest=1'));
         $this->assertSame(['R-3'], $found('q=R-3'));
+        $this->assertSame([], $found('q=0'));                                                         // "0" is searched, not skipped (D-091)
         $this->assertSame(['R-1', 'R-3'], $found('ends_from=2026-11-01&ends_to=2027-12-31'));
         $this->asStaff($reader)->getJson('/api/v1/staff/contracts?state=soon')->assertStatus(422);
     }

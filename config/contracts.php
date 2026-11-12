@@ -10,4 +10,7 @@ return [
     'vacancies_disk' => env('CONTRACTS_VACANCIES_DISK', 'local'),
     'vacancies_directory' => 'vacancies',
     'vacancies_max_file_kilobytes' => (int) env('CONTRACTS_VACANCIES_MAX_FILE_KILOBYTES', 5120),
+
+    // The issuing body printed as «الجهة» in the header of the contract form (تعاقد عمل) and of ملف التثبيت (D-098).
+    'issuing_unit' => env('CONTRACTS_ISSUING_UNIT', 'إدارة التوجيه المعنوي'),
 ];

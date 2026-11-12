@@ -190,6 +190,32 @@ class StaffReportsTest extends TestCase
         $this->summary(['year' => 2026])->assertJsonCount(12, 'data.monthly')->assertJsonPath('data.monthly.4.month', '2026-05');
     }
 
+    public function test_the_dashboards_trend_by_day_week_or_month(): void
+    {
+        // Days: each fact on its Damascus day.
+        $days = $this->summary(['group_by' => 'day', 'period_from' => '2026-03-01', 'period_to' => '2026-03-10'])
+            ->assertJsonPath('data.series.group_by', 'day')->assertJsonCount(10, 'data.series.points')->json('data.series.points');
+        $this->assertSame(['key' => '2026-03-01', 'start' => '2026-03-01', 'end' => '2026-03-01', 'nominations' => 1, 'exam_takers' => 0, 'interview_takers' => 0, 'contracts_written' => 0], $days[0]);
+        $this->assertSame([1, 1, 2], [$days[1]['nominations'], $days[4]['nominations'], $days[9]['exam_takers']]);
+
+        // Weeks from Saturday: 1 March 2026 is a Sunday, in the week of 28 February. The late interview of 31 March
+        // (1 April in Damascus) is outside March.
+        $weeks = $this->summary(['group_by' => 'week', 'year' => 2026, 'month' => 3])->assertJsonCount(5, 'data.series.points')->json('data.series.points');
+        $this->assertSame(['2026-02-28', '2026-03-06', 3, 0], [$weeks[0]['start'], $weeks[0]['end'], $weeks[0]['nominations'], $weeks[0]['exam_takers']]);
+        $this->assertSame(['2026-03-07', 2], [$weeks[1]['key'], $weeks[1]['exam_takers']]);
+        $this->assertSame(0, array_sum(array_column($weeks, 'interview_takers')));
+        $this->assertSame(1, $this->summary(['group_by' => 'week', 'period_from' => '2026-03-28', 'period_to' => '2026-04-03'])->json('data.series.points.0.interview_takers'));
+
+        // Months by default, as the monthly list; a grouping it does not know is refused.
+        $months = $this->summary()->assertJsonPath('data.series.group_by', 'month')->json('data.series.points');
+        $this->assertSame(['2026-03', '2026-04', '2026-05', '2026-06'], array_column($months, 'key'));
+        $this->assertSame(['2026-04-01', '2026-04-30', 2, 1], [$months[1]['start'], $months[1]['end'], $months[1]['interview_takers'], $months[1]['contracts_written']]);
+        $this->asStaff($this->staff)->getJson('/api/v1/staff/reports/summary?group_by=year')->assertStatus(422)->assertJsonValidationErrors('group_by');
+
+        // At most 92 days.
+        $this->assertCount(92, $this->summary(['group_by' => 'day', 'year' => 2026])->json('data.series.points'));
+    }
+
     public function test_the_dashboard_takes_the_applications_filters(): void
     {
         $this->summary(['nominating_entity_id' => $this->people['D']->nominating_entity_id])
@@ -299,12 +325,14 @@ class StaffReportsTest extends TestCase
         $this->assertSame([
             'لوحة التحكم والتقارير', 'قاعدة بيانات المرشحين', 'سجل الاختبارات ونتائجها', 'الناجحون في الاختبارات', 'الراسبون في الاختبارات',
             'الغائبون عن الاختبارات', 'سجل المقابلات', 'الناجحون في المقابلات', 'الراسبون في المقابلات', 'الغائبون عن المقابلات',
+            'العقود',
         ], $book->getSheetNames());
 
         $first = $book->getSheet(0);
         $links = collect($first->getHyperlinkCollection())->map(fn ($link) => $link->getUrl())->values()->all();
-        $this->assertCount(9, $links);
+        $this->assertCount(10, $links);
         $this->assertContains("sheet://'سجل المقابلات'!A1", $links);
+        $this->assertContains("sheet://'العقود'!A1", $links);
     }
 
     public function test_too_many_rows_are_refused(): void

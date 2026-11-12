@@ -35,4 +35,8 @@ return [
         'bad_count' => 'السطر :row: عدد الشواغر «:value» ليس عددًا صحيحًا من 0 فأكثر.',
         'formula' => 'السطر :row: عدد الشواغر صيغة: اكتب العدد نفسه.',
     ],
+    // The contract form and ملف التثبيت (D-098).
+    'form_title' => 'تعاقد عمل',
+    'confirmation_title' => 'نموذج تثبيت متعاقد مدني',
+    'confirmation_file' => 'ملف التثبيت',
 ];

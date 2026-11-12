@@ -4,6 +4,7 @@ namespace App\Modules\Reports\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Modules\Audit\Support\AuditTrail;
+use App\Modules\Contracts\Models\Contract;
 use App\Modules\Interviews\Models\Interview;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Enums\DecisionType;
@@ -17,11 +18,13 @@ use App\Modules\Reports\Queries\Dashboard;
 use App\Modules\Reports\Enums\ReportName;
 use App\Modules\Reports\Http\Requests\ExportReportRequest;
 use App\Modules\Reports\Http\Requests\ReportRequest;
+use App\Modules\Reports\Http\Requests\SummaryRequest;
 use App\Modules\Reports\Support\ReportFilters;
 use App\Modules\Reports\Support\ReportPeriod;
 use App\Modules\Reports\Support\ReportTable;
 use App\Modules\Reports\Tables\RecruitmentTables;
 use Illuminate\Contracts\Database\Query\Expression;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -36,7 +39,7 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
  * optional `month`, and/or `period_from` / `period_to`; each report says which date it compares). Exports carry the
  * title, period, date, issuer and filters, and their totals count the same rows; every export is audited. Each report
  * is its section's (D-086): the applications with applications.view, the exams with exams.view, the interviews with
- * interviews.view, the dashboard and the workbook of all of them with reports.view.
+ * interviews.view, the contracts with contracts.view, the dashboard and the workbook of all of them with reports.view.
  */
 class ReportController extends Controller
 {
@@ -51,6 +54,7 @@ class ReportController extends Controller
         'interviews-passed' => ['interviews', 'passed'],
         'interviews-failed' => ['interviews', 'failed'],
         'interviews-absent' => ['interviews', 'absent'],
+        'contracts' => ['contracts', null],
         'dashboard' => ['dashboard', null],
     ];
 
@@ -59,6 +63,7 @@ class ReportController extends Controller
         'applications' => 'applications.view',
         'exams' => 'exams.view',
         'interviews' => 'interviews.view',
+        'contracts' => 'contracts.view',
         'dashboard' => 'reports.view',
     ];
 
@@ -70,13 +75,14 @@ class ReportController extends Controller
      * interviews; first contracts and renewals; average days from nomination to each stage; the counts by month (the
      * period's months, or from the first nomination when no period is given; at most 60), by nominating entity and
      * by job position. Each is counted on its own date: a nomination by its date, an exam decision by its date, an
-     * interview by the day held, a contract by its writing date.
+     * interview by the day held, a contract by its writing date. `series` has the same counts by `group_by`: day,
+     * week (from Saturday) or month (default), on the period's days, or from the first nomination up to today.
      */
-    public function summary(ReportRequest $request): JsonResponse
+    public function summary(SummaryRequest $request): JsonResponse
     {
         $filters = $request->filters();
 
-        return response()->json(['data' => Dashboard::build($filters) + ['filters' => ReportFilters::describe($filters)]]);
+        return response()->json(['data' => Dashboard::build($filters, $request->groupBy()) + ['filters' => ReportFilters::describe($filters)]]);
     }
 
     /**
@@ -86,7 +92,9 @@ class ReportController extends Controller
      * in it), exams (every exam decision in the period, with the exception or accepted excuse that followed),
      * exams-passed (regular passes and failures admitted by an exception), exams-failed, exams-absent, interviews
      * (every interview dated in the period: held, or else booked), interviews-passed, interviews-failed,
-     * interviews-absent (recorded results by the day held), dashboard (the indicators as tables). `format`: xlsx
+     * interviews-absent (recorded results by the day held), contracts (every contract written in the period, the
+     * first and the renewals: type, reference, sequence, dates, state today, end reason; D-098), dashboard (the
+     * indicators as tables). `format`: xlsx
      * (default) or pdf. Interviews also take `sitting_id`. Sorted by nomination number unless `sort` is sent. At most
      * 20,000 rows in Excel and 2,000 in PDF (422 on `format` beyond: narrow the filters).
      */
@@ -114,14 +122,15 @@ class ReportController extends Controller
      * The whole workbook (Excel)
      *
      * Every report above in one workbook, as the legacy file: the dashboard (with links to the other sheets),
-     * بيانات المرشحين, the exams and their three views, the interviews and their three views. Same filters and period.
+     * بيانات المرشحين, the exams and their three views, the interviews and their three views, and the contracts. Same
+     * filters and period.
      */
     public function workbook(ReportRequest $request): BinaryFileResponse
     {
         $filters = $request->filters();
         $sheets = [];
 
-        foreach (['applications', 'exams', 'interviews'] as $report) {
+        foreach (['applications', 'exams', 'interviews', 'contracts'] as $report) {
             $this->assertCountFits($report, $filters, 'xlsx');
         }
 
@@ -179,6 +188,7 @@ class ReportController extends Controller
             'applications' => [RecruitmentTables::applications($this->applications($applicationFilters), $period->isAllTime() ? null : $period)],
             'exams' => [RecruitmentTables::exams($this->applications($applicationFilters), $period, $view)],
             'interviews' => [RecruitmentTables::interviews($this->interviews($applicationFilters, $filters['sitting_id'] ?? null), $period, $view)],
+            'contracts' => [RecruitmentTables::contracts($this->contracts($applicationFilters, $period)->with(RecruitmentTables::CONTRACT_RELATIONS)->get())],
             'dashboard' => RecruitmentTables::dashboard(Dashboard::build($filters)),
         };
     }
@@ -200,6 +210,17 @@ class ReportController extends Controller
             ->whereIn('application_id', $applications)
             ->whenGiven($sitting, fn ($query, $id) => $query->where('sitting_id', $id))
             ->get();
+    }
+
+    /** The contracts of the applications the filters keep, written in the period (its days, D-098). */
+    private function contracts(array $filters, ReportPeriod $period): Builder
+    {
+        $applications = ApplicationSearch::filter(Application::query(), array_diff_key($filters, ['sort' => true, 'direction' => true]))->select('applications.id');
+
+        return Contract::query()
+            ->whereIn('application_id', $applications)
+            ->when($period->start, fn ($query, $start) => $query->where('written_on', '>=', $start->toDateString()))
+            ->when($period->end, fn ($query, $end) => $query->where('written_on', '<', $end->toDateString()));
     }
 
     /**
@@ -245,6 +266,7 @@ class ReportController extends Controller
                 ->whereIn('application_id', $applications)
                 ->when($view !== 'all', fn ($query) => $query->where('result', $view))
                 ->whenGiven($filters['sitting_id'] ?? null, fn ($query, $id) => $query->where('sitting_id', $id)), DB::raw('coalesce(held_at, scheduled_at)'))->count(),
+            'contracts' => $this->contracts(ReportFilters::applicationFilters($filters), $period)->count(),
         };
 
         $this->assertFits(new ReportTable('', [], []), $format, $count);

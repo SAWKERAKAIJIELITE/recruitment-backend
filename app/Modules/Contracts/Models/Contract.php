@@ -2,6 +2,7 @@
 
 namespace App\Modules\Contracts\Models;
 
+use App\Modules\Contracts\Enums\CertificateType;
 use App\Modules\Contracts\Enums\ContractState;
 use App\Modules\Documents\Models\Document;
 use App\Modules\Identity\Models\StaffUser;
@@ -44,6 +45,12 @@ class Contract extends Model implements StatusChangeCause
             'ended_on' => 'date',
             'ended_at' => 'datetime',
             'expiry_reminded_at' => 'datetime',
+            'salary_usd' => 'decimal:2',
+            'gpa' => 'decimal:2',
+            'certificate_type' => CertificateType::class,
+            'certificate_date' => 'date',
+            'wives_count' => 'integer',
+            'children_count' => 'integer',
         ];
     }
 
@@ -66,6 +73,12 @@ class Contract extends Model implements StatusChangeCause
     public function type(): BelongsTo
     {
         return $this->belongsTo(ContractType::class, 'contract_type_id')->withTrashed();
+    }
+
+    /** الجهة الملتحق بها (D-098). */
+    public function unit(): BelongsTo
+    {
+        return $this->belongsTo(Unit::class)->withTrashed();
     }
 
     public function renews(): BelongsTo

@@ -29,12 +29,12 @@ class ExamDecisions
 {
     public function __construct(private readonly ApplicationLifecycle $lifecycle, private readonly ManageExamBookings $bookings) {}
 
-    public function acceptExcuse(Application $application, string $reason, ?CarbonInterface $occurredAt, ?string $sessionId, StaffUser $actor): ?ExamBooking
+    public function acceptExcuse(Application $application, string $reason, ?CarbonInterface $occurredAt, ?string $sessionId, StaffUser $actor, ?string $decisionNumber = null): ?ExamBooking
     {
-        return DB::transaction(function () use ($application, $reason, $occurredAt, $sessionId, $actor) {
+        return DB::transaction(function () use ($application, $reason, $occurredAt, $sessionId, $actor, $decisionNumber) {
             $application = $this->lock($application, ApplicationStatus::ExamAbsent);
             $absent = $this->latestBooking($application, BookingStatus::Absent);
-            $this->move($application, ApplicationStatus::AwaitingExam, DecisionType::ExcuseAccepted, $actor, $reason, $absent, $occurredAt);
+            $this->move($application, ApplicationStatus::AwaitingExam, DecisionType::ExcuseAccepted, $actor, $reason, $absent, $occurredAt, $decisionNumber);
 
             AuditTrail::record('exam.excuse_accepted', $actor, ['application_id' => $application->id, 'booking_id' => $absent?->id]);
 
@@ -46,21 +46,21 @@ class ExamDecisions
         });
     }
 
-    public function approveException(Application $application, string $reason, ?CarbonInterface $occurredAt, StaffUser $actor): void
+    public function approveException(Application $application, string $reason, ?CarbonInterface $occurredAt, StaffUser $actor, ?string $decisionNumber = null): void
     {
-        DB::transaction(function () use ($application, $reason, $occurredAt, $actor) {
+        DB::transaction(function () use ($application, $reason, $occurredAt, $actor, $decisionNumber) {
             $application = $this->lock($application, ApplicationStatus::ExamFailed);
             $failed = $this->latestBooking($application, BookingStatus::Attended);
-            $this->move($application, ApplicationStatus::AwaitingInterview, DecisionType::Exception, $actor, $reason, $failed, $occurredAt);
+            $this->move($application, ApplicationStatus::AwaitingInterview, DecisionType::Exception, $actor, $reason, $failed, $occurredAt, $decisionNumber);
 
             AuditTrail::record('exam.exception_approved', $actor, ['application_id' => $application->id, 'booking_id' => $failed?->id]);
         });
     }
 
-    private function move(Application $application, ApplicationStatus $to, DecisionType $type, StaffUser $actor, string $reason, ?ExamBooking $cause, ?CarbonInterface $occurredAt): void
+    private function move(Application $application, ApplicationStatus $to, DecisionType $type, StaffUser $actor, string $reason, ?ExamBooking $cause, ?CarbonInterface $occurredAt, ?string $decisionNumber): void
     {
         try {
-            $this->lifecycle->move($application, $to, $type, $actor, $reason, $cause, $occurredAt);
+            $this->lifecycle->move($application, $to, $type, $actor, $reason, $cause, $occurredAt, $decisionNumber);
         } catch (IllegalStatusTransition) {
             throw ValidationException::withMessages(['occurred_at' => [__('exams.decisions.date')]]);
         }

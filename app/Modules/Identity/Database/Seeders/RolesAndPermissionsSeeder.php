@@ -9,9 +9,10 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
 /**
- * The permission catalogue and the roles (D-085): four offices, each with full control of its own section only,
- * the general manager (every read-only permission) and the system administrator (every permission, always: not
- * stored, see StaffUser::permissionSlugs()).
+ * The permission catalogue and the roles (D-085): four offices, each with full control of its own section only
+ * (the Exams and Interviews office has a role for both its sections and one for each, D-097), the general manager
+ * (every read-only permission) and the system administrator (every permission, always: not stored, see
+ * StaffUser::permissionSlugs()).
  *
  * - The catalogue is upserted on every run.
  * - A role receives its default permissions ONLY when it is created (D-020). After that the database is the source
@@ -37,10 +38,11 @@ class RolesAndPermissionsSeeder extends Seeder
         'attempts.extend' => ['تمديد وقت الاختبار الجاري لمرشح أو لجميع المرشحين', false],
         'exam_results.correct' => ['تصحيح علامة يدوية بعد صدور نتيجة الاختبار', false],
         'pass_policies.manage' => ['إضافة إصدار جديد من قواعد النجاح', false],
-        'exceptions.approve' => ['استثناء الرسوب / قبول العذر', false],
+        'exceptions.approve' => ['استثناء الرسوب في الاختبار / قبول عذر الغياب عنه', false],
         'interviews.view' => ['عرض المقابلات ونتائجها', true],
         'interviews.manage' => ['إدخال المقابلات', false],
         'interviews.correct' => ['تصحيح نتيجة مقابلة مسجلة', false],
+        'interviews.excuse' => ['قبول عذر الغياب عن المقابلة', false],
         // Contracts
         'contracts.view' => ['عرض العقود والشواغر', true],
         'contracts.manage' => ['إدخال العقود', false],
@@ -78,6 +80,25 @@ class RolesAndPermissionsSeeder extends Seeder
             'interviews.view',
             'interviews.manage',
             'interviews.correct',
+            'interviews.excuse',
+            'audit.view_related',
+        ],
+        // The same office, one section each (D-097).
+        'exams' => [
+            'exams.view',
+            'exam_bank.manage',
+            'exams.manage',
+            'attempts.extend',
+            'exam_results.correct',
+            'pass_policies.manage',
+            'exceptions.approve',
+            'audit.view_related',
+        ],
+        'interviews' => [
+            'interviews.view',
+            'interviews.manage',
+            'interviews.correct',
+            'interviews.excuse',
             'audit.view_related',
         ],
         'contracts' => [

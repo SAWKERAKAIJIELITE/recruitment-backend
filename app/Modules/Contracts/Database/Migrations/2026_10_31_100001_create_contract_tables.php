@@ -27,6 +27,21 @@ return new class extends Migration
             $table->softDeletesTz();
         });
 
+        // Managed list: the units a contractor joins (الجهة الملتحق بها: السوية التنظيمية الثانية, D-098), like
+        // the contract types; seeded from the «الجهة» list of the owner's ملف التثبيت.
+        Schema::create('units', function (Blueprint $table) {
+            $table->id();
+            $table->string('name_ar', 150);
+            $table->string('name_key', 200)->unique();
+            $table->timestampsTz();
+            $table->softDeletesTz();
+        });
+
+        // The job code (الرمز الوظيفي) of a job position, printed on its contracts (D-098).
+        Schema::table('job_positions', function (Blueprint $table) {
+            $table->string('job_code', 50)->nullable();
+        });
+
         Schema::create('contracts', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->foreignUuid('application_id')->constrained('applications')->restrictOnDelete();
@@ -39,6 +54,26 @@ return new class extends Migration
             $table->date('ends_on')->nullable();                            // null: no end date
             $table->uuid('document_id')->nullable()->unique();             // the contract's file (Documents)
             $table->text('notes')->nullable();
+            // The contract form (تعاقد عمل) and ملف التثبيت (D-098): entered by the Contracts office from the documents
+            // the form asks for (the ID, the family statement, the certificate); a renewal copies them. Optional: a
+            // missing one is left blank on the form.
+            $table->foreignId('unit_id')->nullable()->index()->constrained('units')->restrictOnDelete();   // السوية الثانية
+            $table->string('level_3', 150)->nullable();                     // السوية التنظيمية الثالثة
+            $table->string('level_4', 150)->nullable();                     // الرابعة
+            $table->string('level_5', 150)->nullable();                     // الخامسة
+            $table->string('level_6', 150)->nullable();                     // السادسة
+            $table->string('workplace', 200)->nullable();                   // مكان العمل
+            $table->string('work_pattern', 100)->nullable();                // نمط العمل
+            $table->string('job_specialty', 150)->nullable();               // التخصص
+            $table->string('work_schedule', 100)->nullable();               // نظام الدوام
+            $table->decimal('salary_usd', 10, 2)->nullable();               // قيمة الراتب بالدولار
+            $table->string('certificate_type', 20)->nullable();            // نوع الشهادة (CertificateType)
+            $table->string('university', 200)->nullable();                  // اسم الجامعة
+            $table->decimal('gpa', 5, 2)->nullable();                       // المعدل بالنسبة المئوية
+            $table->date('certificate_date')->nullable();                   // تاريخ الحصول على الشهادة
+            $table->unsignedSmallInteger('wives_count')->nullable();        // عدد الزوجات
+            $table->unsignedSmallInteger('children_count')->nullable();     // عدد الأبناء
+            $table->string('origin', 150)->nullable();                      // البلد الأصلي (else the place of birth)
             // The end without renewal (on the latest contract only): the application becomes contract_ended.
             $table->date('ended_on')->nullable();
             $table->text('end_reason')->nullable();
@@ -64,6 +99,8 @@ return new class extends Migration
         DB::statement('ALTER TABLE contracts ADD CONSTRAINT contracts_first_renews_nothing CHECK ((sequence = 1) = (renews_contract_id IS NULL))');
         DB::statement("ALTER TABLE contracts ADD CONSTRAINT contracts_reference_number CHECK (btrim(reference_number) <> '')");
         DB::statement('ALTER TABLE contracts ADD CONSTRAINT contracts_period CHECK (ends_on IS NULL OR ends_on >= starts_on)');
+        DB::statement("ALTER TABLE contracts ADD CONSTRAINT contracts_certificate_type CHECK (certificate_type IS NULL OR certificate_type IN ('preparatory', 'secondary', 'institute', 'bachelor_4', 'bachelor_5', 'bachelor_6', 'master', 'doctorate'))");
+        DB::statement('ALTER TABLE contracts ADD CONSTRAINT contracts_form_ranges CHECK ((salary_usd IS NULL OR salary_usd >= 0) AND (gpa IS NULL OR gpa BETWEEN 0 AND 100) AND (wives_count IS NULL OR wives_count <= 4) AND (children_count IS NULL OR children_count <= 30))');
         DB::statement("ALTER TABLE contracts ADD CONSTRAINT contracts_end_explained CHECK ((ended_on IS NULL AND end_reason IS NULL AND ended_by IS NULL AND ended_at IS NULL) OR (ended_on IS NOT NULL AND ended_by IS NOT NULL AND ended_at IS NOT NULL AND btrim(coalesce(end_reason, '')) <> '' AND ended_on >= written_on))");
         // One end per application.
         DB::statement('CREATE UNIQUE INDEX contracts_one_end_per_application ON contracts (application_id) WHERE ended_on IS NOT NULL');
@@ -131,6 +168,8 @@ return new class extends Migration
     {
         StatusEventCauseColumns::remove('contract_id');
         Schema::dropIfExists('contracts');
+        Schema::table('job_positions', fn(Blueprint $table) => $table->dropColumn('job_code'));
+        Schema::dropIfExists('units');
         Schema::dropIfExists('contract_types');
         DB::unprepared('DROP FUNCTION IF EXISTS contracts_never_deleted()');
         DB::unprepared('DROP FUNCTION IF EXISTS contracts_chain()');

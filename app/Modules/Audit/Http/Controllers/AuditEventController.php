@@ -5,7 +5,10 @@ namespace App\Modules\Audit\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Modules\Audit\Http\Resources\AuditEventResource;
 use App\Modules\Audit\Models\AuditEvent;
+use App\Modules\Audit\Support\AuditEvents;
+use App\Modules\Audit\Support\AuditTrail;
 use App\Support\BusinessDay;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\Rule;
@@ -29,7 +32,8 @@ class AuditEventController extends Controller
     /**
      * List audit events
      *
-     * Newest first, 50 per page. `event`: an event or its beginning (`interview.` for every interview event);
+     * Newest first, 50 per page (`per_page` 10 to 200). Each event has its Arabic `event_label`. `event`: an event or
+     * its beginning (`interview.` for every interview event);
      * `actor_id`: a staff user; `related_id`: a record's id the event is about (its details' `id`, `*_id` and
      * `*_ids`: an application, a booking, a user, ...; or the acting candidate); `category`: operations or security; `from` / `to` (YYYY-MM-DD, Damascus days, included).
      * With `audit.view_related` only, the operations of the user's sections (Recruitment: applications, people,
@@ -45,9 +49,10 @@ class AuditEventController extends Controller
             'category' => ['nullable', Rule::in(['operations', 'security'])],
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
         ]);
         $relatedOnly = ! $request->user()->hasPermission('audit.view');
-        $prefixes = collect(self::SECTIONS)->filter(fn(array $prefixes, string $permission) => $request->user()->hasPermission($permission))->flatten()->all();
+        $prefixes = self::prefixes($request);
         $like = fn(string $prefix) => addcslashes($prefix, '\\%_') . '%';
 
         // `isset`, not when()'s truthiness: a filter of "0" still filters.
@@ -78,9 +83,36 @@ class AuditEventController extends Controller
             ->when($given('to'), fn($query) => $query->where('created_at', '<', BusinessDay::startOfNext($filters['to'])))
             ->orderByDesc('created_at')
             ->orderByDesc('id')
-            ->paginate(50)
+            ->paginate((int) ($filters['per_page'] ?? 50))
             ->withQueryString();
 
         return AuditEventResource::collection($events);
+    }
+
+    /**
+     * The events, with their labels
+     *
+     * For the event filter (D-099): every event the log records, `event`, `label` (Arabic) and `category` (operations
+     * or security), in the order of the sections. With `audit.view_related` only, those of the user's sections.
+     *
+     * @response array{data: list<array{event: string, label: string, category: string}>}
+     */
+    public function events(Request $request): JsonResponse
+    {
+        $prefixes = self::prefixes($request);
+        $all = $request->user()->hasPermission('audit.view');
+
+        $events = collect(AuditEvents::LABELS)
+            ->map(fn(string $label, string $event) => ['event' => $event, 'label' => $label, 'category' => AuditTrail::category($event)])
+            ->filter(fn(array $event) => $all || ($event['category'] === 'operations' && collect($prefixes)->contains(fn(string $prefix) => str_starts_with($event['event'], $prefix))))
+            ->values();
+
+        return response()->json(['data' => $events]);
+    }
+
+    /** @return list<string> the beginnings of the events of the user's sections */
+    private static function prefixes(Request $request): array
+    {
+        return collect(self::SECTIONS)->filter(fn(array $prefixes, string $permission) => $request->user()->hasPermission($permission))->flatten()->all();
     }
 }

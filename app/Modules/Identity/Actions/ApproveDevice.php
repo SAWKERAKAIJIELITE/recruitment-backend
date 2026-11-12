@@ -32,16 +32,16 @@ class ApproveDevice
     private function approve(StaffDevice $device, ?StaffUser $approver, string $fingerprint, StaffUser $owner): StaffDevice
     {
         if ($device->status !== DeviceStatus::Pending) {
-            throw ValidationException::withMessages(['device' => ['Only a pending device can be approved.']]);
+            throw ValidationException::withMessages(['device' => [__('access.device_not_pending')]]);
         }
 
         if (! $owner->is_active) {
-            throw ValidationException::withMessages(['staff_user_id' => ['The device owner must be an active staff user.']]);
+            throw ValidationException::withMessages(['staff_user_id' => [__('access.device_owner_inactive')]]);
         }
 
         if (StaffDevice::where('staff_user_id', $owner->id)->where('status', DeviceStatus::Approved->value)->exists()) {
             throw ValidationException::withMessages([
-                'staff_user_id' => ['This user already has an approved device. Revoke it first.'],
+                'staff_user_id' => [__('access.device_owner_has_one')],
             ]);
         }
 
@@ -52,7 +52,7 @@ class ApproveDevice
 
         if (! hash_equals(strtoupper(substr($device->fingerprint, 0, 32)), $typed)) {
             throw ValidationException::withMessages([
-                'fingerprint' => ['The fingerprint does not match the one shown by the device.'],
+                'fingerprint' => [__('access.fingerprint_mismatch')],
             ]);
         }
 

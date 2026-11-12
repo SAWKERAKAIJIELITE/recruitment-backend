@@ -18,15 +18,16 @@ enum EditableReferenceType: string
     case Specializations = 'specializations';
     case HealthConditions = 'health-conditions';
     case ContractTypes = 'contract-types';
+    case Units = 'units';
 
     public function type(): ReferenceType
     {
         return ReferenceType::from($this->value);
     }
 
-    /** The permission that changes the list: its office's (D-085). Contract types are the Contracts office's. */
+    /** The permission that changes the list: its office's (D-085). Contract types and units are the Contracts office's. */
     public function managedBy(): string
     {
-        return $this === self::ContractTypes ? 'contracts.manage' : 'candidates.manage';
+        return in_array($this, [self::ContractTypes, self::Units], true) ? 'contracts.manage' : 'candidates.manage';
     }
 }

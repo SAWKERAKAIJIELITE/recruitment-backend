@@ -44,6 +44,8 @@ final class ApplicationSearch
 
     public const SORTS = [
         'created_at' => 'applications.created_at',
+        // The latest change: a correction, or a status move (the history's trigger sets it; D-099).
+        'updated_at' => 'applications.updated_at',
         'nomination_number' => 'applications.nomination_number',
         'full_name' => 'candidates.name_search_key',
         'birth_date' => 'candidates.birth_date',
@@ -258,7 +260,7 @@ final class ApplicationSearch
     private static function sort(Builder $query, array $filters): Builder
     {
         $sort = $filters['sort'] ?? 'created_at';
-        $direction = $filters['direction'] ?? ($sort === 'created_at' ? 'desc' : 'asc');
+        $direction = $filters['direction'] ?? (in_array($sort, ['created_at', 'updated_at'], true) ? 'desc' : 'asc');
 
         if (str_starts_with(self::SORTS[$sort], 'candidates.')) {
             $query->join('candidates', 'candidates.id', '=', 'applications.candidate_id')->select('applications.*');

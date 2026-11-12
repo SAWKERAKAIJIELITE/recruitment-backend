@@ -28,11 +28,18 @@ use Illuminate\Validation\ValidationException;
  *  - end the latest contract without renewal, with a date and a reason: the application becomes contract_ended
  *    (the person may then be nominated again, D-037).
  *
- * Contract fields: contract_type_id, reference_number, written_on, starts_on, ends_on (or null), document_id, notes.
+ * Contract fields: contract_type_id, reference_number, written_on, starts_on, ends_on (or null), document_id, notes, and
+ * the contract form's details (FORM_FIELDS, D-098), which a renewal copies from the contract it renews unless given.
  */
 class ManageContracts
 {
-    public const FIELDS = ['contract_type_id', 'reference_number', 'written_on', 'starts_on', 'ends_on', 'document_id', 'notes'];
+    /** The contract form's details (D-098). */
+    public const FORM_FIELDS = [
+        'unit_id', 'level_3', 'level_4', 'level_5', 'level_6', 'workplace', 'work_pattern', 'job_specialty', 'work_schedule',
+        'salary_usd', 'certificate_type', 'university', 'gpa', 'certificate_date', 'wives_count', 'children_count', 'origin',
+    ];
+
+    public const FIELDS = ['contract_type_id', 'reference_number', 'written_on', 'starts_on', 'ends_on', 'document_id', 'notes', ...self::FORM_FIELDS];
 
     public function __construct(
         private readonly ApplicationLifecycle $lifecycle,
@@ -85,6 +92,8 @@ class ManageContracts
                 $this->fail('starts_on', 'contracts.renewal_starts_before_end', ['date' => $previous->ends_on->toDateString()]);
             }
 
+            // The form's details carry over unless sent (null clears one).
+            $data += collect(self::FORM_FIELDS)->mapWithKeys(fn(string $field) => [$field => $this->plain($previous->getAttribute($field))])->all();
             $contract = $this->create($application, $previous, $data, $actor);
 
             AuditTrail::record('contract.renewed', $actor, ['contract_id' => $contract->id, 'renews_contract_id' => $previous->id, 'application_id' => $application->id]);
@@ -200,6 +209,13 @@ class ManageContracts
     /** Normalized values, with the reference number free and the file of this application. */
     private function values(Application $application, array $data, ?Contract $contract = null): array
     {
+        // Texts are kept trimmed, and a blank one is no value.
+        foreach (['level_3', 'level_4', 'level_5', 'level_6', 'workplace', 'work_pattern', 'job_specialty', 'work_schedule', 'university', 'origin'] as $field) {
+            if (array_key_exists($field, $data) && is_string($data[$field])) {
+                $data[$field] = trim($data[$field]) === '' ? null : trim($data[$field]);
+            }
+        }
+
         if (array_key_exists('reference_number', $data)) {
             $data['reference_number'] = ArabicText::digitsToAscii(trim((string) $data['reference_number']));
             $taken = Contract::query()->where('reference_number', $data['reference_number'])->when($contract, fn ($query) => $query->whereKeyNot($contract->id))->exists();
@@ -268,7 +284,11 @@ class ManageContracts
 
     private function plain(mixed $value): mixed
     {
-        return $value instanceof CarbonInterface ? $value->toDateString() : $value;
+        return match (true) {
+            $value instanceof CarbonInterface => $value->toDateString(),
+            $value instanceof \BackedEnum => $value->value,
+            default => $value,
+        };
     }
 
     private function lockApplication(Application $application): Application

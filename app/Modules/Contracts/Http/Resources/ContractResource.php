@@ -11,7 +11,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
 class ContractResource extends JsonResource
 {
     /** What a row shows; load it with the page. */
-    public const RELATIONS = ['application.candidate', 'application.jobPosition', 'application.nominatingEntity', 'type', 'renewal', 'document', 'creator', 'ender'];
+    public const RELATIONS = ['application.candidate', 'application.jobPosition', 'application.nominatingEntity', 'type', 'unit', 'renewal', 'document', 'creator', 'ender'];
 
     public function toArray(Request $request): array
     {
@@ -26,6 +26,8 @@ class ContractResource extends JsonResource
                 'status' => $this->application->current_status->value,
                 'candidate' => ['id' => $this->application->candidate->id, 'full_name' => $this->application->candidate->full_name, 'national_number' => $this->application->candidate->national_number],
                 'job_position' => ReferenceSummary::of($this->application->jobPosition),
+                /** The job position's الرمز الوظيفي (D-098). */
+                'job_code' => $this->application->jobPosition?->job_code,
                 'nominating_entity' => ReferenceSummary::of($this->application->nominatingEntity),
             ]),
             /** 1: the first contract; 2, 3, ...: renewals. */
@@ -44,6 +46,27 @@ class ContractResource extends JsonResource
             'days_left' => $this->daysLeft(),
             'document' => $this->document === null ? null : ['id' => $this->document->id, 'original_filename' => $this->document->original_filename],
             'notes' => $this->notes,
+            // The contract form's details (D-098), null when not entered. A renewal starts with those of the contract it renews.
+            /** الجهة الملتحق بها (السوية التنظيمية الثانية). */
+            'unit' => ReferenceSummary::of($this->unit),
+            /** السوية التنظيمية الثالثة to السادسة. */
+            'level_3' => $this->level_3,
+            'level_4' => $this->level_4,
+            'level_5' => $this->level_5,
+            'level_6' => $this->level_6,
+            'workplace' => $this->workplace,
+            'work_pattern' => $this->work_pattern,
+            'job_specialty' => $this->job_specialty,
+            'work_schedule' => $this->work_schedule,
+            'salary_usd' => $this->salary_usd === null ? null : (float) $this->salary_usd,
+            'certificate_type' => $this->certificate_type === null ? null : ['value' => $this->certificate_type->value, 'label' => $this->certificate_type->labelAr()],
+            'university' => $this->university,
+            'gpa' => $this->gpa === null ? null : (float) $this->gpa,
+            'certificate_date' => $this->certificate_date?->toDateString(),
+            'wives_count' => $this->wives_count,
+            'children_count' => $this->children_count,
+            /** البلد الأصلي as entered (the form prints the place of birth when null). */
+            'origin' => $this->origin,
             'ended' => $this->ended_on === null ? null : ['on' => $this->ended_on->toDateString(), 'reason' => $this->end_reason, 'by' => $person($this->ender), 'at' => $this->ended_at?->toIso8601String()],
             'expiry_reminded_at' => $this->expiry_reminded_at?->toIso8601String(),
             'created_by' => $person($this->creator),

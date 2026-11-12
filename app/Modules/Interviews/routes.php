@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Route;
 
 // Every route here needs a signed-in, active staff user (D-059).
 Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('api/v1/staff')->group(function () {
-    // The Exams and Interviews office and the general manager (D-085).
+    // The Exams and Interviews office (both its sections, or the interviews only: D-097) and the general manager (D-085).
     Route::middleware('can:interviews.view')->group(function () {
         Route::get('interview-sittings', [InterviewSittingController::class, 'index']);
         Route::get('interview-sittings/{sitting}', [InterviewSittingController::class, 'show'])->whereUuid('sitting');
@@ -30,5 +30,5 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
     });
 
     Route::post('interviews/{interview}/correct', [InterviewController::class, 'correct'])->whereUuid('interview')->middleware('can:interviews.correct');
-    Route::post('applications/{application}/interview-excuse', [InterviewController::class, 'excuse'])->whereUuid('application')->middleware('can:exceptions.approve');
+    Route::post('applications/{application}/interview-excuse', [InterviewController::class, 'excuse'])->whereUuid('application')->middleware('can:interviews.excuse');
 });

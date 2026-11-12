@@ -17,7 +17,7 @@ class RegisterDevice
             $key = DeviceCrypto::parsePublicKey($publicKeyPem);
         } catch (InvalidArgumentException) {
             throw ValidationException::withMessages([
-                'public_key' => ['The public key must be a P-256 (prime256v1) EC public key in PEM format.'],
+                'public_key' => [__('access.public_key_format')],
             ]);
         }
 
@@ -29,7 +29,7 @@ class RegisterDevice
         }
 
         if (StaffDevice::where('status', DeviceStatus::Pending->value)->count() >= (int) config('staff_auth.max_pending_devices')) {
-            abort(429, 'Device registration is temporarily unavailable.');
+            abort(429, __('access.registration_unavailable'));
         }
 
         try {

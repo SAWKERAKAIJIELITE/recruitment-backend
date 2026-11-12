@@ -3,6 +3,7 @@
 namespace App\Modules\Recruitment\Enums;
 
 use App\Modules\Contracts\Models\ContractType;
+use App\Modules\Contracts\Models\Unit;
 use App\Modules\Recruitment\Models\AcademicQualification;
 use App\Modules\Recruitment\Models\ApplicationCategory;
 use App\Modules\Recruitment\Models\Area;
@@ -27,6 +28,7 @@ enum ReferenceType: string
     case MaritalStatuses = 'marital-statuses';
     case HealthConditions = 'health-conditions';
     case ContractTypes = 'contract-types';
+    case Units = 'units';
 
     /** @return class-string<Model> */
     public function model(): string
@@ -42,6 +44,7 @@ enum ReferenceType: string
             self::MaritalStatuses => MaritalStatus::class,
             self::HealthConditions => HealthCondition::class,
             self::ContractTypes => ContractType::class,
+            self::Units => Unit::class,
         };
     }
 

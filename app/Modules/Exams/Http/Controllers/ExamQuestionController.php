@@ -70,7 +70,7 @@ class ExamQuestionController extends Controller
     /** One question with all its versions. */
     public function show(int $id): ExamQuestionResource
     {
-        return new ExamQuestionResource($this->question($id)->load([...ExamQuestionResource::RELATIONS, 'versions']));
+        return new ExamQuestionResource($this->question($id)->load([...ExamQuestionResource::RELATIONS, ...ExamQuestionResource::VERSIONS]));
     }
 
     /** Add a question. */
@@ -100,7 +100,7 @@ class ExamQuestionController extends Controller
     {
         $question = $questions->revise($this->question($id), $request->validated(), $request->user());
 
-        return new ExamQuestionResource($question->load([...ExamQuestionResource::RELATIONS, 'versions']));
+        return new ExamQuestionResource($question->load([...ExamQuestionResource::RELATIONS, ...ExamQuestionResource::VERSIONS]));
     }
 
     /** Archive a question: it is no longer drawn for new sessions. */

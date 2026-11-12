@@ -30,7 +30,7 @@ class LifecycleNotificationsTest extends TestCase
         parent::setUp();
         $this->seed([RolesAndPermissionsSeeder::class, DocumentTypesSeeder::class]);
 
-        foreach (['recruitment', 'recruitment_two' => 'recruitment', 'exams_interviews', 'exams_two' => 'exams_interviews', 'contracts', 'documenting', 'general_manager', 'system_admin'] as $key => $role) {
+        foreach (['recruitment', 'recruitment_two' => 'recruitment', 'exams_interviews', 'exams_two' => 'exams_interviews', 'exams_only' => 'exams', 'interviews_only' => 'interviews', 'contracts', 'documenting', 'general_manager', 'system_admin'] as $key => $role) {
             $this->staff[is_int($key) ? $role : $key] = $this->staffOf($role);
         }
 
@@ -90,7 +90,7 @@ class LifecycleNotificationsTest extends TestCase
 
         $told = $this->told();
         // The ID card is required from awaiting_exam: the Documenting office is told too.
-        $this->assertSame(['recruitment_two', 'exams_interviews', 'exams_two', 'documenting'], array_keys($told));
+        $this->assertSame(['recruitment_two', 'exams_interviews', 'exams_two', 'exams_only', 'documenting'], array_keys($told));
 
         foreach ($told as $notifications) {
             $this->assertCount(1, $notifications);
@@ -109,8 +109,22 @@ class LifecycleNotificationsTest extends TestCase
 
         app(ApplicationLifecycle::class)->move($application, S::ExamAbsent, D::Outcome);   // the exam sweep: nobody acted
 
-        $this->assertSame(['recruitment', 'recruitment_two', 'exams_interviews', 'exams_two'], array_keys($this->told()));
+        $this->assertSame(['recruitment', 'recruitment_two', 'exams_interviews', 'exams_two', 'exams_only'], array_keys($this->told()));
         $this->assertNull($this->told()['exams_two'][0]['actor']);
+    }
+
+    public function test_the_exams_and_the_interviews_roles_are_told_their_own_sections_moves(): void
+    {
+        $application = $this->openApplication($this->staff['recruitment']);
+        $this->forget();
+
+        // Passed the exam: the interviews' section now (D-097).
+        app(ApplicationLifecycle::class)->move($application, S::AwaitingInterview, D::Outcome, $this->staff['exams_only']);
+        $this->assertSame(['recruitment', 'recruitment_two', 'exams_interviews', 'exams_two', 'interviews_only'], array_keys($this->told()));
+        $this->forget();
+
+        app(ApplicationLifecycle::class)->move($application, S::InterviewFailed, D::Outcome, $this->staff['interviews_only']);
+        $this->assertSame(['recruitment', 'recruitment_two', 'exams_interviews', 'exams_two'], array_keys($this->told()));
     }
 
     public function test_a_rolled_back_move_tells_nobody(): void

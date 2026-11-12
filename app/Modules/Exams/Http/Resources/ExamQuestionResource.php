@@ -4,6 +4,7 @@ namespace App\Modules\Exams\Http\Resources;
 
 use App\Modules\Exams\Models\ExamQuestion;
 use App\Modules\Exams\Models\ExamQuestionVersion;
+use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Http\Resources\ReferenceSummary;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -15,16 +16,21 @@ use Illuminate\Http\Resources\Json\JsonResource;
  */
 class ExamQuestionResource extends JsonResource
 {
-    public const RELATIONS = ['subject', 'part', 'currentVersion'];
+    public const RELATIONS = ['subject', 'part', 'creator', 'currentVersion.author'];
+
+    /** With every version (one question): load these too. */
+    public const VERSIONS = ['versions.author'];
 
     public function toArray(Request $request): array
     {
+        $person = fn(?StaffUser $user) => $user === null ? null : ['id' => $user->id, 'username' => $user->username, 'full_name' => $user->full_name];
         $version = fn(ExamQuestionVersion $version) => [
             'version' => $version->version,
             'prompt' => $version->prompt,
             'options' => $version->options,
             'correct_option' => $version->correct_option,
-            'created_by' => $version->created_by,
+            /** Who wrote this version. */
+            'created_by' => $person($version->author),
             'created_at' => $version->created_at?->toIso8601String(),
         ];
 
@@ -34,6 +40,8 @@ class ExamQuestionResource extends JsonResource
             'part' => ReferenceSummary::of($this->part),
             'difficulty' => $this->difficulty->value,
             'archived' => $this->trashed(),
+            /** Who added the question (the bank is its office's, D-055: nothing hides its authors). */
+            'created_by' => $person($this->creator),
             'current' => $version($this->currentVersion),
             /** Every version, oldest first (one question only). */
             'versions' => $this->whenLoaded('versions', fn() => $this->versions->map($version)->values()->all()),

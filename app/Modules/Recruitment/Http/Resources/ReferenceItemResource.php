@@ -3,6 +3,7 @@
 namespace App\Modules\Recruitment\Http\Resources;
 
 use App\Modules\Recruitment\Models\Area;
+use App\Modules\Recruitment\Models\JobPosition;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -24,6 +25,8 @@ class ReferenceItemResource extends JsonResource
             // Areas only: the district id, and the district itself when it was loaded with the list (no query per area).
             'district_id' => $this->when($this->resource instanceof Area, fn() => $this->district_id),
             'district' => $this->when($this->resource instanceof Area, fn() => $this->whenLoaded('district', fn() => ReferenceSummary::of($this->district))),
+            // Job positions only: the job code printed on their contracts (الرمز الوظيفي, D-098; set by the Contracts office).
+            'job_code' => $this->when($this->resource instanceof JobPosition, fn() => $this->job_code),
             'archived_at' => $this->deleted_at,
         ];
     }

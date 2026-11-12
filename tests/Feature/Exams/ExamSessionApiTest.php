@@ -578,6 +578,31 @@ class ExamSessionApiTest extends TestCase
         $this->assertSame(['absent', 'booked'], DB::table('exam_bookings')->orderBy('round')->pluck('status')->all());
     }
 
+    public function test_an_applications_rounds_show_their_session_and_the_decision_that_followed(): void
+    {
+        $session = $this->examSession();
+        $application = $this->applicant();
+        $this->book($session, $application)->assertCreated();
+        $this->travelTo('2026-11-10 08:20:00');
+        $this->artisan('exams:sweep')->assertSuccessful();
+        $next = $this->examSession(['starts_at' => '2026-11-17T08:00:00Z', 'location' => 'قاعة 2']);
+        $approver = $this->examsStaff();
+        $this->asStaff($approver)->postJson("/api/v1/staff/applications/{$application->id}/exam-excuse", ['reason' => 'تقرير طبي', 'session_id' => $next, 'decision_number' => ' ق/2026/41 '])
+            ->assertOk()->assertJsonPath('booking.session.starts_at', '2026-11-17T08:00:00+00:00')->assertJsonPath('booking.session.location', 'قاعة 2');
+
+        $rounds = $this->asStaff($this->staff)->getJson("/api/v1/staff/applications/{$application->id}/exam-bookings")->assertOk()->json('data');
+        $this->assertSame([$session, $next], array_column(array_column($rounds, 'session'), 'id'));
+        $this->assertSame(['type' => 'excuse_accepted', 'at' => '2026-11-10T08:20:00+00:00', 'reason' => 'تقرير طبي', 'decision_number' => 'ق/2026/41', 'by' => ['id' => $approver->id, 'full_name' => $approver->full_name]], $rounds[0]['decision']);
+        $this->assertNull($rounds[1]['decision']);
+
+        // The history names the round each decision is about.
+        $history = collect($this->asStaff($this->hiringStaff())->getJson("/api/v1/staff/applications/{$application->id}")->assertOk()->json('data.history'));
+        $excuse = $history->firstWhere('decision_type', 'excuse_accepted');
+        $this->assertSame([$rounds[0]['id'], 'ق/2026/41', null], [$excuse['exam_booking_id'], $excuse['decision_number'], $excuse['interview_id']]);
+        $this->assertSame($rounds[0]['id'], $history->firstWhere('to_status', 'exam_absent')['exam_booking_id']);
+        $this->asStaff($approver)->postJson("/api/v1/staff/applications/{$application->id}/exam-exception", ['reason' => 'x', 'decision_number' => str_repeat('1', 101)])->assertStatus(422)->assertJsonValidationErrors('decision_number');
+    }
+
     public function test_reading_and_managing_sessions(): void
     {
         $session = $this->examSession();

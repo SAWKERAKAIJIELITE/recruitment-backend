@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\Identity\Http\Middleware\EnsureStaffIsActive;
+use App\Modules\Notifications\Http\Controllers\BadgeController;
 use App\Modules\Notifications\Http\Controllers\NotificationController;
 use Illuminate\Support\Facades\Route;
 
@@ -10,4 +11,7 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
     Route::get('notifications/unread-count', [NotificationController::class, 'unreadCount']);
     Route::post('notifications/read-all', [NotificationController::class, 'readAll']);
     Route::post('notifications/{id}/read', [NotificationController::class, 'read'])->whereUuid('id');
+
+    // The sidebar's counts: each section's for those who see it (D-099).
+    Route::get('badges', [BadgeController::class, 'index']);
 });

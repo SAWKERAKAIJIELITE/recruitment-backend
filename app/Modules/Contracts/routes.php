@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\Contracts\Http\Controllers\ContractController;
+use App\Modules\Contracts\Http\Controllers\JobCodeController;
 use App\Modules\Contracts\Http\Controllers\VacancyPlanController;
 use App\Modules\Identity\Http\Middleware\EnsureStaffIsActive;
 use Illuminate\Support\Facades\Route;
@@ -10,7 +11,9 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
     // The Contracts office and the general manager (D-085).
     Route::middleware('can:contracts.view')->group(function () {
         Route::get('contracts', [ContractController::class, 'index']);
+        Route::get('contracts/confirmation-file', [ContractController::class, 'confirmationFile']);
         Route::get('contracts/{contract}', [ContractController::class, 'show'])->whereUuid('contract');
+        Route::get('contracts/{contract}/form', [ContractController::class, 'form'])->whereUuid('contract');
         Route::get('applications/{application}/contracts', [ContractController::class, 'forApplication'])->whereUuid('application');
 
         Route::get('vacancy-plans', [VacancyPlanController::class, 'index']);
@@ -24,6 +27,7 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
         Route::post('contracts/{contract}/renew', [ContractController::class, 'renew'])->whereUuid('contract');
         Route::patch('contracts/{contract}', [ContractController::class, 'correct'])->whereUuid('contract');
         Route::post('contracts/{contract}/end', [ContractController::class, 'end'])->whereUuid('contract');
+        Route::put('job-positions/{id}/job-code', [JobCodeController::class, 'update'])->whereNumber('id');
     });
 
     // The vacancies file (D-088): the system administrator.

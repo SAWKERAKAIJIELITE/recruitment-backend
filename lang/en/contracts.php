@@ -34,4 +34,8 @@ return [
         'bad_count' => 'Row :row: the vacancies ":value" is not a whole number of 0 or more.',
         'formula' => 'Row :row: the vacancies are a formula: type the number itself.',
     ],
+    // The contract form and the confirmation file (D-098).
+    'form_title' => 'Employment contract',
+    'confirmation_title' => 'Civilian contractor confirmation form',
+    'confirmation_file' => 'Confirmation file',
 ];

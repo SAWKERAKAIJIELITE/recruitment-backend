@@ -11,24 +11,55 @@ use App\Modules\Imports\Http\Requests\ReasonRequest;
 use App\Modules\Imports\Http\Resources\ImportRowResource;
 use App\Modules\Imports\Models\ImportBatch;
 use App\Modules\Imports\Models\ImportRow;
+use App\Support\ArabicText;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 /** The rows of an import batch: preview, corrections and review decisions before approval. */
 class ImportRowController extends Controller
 {
-    /** Rows of the batch in sheet order, 50 per page; `status` filters (for example `invalid`). */
+    /**
+     * List a batch's rows
+     *
+     * In sheet order, 50 per page. `status` filters (for example `invalid`); `q` finds a row by the name read (any
+     * spelling, a part of it), the national number (exact, any digits) or its row number in the sheet.
+     */
     public function index(Request $request, ImportBatch $batch): AnonymousResourceCollection
     {
-        $filters = $request->validate(['status' => ['nullable', Rule::enum(ImportRowStatus::class)]]);
+        $filters = $request->validate([
+            'status' => ['nullable', Rule::enum(ImportRowStatus::class)],
+            'q' => ['nullable', 'string', 'max:150'],
+        ]);
 
         $rows = $batch->rows()
             ->with(ImportRowResource::RELATIONS)
             ->whenGiven($filters['status'] ?? null, fn ($query, string $status) => $query->where('status', $status))
+            ->whenGiven($filters['q'] ?? null, fn ($query, string $q) => $query->whereIn('id', $this->matching($batch, $q)))
             ->paginate(50);
 
         return ImportRowResource::collection($rows);
+    }
+
+    /**
+     * The rows whose name, national number or row number match: names are compared as ArabicText normalizes them (in
+     * PHP: a batch holds 2,000 rows at most).
+     *
+     * @return list<string>
+     */
+    private function matching(ImportBatch $batch, string $q): array
+    {
+        $key = ArabicText::searchKey(trim($q));
+        $digits = ArabicText::digitsToAscii(trim($q));
+
+        return $batch->rows()->toBase()
+            ->get(['id', 'row_number', DB::raw("data->>'candidate.full_name' as full_name"), DB::raw("data->>'candidate.national_number' as national_number")])
+            ->filter(fn (object $row) => ($row->national_number !== null && $row->national_number === $digits)
+                || (string) $row->row_number === $digits
+                || ($key !== '' && $row->full_name !== null && str_contains(ArabicText::searchKey($row->full_name), $key)))
+            ->pluck('id')
+            ->all();
     }
 
     public function show(ImportBatch $batch, ImportRow $row): ImportRowResource

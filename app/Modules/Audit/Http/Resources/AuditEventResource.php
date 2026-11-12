@@ -3,6 +3,7 @@
 namespace App\Modules\Audit\Http\Resources;
 
 use App\Modules\Audit\Models\AuditEvent;
+use App\Modules\Audit\Support\AuditEvents;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -15,6 +16,8 @@ class AuditEventResource extends JsonResource
             'id' => $this->id,
             /** e.g. interview.recorded, access.role_changed. */
             'event' => $this->event,
+            /** The event in Arabic (D-099), e.g. «تسجيل نتيجة مقابلة». */
+            'event_label' => AuditEvents::label($this->event),
             /** operations, or security (access, devices, logins: audit.view only). */
             'category' => $this->category,
             /** The staff user who acted; null for the system (sweeps, reminders) or a candidate. */

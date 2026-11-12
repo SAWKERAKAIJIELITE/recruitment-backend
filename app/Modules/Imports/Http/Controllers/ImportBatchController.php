@@ -13,6 +13,7 @@ use App\Modules\Imports\Http\Requests\ReasonRequest;
 use App\Modules\Imports\Http\Requests\UploadImportRequest;
 use App\Modules\Imports\Http\Resources\ImportBatchResource;
 use App\Modules\Imports\Models\ImportBatch;
+use App\Support\BusinessDay;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -24,15 +25,35 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 /** Excel import batches (analysis doc §09). Everything here needs imports.manage. */
 class ImportBatchController extends Controller
 {
-    /** List batches, newest first, with row counts per status. */
+    /**
+     * List batches
+     *
+     * Newest first, with row counts per status, 25 per page. Filters: `status`, `uploaded_by` (a staff user's id),
+     * `nominating_entity_id` (the batch's own, or one of its rows'), `from` / `to` (the upload day, YYYY-MM-DD, Damascus
+     * days, included).
+     */
     public function index(Request $request): AnonymousResourceCollection
     {
-        $filters = $request->validate(['status' => ['nullable', Rule::enum(ImportBatchStatus::class)]]);
+        $filters = $request->validate([
+            'status' => ['nullable', Rule::enum(ImportBatchStatus::class)],
+            'uploaded_by' => ['nullable', 'uuid'],
+            'nominating_entity_id' => ['nullable', 'integer'],
+            'from' => ['nullable', 'date_format:Y-m-d'],
+            'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
+        ]);
 
         $batches = ImportBatch::query()
             ->with(ImportBatchResource::RELATIONS)
             ->withRowCounts()
             ->whenGiven($filters['status'] ?? null, fn ($query, string $status) => $query->where('status', $status))
+            ->whenGiven($filters['uploaded_by'] ?? null, fn ($query, string $id) => $query->where('uploaded_by', $id))
+            ->whenGiven($filters['nominating_entity_id'] ?? null, fn ($query, $id) => $query->where(fn ($inner) => $inner
+                ->where('nominating_entity_id', $id)
+                ->orWhereExists(fn ($rows) => $rows->from('import_rows')
+                    ->whereColumn('import_rows.import_batch_id', 'import_batches.id')
+                    ->whereRaw("import_rows.data->>'nominating_entity_id' = ?", [(string) (int) $id]))))
+            ->whenGiven($filters['from'] ?? null, fn ($query, string $day) => $query->where('created_at', '>=', BusinessDay::startOf($day)))
+            ->whenGiven($filters['to'] ?? null, fn ($query, string $day) => $query->where('created_at', '<', BusinessDay::startOfNext($day)))
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->paginate(25);

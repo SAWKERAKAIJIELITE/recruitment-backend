@@ -14,6 +14,7 @@ use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Exceptions\IllegalStatusTransition;
 use App\Modules\Recruitment\Models\Application;
 use Carbon\CarbonInterface;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -26,7 +27,7 @@ use Illuminate\Validation\ValidationException;
  *  - record the committee's result, which moves the application (the interview is the cause of that event);
  *  - correct a recorded result (interviews.correct): a new revision, and a correction event when the result
  *    changes, allowed only while that result is still the application's latest decision;
- *  - accept an absence excuse (exceptions.approve): back to awaiting_interview, optionally with the next
+ *  - accept an absence excuse (interviews.excuse, D-097): back to awaiting_interview, optionally with the next
  *    appointment. The absent result stays: the new appointment is a new round.
  *
  * An appointment is ['sitting_id' => ..., 'scheduled_at' => ?]: a sitting (a committee, or a one-off sitting's single
@@ -41,7 +42,7 @@ class ManageInterviews
 
     public function schedule(Application $application, array $appointment, StaffUser $actor): Interview
     {
-        return DB::transaction(function () use ($application, $appointment, $actor) {
+        return $this->transaction(function () use ($application, $appointment, $actor) {
             $application = $this->lockBookable($application, 'application');
             [$sitting, $time] = $this->resolve($appointment, null);
 
@@ -51,24 +52,26 @@ class ManageInterviews
 
     /**
      * Books several applications into one sitting, in the order given (the priority order the staff chose),
-     * from `$firstAt` (default: the sitting's start) every `$minutesBetween` minutes. All or nothing.
+     * from `$firstAt` (default: the sitting's next free time) every `$minutesBetween` minutes, each 10 minutes at
+     * least from the sitting's other interviews. All or nothing.
      *
      * @param  list<string>  $applicationIds
      * @return list<Interview>
      */
     public function bookMany(InterviewSitting $sitting, array $applicationIds, ?CarbonInterface $firstAt, int $minutesBetween, StaffUser $actor): array
     {
-        return DB::transaction(function () use ($sitting, $applicationIds, $firstAt, $minutesBetween, $actor) {
+        return $this->transaction(function () use ($sitting, $applicationIds, $firstAt, $minutesBetween, $actor) {
             $sitting = InterviewSitting::query()->whereKey($sitting->id)->sharedLock()->firstOrFail();
             // Locked in one order (by id) first: two bookings sharing applications in another order never deadlock.
             Application::query()->whereKey($applicationIds)->orderBy('id')->lockForUpdate()->get();
             $this->assertOpen($sitting, 'sitting');
-            $time = Date::parse($firstAt ?? $sitting->starts_at);
+            $time = Date::parse($firstAt ?? $this->nextFreeTime($sitting));
             $this->assertWithinSitting($sitting, $time, 'first_at');
             $booked = [];
 
             foreach (array_values($applicationIds) as $index => $id) {
                 $this->assertWithinSitting($sitting, $time, "application_ids.{$index}");   // the last ones may pass its end
+                $this->assertTimeFree($sitting, $time, "application_ids.{$index}", null);
                 $application = $this->lockBookable(Application::query()->findOrFail($id), "application_ids.{$index}");
                 $booked[] = $this->book($application, $sitting, $time, $actor);
                 $time = $time->copy()->addMinutes($minutesBetween);
@@ -80,7 +83,7 @@ class ManageInterviews
 
     public function reschedule(Interview $interview, array $appointment, string $reason, StaffUser $actor): Interview
     {
-        return DB::transaction(function () use ($interview, $appointment, $reason, $actor) {
+        return $this->transaction(function () use ($interview, $appointment, $reason, $actor) {
             // An interview waiting for an application that moved on (closed, an exam result corrected) is cancelled,
             // not moved.
             $this->assertStatus($this->lockApplication($interview->application), ApplicationStatus::AwaitingInterview);
@@ -210,9 +213,9 @@ class ManageInterviews
     }
 
     /** Returns the new interview when an appointment was given, else null. */
-    public function acceptExcuse(Application $application, string $reason, ?CarbonInterface $occurredAt, ?array $appointment, StaffUser $actor): ?Interview
+    public function acceptExcuse(Application $application, string $reason, ?CarbonInterface $occurredAt, ?array $appointment, StaffUser $actor, ?string $decisionNumber = null): ?Interview
     {
-        return DB::transaction(function () use ($application, $reason, $occurredAt, $appointment, $actor) {
+        return $this->transaction(function () use ($application, $reason, $occurredAt, $appointment, $actor, $decisionNumber) {
             $application = $this->lockApplication($application);
             $this->assertStatus($application, ApplicationStatus::InterviewAbsent);
 
@@ -223,7 +226,7 @@ class ManageInterviews
                 ->firstOrFail();
 
             try {
-                $this->lifecycle->move($application, ApplicationStatus::AwaitingInterview, DecisionType::ExcuseAccepted, $actor, $reason, $absent, $occurredAt);
+                $this->lifecycle->move($application, ApplicationStatus::AwaitingInterview, DecisionType::ExcuseAccepted, $actor, $reason, $absent, $occurredAt, $decisionNumber);
             } catch (IllegalStatusTransition) {
                 $this->fail('occurred_at', 'interviews.excuse_date');
             }
@@ -258,8 +261,9 @@ class ManageInterviews
     }
 
     /**
-     * The sitting and the time an appointment leads to. When rescheduling, a new time alone keeps the sitting, and a
-     * new sitting alone takes its start.
+     * The sitting and the time an appointment leads to. Without a time: the sitting's next free time; when
+     * rescheduling, a new time alone keeps the sitting. The time must be 10 minutes at least from the sitting's other
+     * interviews.
      *
      * @return array{InterviewSitting, CarbonInterface}
      */
@@ -274,10 +278,52 @@ class ManageInterviews
 
         $sitting = InterviewSitting::query()->whereKey($sittingId)->sharedLock()->firstOrFail();
         $this->assertOpen($sitting, 'sitting_id');
-        $time ??= $current?->sitting_id === $sitting->id ? $current->scheduled_at : $sitting->starts_at;
-        $this->assertWithinSitting($sitting, Date::parse($time), 'scheduled_at');
+        $time ??= $current?->sitting_id === $sitting->id ? $current->scheduled_at : $this->nextFreeTime($sitting);
+        $time = Date::parse($time);
+        $this->assertWithinSitting($sitting, $time, 'scheduled_at');
+        $this->assertTimeFree($sitting, $time, 'scheduled_at', $current);
 
-        return [$sitting, Date::parse($time)];
+        return [$sitting, $time];
+    }
+
+    /** The sitting's start, or 30 minutes after its latest interview (cancelled ones free their time). */
+    private function nextFreeTime(InterviewSitting $sitting): CarbonInterface
+    {
+        $latest = Interview::query()->where('sitting_id', $sitting->id)->where('status', '<>', InterviewStatus::Cancelled)->max('scheduled_at');
+
+        return $latest === null ? $sitting->starts_at : Date::parse($latest)->addMinutes(Interview::DEFAULT_MINUTES_BETWEEN);
+    }
+
+    /** No other interview of the sitting (not cancelled) less than 10 minutes away (D-096). */
+    private function assertTimeFree(InterviewSitting $sitting, CarbonInterface $time, string $field, ?Interview $except): void
+    {
+        $other = Interview::query()
+            ->where('sitting_id', $sitting->id)
+            ->where('status', '<>', InterviewStatus::Cancelled)
+            ->when($except !== null, fn($query) => $query->whereKeyNot($except->id))
+            ->where('scheduled_at', '>', $time->copy()->subMinutes(Interview::MIN_MINUTES_APART))
+            ->where('scheduled_at', '<', $time->copy()->addMinutes(Interview::MIN_MINUTES_APART))
+            ->orderBy('scheduled_at')
+            ->first();
+
+        if ($other !== null) {
+            $this->fail($field, 'interviews.time_taken', ['time' => $other->scheduled_at->toIso8601String(), 'minutes' => Interview::MIN_MINUTES_APART]);
+        }
+    }
+
+    /** The database's own refusal, when another booking took the time in the meantime (D-096). */
+    private function transaction(\Closure $callback): mixed
+    {
+        try {
+            return DB::transaction($callback);
+        } catch (QueryException $e) {
+            // The exclusion constraint interviews_time_apart (D-096): another booking took a close time in the meantime.
+            if ($e->getCode() === '23P01' && str_contains($e->getMessage(), 'interviews_time_apart')) {
+                $this->fail('scheduled_at', 'interviews.time_taken_now', ['minutes' => Interview::MIN_MINUTES_APART]);
+            }
+
+            throw $e;
+        }
     }
 
     /** From its start, before its end. */

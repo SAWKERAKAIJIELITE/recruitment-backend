@@ -29,7 +29,7 @@ class PermissionResolutionTest extends TestCase
         }
 
         $this->assertEqualsCanonicalizing(
-            ['applications.view', 'candidates.manage', 'applications.start', 'applications.close', 'imports.view', 'imports.manage', 'imports.approve', 'audit.view_related'],
+            ['applications.view', 'candidates.manage', 'applications.start', 'applications.close', 'imports.view', 'imports.manage', 'audit.view_related'],
             StaffUserFactory::new()->withRole('recruitment')->create()->permissionSlugs()->all(),
         );
         $this->assertEqualsCanonicalizing(
@@ -41,7 +41,7 @@ class PermissionResolutionTest extends TestCase
     public function test_every_permission_belongs_to_an_office_or_the_management(): void
     {
         $given = collect(RolesAndPermissionsSeeder::ROLES)->flatten()->unique();
-        $adminOnly = ['users.manage', 'users.add', 'devices.approve', 'vacancies.manage'];
+        $adminOnly = ['users.manage', 'devices.approve', 'vacancies.manage'];
 
         $this->assertEqualsCanonicalizing(array_keys(RolesAndPermissionsSeeder::PERMISSIONS), [...$given->all(), ...$adminOnly]);
     }

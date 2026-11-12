@@ -3,6 +3,7 @@
 namespace App\Modules\Recruitment\Http\Resources;
 
 use App\Modules\Recruitment\Models\Application;
+use App\Modules\Reports\Queries\ApplicationStages;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -66,6 +67,8 @@ class ApplicationResource extends JsonResource
             'notes' => $this->notes,
             'candidate' => new CandidateResource($this->candidate),
             'history' => StatusEventResource::collection($this->history()),
+            /** The stepper's stages (nomination, exam, interview, first contract) with their state and date (D-100). */
+            'stages' => ApplicationStages::steps($this->resource),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

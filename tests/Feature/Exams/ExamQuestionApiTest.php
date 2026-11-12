@@ -53,6 +53,31 @@ class ExamQuestionApiTest extends TestCase
         Log::shouldHaveReceived('notice')->withArgs(fn (string $event) => $event === 'exam_question.created')->once();
     }
 
+    public function test_the_banks_messages_are_arabic_and_questions_name_their_authors(): void
+    {
+        $manager = $this->examManager();
+        $errors = $this->asStaff($manager)->postJson(self::URL, ['subject_id' => 999999, 'difficulty' => 'expert', 'prompt' => '', 'options' => ['أ', 'أ'], 'correct_option' => 0])
+            ->assertStatus(422)->json('errors');
+
+        $this->assertSame('القيمة المختارة في المادة غير موجودة أو مؤرشفة.', $errors['subject_id'][0]);
+        $this->assertSame('القيمة المختارة في مستوى الصعوبة غير صالحة.', $errors['difficulty'][0]);
+        $this->assertStringContainsString('نص السؤال', $errors['prompt'][0]);
+        $this->assertSame('للحقل الخيار رقم 2 قيمة مكررة.', $errors['options.1'][0]);
+        $this->assertSame('يجب أن يكون الخيارات قائمة مرتبة (بلا مفاتيح).', $this->asStaff($manager)->postJson(self::URL, $this->body(['options' => ['a' => 'أ', 'b' => 'ب']]))->json('errors.options.0'));
+
+        // Who added the question, and who wrote each version (D-055: the bank is its office's).
+        $other = $this->examManager();
+        $id = $this->asStaff($manager)->postJson(self::URL, $this->body())->assertCreated()
+            ->assertJsonPath('data.created_by', ['id' => $manager->id, 'username' => $manager->username, 'full_name' => $manager->full_name])
+            ->assertJsonPath('data.current.created_by.id', $manager->id)
+            ->json('data.id');
+        $this->asStaff($other)->patchJson(self::URL . "/{$id}", ['prompt' => 'سؤال معدّل؟'])->assertOk()
+            ->assertJsonPath('data.created_by.id', $manager->id)
+            ->assertJsonPath('data.current.created_by.id', $other->id)
+            ->assertJsonPath('data.versions.0.created_by.id', $manager->id)
+            ->assertJsonPath('data.versions.1.created_by.full_name', $other->full_name);
+    }
+
     public function test_a_question_of_a_part(): void
     {
         [$quran, $recitation] = $this->quran();

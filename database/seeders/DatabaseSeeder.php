@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Modules\Contracts\Database\Seeders\ContractsDemoSeeder;
 use App\Modules\Contracts\Database\Seeders\ContractTypesSeeder;
+use App\Modules\Contracts\Database\Seeders\UnitsSeeder;
 use App\Modules\Documents\Database\Seeders\DocumentsDemoSeeder;
 use App\Modules\Documents\Database\Seeders\DocumentTypesSeeder;
 use App\Modules\Exams\Database\Seeders\ExamsDemoSeeder;
@@ -32,6 +33,7 @@ class DatabaseSeeder extends Seeder
         $this->call(ExamSubjectsSeeder::class);
         $this->call(DocumentTypesSeeder::class);
         $this->call(ContractTypesSeeder::class);
+        $this->call(UnitsSeeder::class);
 
         if (app()->environment('local')) {
             $this->call(DevUsersSeeder::class);

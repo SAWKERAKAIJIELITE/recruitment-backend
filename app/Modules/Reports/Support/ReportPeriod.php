@@ -21,6 +21,9 @@ final readonly class ReportPeriod
     /** The longest run of months the monthly series covers. */
     public const MAX_MONTHS = 60;
 
+    /** The most buckets a series of the dashboard has, by grouping (D-099). */
+    public const MAX_BUCKETS = ['day' => 92, 'week' => 104, 'month' => self::MAX_MONTHS];
+
     private function __construct(public ?CarbonImmutable $start, public ?CarbonImmutable $end) {}
 
     /** @return array<string, list<mixed>> */

@@ -21,7 +21,7 @@ use Illuminate\Support\Facades\DB;
 class ExamBookingResource extends JsonResource
 {
     public const RELATIONS = [
-        'application.candidate', 'application.jobPosition', 'application.nominatingEntity', 'canceller',
+        'session', 'application.candidate', 'application.jobPosition', 'application.nominatingEntity', 'canceller',
         'attempt.result', 'attempt.extensions.author', 'attempt.marks.author', 'attempt.marks.part.part',
     ];
 
@@ -48,6 +48,8 @@ class ExamBookingResource extends JsonResource
         return [
             'id' => $this->id,
             'session_id' => $this->session_id,
+            /** The session's time and place (D-100): a rebooked round needs no second call. */
+            'session' => $this->whenLoaded('session', fn() => ['id' => $this->session->id, 'starts_at' => $this->session->starts_at->toIso8601String(), 'location' => $this->session->location]),
             'round' => $this->round,
             'status' => $this->status->value,
             'status_label' => $this->status->labelAr(),
@@ -61,6 +63,18 @@ class ExamBookingResource extends JsonResource
             ]),
             /** When the application moved because of it (absence or result). */
             'decided_at' => $this->decided_at?->toIso8601String(),
+            /**
+             * The decision that followed this round (an application's bookings only; D-100): `exception` (a failure
+             * admitted to the interview) or `excuse_accepted` (an absence excused), with its date, reason, decision number
+             * and who made it; null when none.
+             */
+            'decision' => $this->when($this->relationLoaded('decision'), fn() => $this->decision === null ? null : [
+                'type' => $this->decision->decision_type->value,
+                'at' => $this->decision->occurred_at->toIso8601String(),
+                'reason' => $this->decision->reason,
+                'decision_number' => $this->decision->decision_number,
+                'by' => $this->decision->actor === null ? null : ['id' => $this->decision->actor->id, 'full_name' => $this->decision->actor->full_name],
+            ]),
             'cancelled' => $this->cancelled_at === null ? null : ['at' => $this->cancelled_at->toIso8601String(), 'by' => $this->canceller?->full_name, 'reason' => $this->cancel_reason],
             'attempt' => $attempt === null ? null : [
                 'id' => $attempt->id,

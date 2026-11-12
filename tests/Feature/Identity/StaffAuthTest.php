@@ -136,15 +136,26 @@ class StaffAuthTest extends TestCase
         $this->withToken($token)->getJson(self::ME)->assertUnauthorized();
     }
 
-    public function test_staff_token_lives_for_a_day(): void
+    public function test_staff_token_lives_until_the_business_day_ends(): void
     {
         $user = StaffUserFactory::new()->create(['username' => 'sara', 'password' => 'secret-pass']);
         ['device' => $device, 'key' => $key] = $this->approvedDevice($user);
 
-        $this->deviceLogin($device, $key, 'sara', 'secret-pass')->assertOk();
+        // 00:30 on 11 November in Damascus (21:30 UTC on the 10th): the token ends at 00:00 on the 12th there (D-099).
+        Carbon::setTestNow('2026-11-10 21:30:00');
+        $this->deviceLogin($device, $key, 'sara', 'secret-pass')->assertOk()->assertJsonPath('expires_at', '2026-11-11T21:00:00+00:00');
+        $this->assertSame('2026-11-11 21:00:00', Carbon::parse(DB::table('personal_access_tokens')->latest('id')->value('expires_at'))->utc()->toDateTimeString());
 
-        $expiresAt = Carbon::parse(DB::table('personal_access_tokens')->value('expires_at'));
+        // 23:59 in Damascus: a minute is left of that day.
+        Carbon::setTestNow('2026-11-11 20:59:00');
+        $this->deviceLogin($device, $key, 'sara', 'secret-pass')->assertOk()->assertJsonPath('expires_at', '2026-11-11T21:00:00+00:00');
 
-        $this->assertEqualsWithDelta(now()->addDay()->timestamp, $expiresAt->timestamp, 60);
+        // Once the day ends, the token no longer works.
+        $token = $this->deviceLogin($device, $key, 'sara', 'secret-pass')->json('token');
+        $this->withToken($token)->getJson(self::ME)->assertOk();
+        Carbon::setTestNow('2026-11-11 21:00:01');
+        $this->app['auth']->forgetGuards();
+        $this->withToken($token)->getJson(self::ME)->assertUnauthorized();
+        Carbon::setTestNow();
     }
 }

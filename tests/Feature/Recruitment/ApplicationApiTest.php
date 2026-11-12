@@ -10,6 +10,7 @@ use App\Modules\Recruitment\Enums\DecisionType as D;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Models\Candidate;
 use App\Modules\Recruitment\Models\JobPosition;
+use App\Support\BusinessDay;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -556,16 +557,114 @@ class ApplicationApiTest extends TestCase
         $this->asStaff($staff)->getJson(self::URL.'?status=nonsense')->assertStatus(422);
     }
 
-    public function test_date_filters_include_the_whole_last_day(): void
+    public function test_date_filters_are_whole_damascus_days(): void
     {
         $staff = $this->hiringStaff();
-        $this->travelTo('2026-03-10 23:30:00');
+        $this->travelTo('2026-03-10 20:30:00');   // 23:30 in Damascus: still the 10th
         $this->openApplication($staff);
+        $this->travelTo('2026-03-10 21:30:00');   // 00:30 in Damascus: the 11th (D-093)
+        $this->openApplication($staff, ['candidate' => ['national_number' => '22222222222']]);
         $this->travelBack();
 
         $this->asStaff($staff)->getJson(self::URL.'?from=2026-03-10&to=2026-03-10')->assertJsonCount(1, 'data');
-        $this->asStaff($staff)->getJson(self::URL.'?from=2026-03-11')->assertJsonCount(0, 'data');
+        $this->asStaff($staff)->getJson(self::URL.'?from=2026-03-11')->assertJsonCount(1, 'data');
         $this->asStaff($staff)->getJson(self::URL.'?to=2026-03-09')->assertJsonCount(0, 'data');
+    }
+
+    public function test_the_latest_changes_come_first_by_updated_at(): void
+    {
+        $staff = $this->hiringStaff();
+        $this->travelTo('2026-11-01 09:00:00');
+        $older = $this->openApplication($staff, ['candidate' => ['national_number' => '01111111111']]);
+        $this->travelTo('2026-11-02 09:00:00');
+        $newer = $this->openApplication($staff, ['candidate' => ['national_number' => '02222222222']]);
+        // A move sets updated_at (the history's trigger, with the database's clock: set here as it would be).
+        DB::table('applications')->where('id', $newer->id)->update(['updated_at' => '2026-11-02 09:00:00+00']);
+        DB::table('applications')->where('id', $older->id)->update(['updated_at' => '2026-11-03 09:00:00+00']);
+        $ids = fn(string $query) => array_column($this->asStaff($staff)->getJson(self::URL . "?{$query}")->assertOk()->json('data'), 'id');
+
+        $this->assertSame([$newer->id, $older->id], $ids('sort=created_at'));
+        $this->assertSame([$older->id, $newer->id], $ids('sort=updated_at'));
+        $this->assertSame([$newer->id, $older->id], $ids('sort=updated_at&direction=asc'));
+        $this->assertSame('2026-11-03T09:00:00.000000Z', $this->asStaff($staff)->getJson(self::URL . "/{$older->id}")->json('data.updated_at'));
+    }
+
+    public function test_an_applications_stages_for_its_stepper(): void
+    {
+        $staff = $this->hiringStaff();
+        $lifecycle = app(ApplicationLifecycle::class);
+        $this->travelTo('2026-11-01 09:00:00');
+        $application = $this->openApplication($staff, start: false);
+        $stages = fn() => collect($this->asStaff($staff)->getJson(self::URL . "/{$application->id}")->assertOk()->json('data.stages'))->keyBy('step');
+
+        $this->assertSame(['nomination', 'exam', 'interview', 'contract'], $stages()->keys()->all());
+        $this->assertSame(['current', 'بانتظار البدء', '2026-11-01T09:00:00+00:00'], [$stages()['nomination']['state'], $stages()['nomination']['state_label'], $stages()['nomination']['at']]);
+        $this->assertSame(['pending', null, 0], [$stages()['exam']['state'], $stages()['exam']['at'], $stages()['exam']['rounds']]);
+
+        $this->travelTo('2026-11-02 09:00:00');
+        $lifecycle->move($application, S::AwaitingExam, D::Started, $staff);
+        $this->travelTo('2026-11-03 09:00:00');
+        $lifecycle->move($application, S::ExamFailed, D::Outcome);
+        $this->assertSame(['done', 'failed', 'راسب', 1, 'pending'], [$stages()['nomination']['state'], $stages()['exam']['state'], $stages()['exam']['state_label'], $stages()['exam']['rounds'], $stages()['interview']['state']]);
+
+        // Admitted by an exception, the interview passed: the contract is next.
+        $this->travelTo('2026-11-04 09:00:00');
+        $lifecycle->move($application, S::AwaitingInterview, D::Exception, $staff, 'قرار اللجنة', null, null, 'ق/15');
+        $this->travelTo('2026-11-05 09:00:00');
+        $lifecycle->move($application, S::AwaitingContract, D::Outcome);
+        $now = $stages();
+        $this->assertSame(['done', 'ناجح باستثناء', true, '2026-11-04T09:00:00+00:00'], [$now['exam']['state'], $now['exam']['state_label'], $now['exam']['by_exception'], $now['exam']['at']]);
+        $this->assertSame(['done', 1, '2026-11-05T09:00:00+00:00'], [$now['interview']['state'], $now['interview']['rounds'], $now['interview']['at']]);
+        $this->assertSame(['current', 'بانتظار كتابة العقد', null], [$now['contract']['state'], $now['contract']['state_label'], $now['contract']['by_exception']]);
+
+        // The exception's decision number is in the history.
+        $exception = collect($this->asStaff($staff)->getJson(self::URL . "/{$application->id}")->json('data.history'))->firstWhere('decision_type', 'exception');
+        $this->assertSame('ق/15', $exception['decision_number']);
+
+        // Closed while waiting for the contract.
+        $this->travelTo('2026-11-06 09:00:00');
+        $lifecycle->move($application, S::Closed, D::Closure, $staff, 'انسحب المرشح');
+        $this->assertSame(['closed', 'أُغلق الطلب', '2026-11-06T09:00:00+00:00'], [$stages()['contract']['state'], $stages()['contract']['state_label'], $stages()['contract']['at']]);
+        $this->assertSame('done', $stages()['interview']['state']);
+    }
+
+    public function test_only_an_exception_or_an_excuse_has_a_decision_number(): void
+    {
+        $application = $this->openApplication($this->hiringStaff());
+
+        $this->expectException(QueryException::class);
+        DB::transaction(fn() => app(ApplicationLifecycle::class)->move($application, S::ExamFailed, D::Outcome, null, null, null, null, 'ق/1'));
+    }
+
+    public function test_the_counts_per_status_follow_the_lists_filters(): void
+    {
+        $staff = $this->hiringStaff();
+        $this->openApplication($staff);                                                                        // awaiting_exam
+        $otherPosition = $this->jobPosition('إداري');
+        $failed = $this->openApplication($staff, ['job_position_id' => $otherPosition->id, 'candidate' => ['national_number' => '44444444444']]);
+        app(ApplicationLifecycle::class)->move($failed, S::ExamFailed, D::Outcome);
+        $this->closeApplication($this->openApplication($staff, ['candidate' => ['national_number' => '55555555555']]));
+        $counts = function (string $query = '', $user = null) use ($staff) {
+            $data = $this->asStaff($user ?? $staff)->getJson(self::URL . '/counts?' . $query)->assertOk()->json('data');
+
+            return ['total' => $data['total'], 'live' => $data['live']] + array_filter(array_column($data['statuses'], 'count', 'status'));
+        };
+
+        $all = $this->asStaff($staff)->getJson(self::URL . '/counts')->assertOk();
+        $this->assertSame(array_column(S::cases(), 'value'), array_column($all->json('data.statuses'), 'status'));   // every status, 0 included, in order
+        $all->assertJsonPath('data.statuses.1', ['status' => 'awaiting_exam', 'label' => S::AwaitingExam->labelAr(), 'live' => true, 'count' => 1]);
+        $this->assertSame(['total' => 3, 'live' => 2, 'awaiting_exam' => 1, 'exam_failed' => 1, 'closed' => 1], $counts());
+
+        // The list's filters, but not its status, live, sorting or paging: each tile keeps its count.
+        $this->assertSame(['total' => 1, 'live' => 1, 'exam_failed' => 1], $counts('job_position_id=' . $otherPosition->id));
+        $this->assertSame($counts(), $counts('status[]=closed&live=0&sort=nomination_number&direction=desc&per_page=5'));
+        $this->assertSame(['total' => 0, 'live' => 0], $counts('from=' . now(BusinessDay::timezone())->addDay()->toDateString()));
+        $this->asStaff($staff)->getJson(self::URL . '/counts?from=2026-13-01')->assertStatus(422)->assertJsonValidationErrors('from');
+
+        // The other offices count by the identity filters only; staff without a reading permission not at all.
+        $this->assertSame(['total' => 1, 'live' => 1, 'exam_failed' => 1], $counts('job_position_id=' . $otherPosition->id, $this->examsStaff()));
+        $this->asStaff($this->examsStaff())->getJson(self::URL . '/counts?residence_district_id=1')->assertStatus(422)->assertJsonValidationErrors('residence_district_id');
+        $this->asStaff(StaffUserFactory::new()->create())->getJson(self::URL . '/counts')->assertForbidden();
     }
 
     public function test_the_list_is_paginated(): void

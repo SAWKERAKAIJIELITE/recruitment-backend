@@ -49,7 +49,7 @@ class ReferenceDataTest extends TestCase
     /** The office that changes the list: Recruitment, and the Contracts office for contract types (D-085). */
     private function manager(string $type = 'job-positions')
     {
-        return StaffUserFactory::new()->withRole($type === 'contract-types' ? 'contracts' : 'recruitment')->create();
+        return StaffUserFactory::new()->withRole(in_array($type, ['contract-types', 'units'], true) ? 'contracts' : 'recruitment')->create();
     }
 
     // ---- every flat list ----
@@ -67,7 +67,7 @@ class ReferenceDataTest extends TestCase
     public function test_changing_a_list_needs_its_offices_permission(string $type): void
     {
         $generalManager = StaffUserFactory::new()->withRole('general_manager')->create();
-        $otherOffice = StaffUserFactory::new()->withRole($type === 'contract-types' ? 'recruitment' : 'contracts')->create();
+        $otherOffice = StaffUserFactory::new()->withRole(in_array($type, ['contract-types', 'units'], true) ? 'recruitment' : 'contracts')->create();
 
         $this->asStaff($generalManager)->postJson($this->url($type), ['name_ar' => 'اسم'])->assertForbidden();
         $this->asStaff($otherOffice)->postJson($this->url($type), ['name_ar' => 'اسم'])->assertForbidden();

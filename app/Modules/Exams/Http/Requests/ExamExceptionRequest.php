@@ -17,6 +17,8 @@ class ExamExceptionRequest extends FormRequest
         return [
             'reason' => ['required', 'string', 'min:3', 'max:1000'],
             'occurred_at' => ['nullable', 'date', 'before_or_equal:now'],
+            /** رقم القرار (D-100). */
+            'decision_number' => ['nullable', 'string', 'max:100'],
         ];
     }
 }

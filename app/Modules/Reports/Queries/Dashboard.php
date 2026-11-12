@@ -11,6 +11,7 @@ use App\Modules\Recruitment\Models\NominatingEntity;
 use App\Modules\Recruitment\Queries\ApplicationSearch;
 use App\Modules\Reports\Support\ReportFilters;
 use App\Modules\Reports\Support\ReportPeriod;
+use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 
 /**
@@ -24,14 +25,17 @@ use Carbon\CarbonInterface;
  *  - contracts: first contracts by their writing date, renewals apart;
  *  - durations: average days from nomination to the exam decision, to passing the interview, to the first contract,
  *    for the decisions in the period;
- *  - the same counts by month, by nominating entity and by job position.
+ *  - the same counts by month, by nominating entity and by job position, and by day, week or month (D-099).
  * Pass rates are the regular passes over the takers. The applications counted are those the applications list's
  * filters keep (nominating entity, job position, governorate, ...).
  */
 final class Dashboard
 {
-    /** @param array<string, mixed> $filters validated with ReportFilters (the applications list's filters and the period) */
-    public static function build(array $filters): array
+    /**
+     * @param  array<string, mixed>  $filters  validated with ReportFilters (the applications list's filters and the period)
+     * @param  string  $groupBy  the series' buckets: day, week or month (D-099)
+     */
+    public static function build(array $filters, string $groupBy = 'month'): array
     {
         $period = ReportPeriod::from($filters);
         $filtered = fn () => ApplicationSearch::filter(Application::query(), ReportFilters::applicationFilters($filters));
@@ -117,6 +121,32 @@ final class Dashboard
             ['nominations', 'exam_takers', 'interview_takers', 'contracts_written'],
         ), $period->months($earliest));
 
+        // The same counts by day, week or month (D-099): each fact on its business day, counted in one pass.
+        $tz = (string) config('reports.timezone');
+        $buckets = $period->buckets($groupBy, $earliest);
+        $kinds = ['nominations', 'exam_takers', 'interview_takers', 'contracts_written'];
+        $bucketOfDay = [];
+        $perBucket = [];
+
+        foreach ($buckets as $bucket) {
+            $perBucket[$bucket['key']] = array_fill_keys($kinds, 0);
+
+            for ($day = CarbonImmutable::parse($bucket['start']); $day->toDateString() <= $bucket['end']; $day = $day->addDay()) {
+                $bucketOfDay[$day->toDateString()] = $bucket['key'];
+            }
+        }
+
+        foreach ($inPeriod as $fact) {
+            $day = ($fact[3] ?? false) ? $fact[2]->toDateString() : $fact[2]->copy()->setTimezone($tz)->toDateString();
+            $key = $bucketOfDay[$day] ?? null;
+
+            if ($key !== null && isset($perBucket[$key][$fact[0]])) {
+                $perBucket[$key][$fact[0]]++;
+            }
+        }
+
+        $series = array_map(fn (array $bucket) => $bucket + $perBucket[$bucket['key']], $buckets);
+
         return [
             'period' => $period->toArray(),
             'totals' => [
@@ -143,6 +173,8 @@ final class Dashboard
                 'average_days' => array_map(fn (array $days) => $days === [] ? null : round(array_sum($days) / count($days), 1), $durations),
             ],
             'monthly' => $monthly,
+            /** The trend by `group_by` (day: the latest 92 days, week: from Saturday, the latest 104; month: the latest 60). */
+            'series' => ['group_by' => $groupBy, 'points' => $series],
             'by_nominating_entity' => self::breakdown($inPeriod, $byId->map->nominating_entity_id->all(), NominatingEntity::withTrashed()->pluck('name_ar', 'id')->all()),
             'by_job_position' => self::breakdown($inPeriod, $byId->map->job_position_id->all(), JobPosition::withTrashed()->pluck('name_ar', 'id')->all()),
         ];
