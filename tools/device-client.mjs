@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 
-const BASE = process.env.API_URL ?? 'http://127.0.0.1:8000/api/v1';
+const BASE = process.env.API_URL ?? 'https://rec.1005.date/api/v1';
 const STATE_FILE = process.env.DEVICE_STATE ?? '.device-state.json';
 const PREFIX = 'recruitment-staff-login-v1';
 
