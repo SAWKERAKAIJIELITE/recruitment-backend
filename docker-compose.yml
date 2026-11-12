@@ -1,6 +1,8 @@
 # The recruitment system on one server with Docker (docs/docker-deployment.md).
 #
-#   web        Caddy: HTTPS for SITE_ADDRESS (rec.1005.date), the frontend at /, /api/… passed to PHP
+#   web        Caddy on plain HTTP, port WEB_PORT of the server: the frontend at /, /api/… passed to PHP.
+#              The platform's proxy (Openship) in front of it holds ports 80/443 and the certificate of
+#              rec.1005.date. On a server with no proxy, add docker-compose.standalone.yml: Caddy does HTTPS itself.
 #   app        PHP-FPM 8.2 running Laravel; brings the schema up to date when it starts
 #   scheduler  Laravel's scheduler, every minute (exam absences and deadlines, reminders, pruning)
 #   db         PostgreSQL 16, reachable from the app and the scheduler only
@@ -93,13 +95,14 @@ services:
     image: recruitment-web:latest
     restart: unless-stopped
     environment:
-      SITE_ADDRESS: ${SITE_ADDRESS:-rec.1005.date}
+      # «:80»: plain HTTP, for the proxy in front. A name instead (docker-compose.standalone.yml) makes Caddy
+      # obtain its own certificate.
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      # The one port the proxy in front sends rec.1005.date to.
+      - "${WEB_PORT:-8080}:80"
     volumes:
-      # The certificates Caddy obtains: keep this volume, or every restart asks Let's Encrypt again.
+      # Caddy's state (and its certificates in the standalone layout).
       - caddy-data:/data
       - caddy-config:/config
     depends_on:

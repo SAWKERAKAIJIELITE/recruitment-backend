@@ -5,15 +5,15 @@ the container form of [deployment.md](deployment.md) (the same layout, without i
 on the server); that guide still explains the settings, the first day and the hardening in detail.
 
 ```
-                                   ┌─ /        → the frontend's web build (in the web image)
- browsers / the EXE ─ HTTPS 443 ─▶ web (Caddy) ┤
-                                   └─ /api/…   → app (PHP-FPM 8.2, Laravel) ──▶ db (PostgreSQL 16)
-                                                 scheduler (php artisan schedule:work, every minute) ──┘
+                                             ┌─ /        → the frontend's web build (in the web image)
+ browsers / the EXE ─ HTTPS 443 ─▶ the platform's proxy ─ HTTP, WEB_PORT ─▶ web (Caddy) ┤
+                                             └─ /api/…   → app (PHP-FPM 8.2, Laravel) ──▶ db (PostgreSQL 16)
+                                                           scheduler (php artisan schedule:work, every minute) ──┘
 ```
 
 | Container     | Image                               | What it does                                                                                                     |
 | ------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `web`       | `caddy:2-alpine` + `public/`    | HTTPS (a Let's Encrypt certificate, obtained and renewed automatically), the frontend, `/api/…` passed to PHP. |
+| `web`       | `caddy:2-alpine` + `public/`    | The frontend and `/api/…` passed to PHP, in plain HTTP on `WEB_PORT`, behind the platform's proxy. |
 | `app`       | `php:8.2.35-fpm-bookworm` + code  | Laravel. On start: migrations, the catalogue on a new database, the caches.                                      |
 | `scheduler` | the same image as `app`           | Laravel's scheduler: exam absences and deadlines, contract reminders, pruning. There is no queue worker.         |
 | `db`        | `postgres:16-bookworm` + init script | The database. Not published on the server: only `app` and `scheduler` reach it.                              |
@@ -21,6 +21,11 @@ on the server); that guide still explains the settings, the first day and the ha
 The files: [Dockerfile](../Dockerfile) (the `app` image), [deploy/docker/web.Dockerfile](../deploy/docker/web.Dockerfile)
 (the `web` image), [docker-compose.yml](../docker-compose.yml), [.dockerignore](../.dockerignore)
 and everything under [deploy/docker/](../deploy/docker).
+
+**Two layouts.** The default is for a platform that has its own proxy on ports 80 and 443 (**Openship**): that
+proxy holds the certificate of `rec.1005.date` and sends the requests to the `web` container's port (`WEB_PORT`,
+8080). On a bare server with no proxy, add `docker-compose.standalone.yml` to every `docker compose` command:
+Caddy then holds 80 and 443 itself and obtains a Let's Encrypt certificate (step 4).
 
 > **Status of this guide.** The files were written and statically checked (shell syntax, the lock file against
 > PHP 8.2, the image tags), but the machine they were written on had no Docker: the stack was **not** built or
@@ -34,8 +39,9 @@ and everything under [deploy/docker/](../deploy/docker).
   the containers do not see the clients' real addresses, which the exam-hall check needs.
 - **DNS**: an `A` record `rec.1005.date` → the server's public address (and `AAAA` only if the server really
   answers on IPv6). Check: `dig +short rec.1005.date`.
-- **Ports 80 and 443** (TCP, and 443 UDP for HTTP/3) open to the internet: the certificate is issued through them.
-  Nothing else: PostgreSQL is not published.
+- **Ports 80 and 443** (TCP) open to the internet, for the proxy in front (or for Caddy in the standalone layout:
+  the certificate is issued through them). `WEB_PORT` (8080) is for that proxy only: do not open it to the
+  internet. PostgreSQL is not published.
 
   ```bash
   sudo ufw allow 22/tcp && sudo ufw allow 80,443/tcp && sudo ufw allow 443/udp && sudo ufw enable
@@ -72,7 +78,8 @@ Fill the values marked «change»:
 
 | Setting                      | Value                                                                                                                                                    |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SITE_ADDRESS`             | `rec.1005.date` (already set).                                                                                                                         |
+| `WEB_PORT`                 | The server's port of the `web` container (8080). In the platform, point the domain `rec.1005.date` at this port. Another number if 8080 is taken.      |
+| `TRUSTED_PROXIES`          | The private ranges (already set): the proxy in front is believed about the client's address and HTTPS. Empty in the standalone layout.                 |
 | `APP_URL`                  | `https://rec.1005.date` (already set).                                                                                                                 |
 | `DB_PASSWORD`              | The application's database password. Used when the database is first created: decide it **before** the first start.                                |
 | `DB_SUPERUSER_PASSWORD`    | The `postgres` superuser's password (administration and backups).                                                                                      |
@@ -110,8 +117,22 @@ What happens on the first start:
 2. `app` runs `php artisan migrate --force`, then, because the database is new, `php artisan db:seed --force` (the
    catalogue only: roles, permissions, reference lists; never demo data outside `APP_ENV=local`), then
    `php artisan optimize`, then PHP-FPM.
-3. `scheduler` and `web` start once `app` is healthy; `web` obtains the certificate for `rec.1005.date` (a few
-   seconds; `docker compose logs web` shows «certificate obtained successfully»).
+3. `scheduler` and `web` start once `app` is healthy; `web` answers in plain HTTP on `WEB_PORT`
+   (`curl http://127.0.0.1:8080/api/v1/ping` on the server).
+
+**On Openship**: the settings of `deploy/docker/env.example` go into the project's environment variables (there is
+no `.env` in the repository), and the domain `rec.1005.date` is attached to the `web` service, port `WEB_PORT`.
+Openship's proxy holds ports 80 and 443 and the certificate.
+
+**On a bare server with no proxy** (the standalone layout): set `SITE_ADDRESS=rec.1005.date` and
+`TRUSTED_PROXIES=` (empty) in `.env`, and add the second file to every command:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.standalone.yml up -d --build
+```
+
+Caddy then listens on 80 and 443 and obtains the certificate (`docker compose logs web` shows «certificate
+obtained successfully»).
 
 On later starts `app` only applies new migrations and rebuilds the caches. `AUTO_MIGRATE=false` in `.env` turns the
 automatic migration off (then: `docker compose exec app php artisan migrate --force`).
@@ -121,13 +142,13 @@ automatic migration off (then: `docker compose exec app php artisan migrate --fo
 
 ## 5. A local test first (optional, recommended)
 
-On any machine with Docker, the same stack on `https://localhost` with a certificate Caddy signs itself:
+On any machine with Docker, the same stack in plain HTTP on `http://localhost:8080`:
 
 ```bash
 cp deploy/docker/env.example .env
-# in .env: SITE_ADDRESS=localhost, APP_URL=https://localhost, the two passwords, APP_KEY (step 3)
+# in .env: APP_URL=http://localhost:8080, the two passwords, APP_KEY (step 3)
 docker compose up -d --build
-bash deploy/docker/check.sh https://localhost -k
+bash deploy/docker/check.sh http://localhost:8080
 ```
 
 ## 6. Check it, one step at a time
@@ -253,16 +274,16 @@ kept to 5 files of 10 MB each.
 
 - **PHP 8.2.35** instead of 8.3 (`composer.json` asks for `^8.2`; the build runs `composer check-platform-reqs`).
   Another version: `PHP_VERSION` at the top of the `Dockerfile`.
-- **Caddy** instead of nginx, for the automatic certificate. The limits are the same (34 MB uploads, 180 s).
+- **Caddy** instead of nginx. The limits are the same (34 MB uploads, 180 s).
   Only `/api/…` reaches PHP, so the documentation pages (`/docs`, `/docs/api`) and `/up` are not reachable.
   A request for `/.env` or any unknown path gets the frontend's `index.html` (a single-page app), never a backend file.
 - **The settings** are the containers' environment (from `.env`), not a file inside the image: no `.env`, no key
   and no password is ever in an image.
 - **PHP runs as `www-data`** in the containers; `open_basedir` is not set (the container is the boundary).
-- **Client addresses.** Caddy passes the client's own address to PHP, so `TRUSTED_PROXIES` stays empty. Behind a
-  CDN or another proxy, set `TRUSTED_PROXIES` to its addresses **and** tell Caddy to trust it
-  (`servers { trusted_proxies static … }` in the Caddyfile's global options); otherwise the hall check and the
-  rate limits see the proxy.
+- **Client addresses.** Behind the platform's proxy, the client's address arrives in `X-Forwarded-For`. Caddy
+  believes it from private addresses only (`trusted_proxies static private_ranges` in the Caddyfile), and Laravel
+  from `TRUSTED_PROXIES` (the same ranges in the template); otherwise the hall check and the rate limits see the
+  proxy. In the standalone layout `TRUSTED_PROXIES` is empty: Caddy sees the clients itself.
 - **An internal name instead of a public one** (no Let's Encrypt): put the organization's certificate in the
   `web` container and add `tls /path/cert.pem /path/key.pem` to the site block of `deploy/docker/Caddyfile`, or
   use `tls internal` and install Caddy's root certificate on the PCs.
@@ -275,7 +296,8 @@ kept to 5 files of 10 MB each.
 | `set DB_PASSWORD in .env` when running compose                    | `.env` is missing or incomplete.                                                             | Step 3.                                                                                                                                                                    |
 | `app` log: `password authentication failed`                     | `DB_PASSWORD` changed after the database was created.                                        | `docker compose exec db psql -U postgres -c "ALTER ROLE recruitment_app PASSWORD 'the-new-one'"`, then `docker compose up -d`.                                         |
 | The browser warns about the certificate; `web` log: ACME errors   | DNS does not point here yet, or 80/443 are closed.                                             | Fix DNS or the firewall; `docker compose restart web`. Let's Encrypt limits repeated failures: fix first, then retry.                                                    |
-| `web` does not start: «address already in use»                   | nginx or Apache on the server holds 80/443.                                                    | `sudo systemctl disable --now nginx apache2`.                                                                                                                            |
+| `web` does not start: «failed to bind host port … address already in use» | Another program holds that port: `WEB_PORT` (8080) is taken, or, in the standalone layout, a proxy or nginx holds 80/443. | Another `WEB_PORT`, then point the platform's domain at it. Standalone: it cannot share 80/443 with another proxy; use the default layout instead. |
+| The domain answers 502/404 from the platform's proxy               | The domain is not attached to the `web` service's port.                                        | In the platform, send `rec.1005.date` to `web`, port `WEB_PORT`; on the server, `curl http://127.0.0.1:8080/api/v1/ping` must answer.                                    |
 | **502** from Caddy                                            | `app` is starting (migrations) or down.                                                      | `docker compose ps`; `docker compose logs --tail=50 app`.                                                                                                              |
 | **500**, JSON `{"message":"Server Error"}`                  | An exception.                                                                                  | The application's log (step 10).                                                                                                                                           |
 | **413** on an upload                                          | Above 34 MB.                                                                                   | Raise `max_size` (Caddyfile), `upload_max_filesize`/`post_max_size` (`deploy/docker/php/app.ini`) and `*_MAX_FILE_KILOBYTES` together; `docker compose up -d --build`. |

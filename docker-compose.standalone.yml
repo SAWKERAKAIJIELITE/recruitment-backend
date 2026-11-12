@@ -1,0 +1,13 @@
+# A server with no proxy in front (docs/docker-deployment.md, step 4): Caddy holds ports 80 and 443 itself and
+# obtains the Let's Encrypt certificate of rec.1005.date. Not for Openship, whose own proxy holds those ports.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.standalone.yml up -d --build
+
+services:
+  web:
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-rec.1005.date}
+    ports: !override
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"

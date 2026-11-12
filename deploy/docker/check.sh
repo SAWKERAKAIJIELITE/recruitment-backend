@@ -24,6 +24,7 @@ check() {   # check <what> <command…>: ok when the command succeeds
 
 fetch()        { curl --silent --show-error --max-time 20 "${CURL_OPTIONS[@]}" "$@"; }
 status_is()    { local want="$1"; shift; [ "$(fetch --output /dev/null --write-out '%{http_code}' "$@")" = "$want" ]; }
+redirects()    { case "$(fetch --output /dev/null --write-out '%{http_code}' "$1")" in 301|302|307|308) return 0 ;; *) return 1 ;; esac; }
 header_sent()  { fetch --output /dev/null --dump-header - "$2" | grep -qi "^$1"; }
 body_lacks()   { ! fetch "$2" | grep -qi "$1"; }
 running()      { docker compose ps --status running --services | grep -qx "$1"; }
@@ -63,7 +64,7 @@ check "X-Frame-Options is sent"                          header_sent 'x-frame-op
 case "$BASE" in
     https://*)
         check "HSTS is sent"                             header_sent 'strict-transport-security' "$BASE/api/v1/ping"
-        check "HTTP redirects to HTTPS (308)"            status_is 308 "http://${BASE#https://}/"
+        check "HTTP redirects to HTTPS"                  redirects "http://${BASE#https://}/"
         ;;
 esac
 
