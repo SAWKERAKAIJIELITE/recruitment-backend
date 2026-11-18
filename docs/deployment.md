@@ -383,6 +383,10 @@ How the site is laid out (`deploy/nginx/recruitment.conf`):
   download names (`Content-Disposition`) are readable by the frontend as they are.
 - `client_max_body_size 34m` and `fastcgi_read_timeout 180s` match PHP's limits (step 8).
 - Security headers: `nosniff`, `X-Frame-Options DENY`, `Referrer-Policy no-referrer`, HSTS; `server_tokens off`.
+- `/desktop/…` is where the installed desktop app finds its updates (`latest.yml`, the installer, its `.blockmap`).
+  In production (Docker, `rec.1005.date`) **the three files of a release go at the top of the `desktop-releases`
+  volume**, copied over SSH with `latest.yml` last: [docker-deployment.md](docker-deployment.md), step 13. The
+  nginx file of this guide has no `/desktop/` location.
 
 The frontend (and the EXE) are configured with the API's base address: `https://hr.example.local/api/v1`.
 

@@ -19,6 +19,8 @@ COPY public /var/www/recruitment/public
 # The frontend's web build: whatever is in deploy/docker/frontend when the image is built (a placeholder page
 # in the repository).
 COPY deploy/docker/frontend /srv/frontend
+# The desktop app's updates (the desktop-releases volume is mounted here; empty: every /desktop/ file is 404).
+RUN mkdir -p /srv/desktop
 
 EXPOSE 8080
 CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

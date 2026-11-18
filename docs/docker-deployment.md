@@ -271,7 +271,8 @@ production unless the release notes say it is safe.
 | Maintenance (the API answers 503)    | `docker compose stop app` is enough; `artisan down` lasts only until the container is made again. |
 
 Where the data is (`docker volume ls`): `recruitment_db-data` (the database), `recruitment_storage-app` (the stored
-files), `recruitment_storage-logs`, `recruitment_caddy-data` (the certificates). Docker's own container logs are
+files), `recruitment_storage-logs`, `recruitment_caddy-data` (the certificates), `recruitment_desktop-releases`
+(the desktop app's updates, step 13). Docker's own container logs are
 kept to 5 files of 10 MB each.
 
 ## 11. Differences from the server without Docker
@@ -314,3 +315,76 @@ kept to 5 files of 10 MB each.
 | Every administrator is locked out                                   |                                                                                                | [admin-accounts.md](admin-accounts.md), «Locked out».                                                                                                                      |
 
 The other rows of [deployment.md](deployment.md) step 18 (logins, midnight tokens, time) apply unchanged.
+
+## 13. The desktop app's updates (`/desktop/`)
+
+The installed desktop app updates itself (electron-updater) from `https://rec.1005.date/desktop/`: it reads
+`latest.yml`, then downloads the installer and its `.blockmap` named in it. The `web` container serves these from
+the `desktop-releases` volume, mounted read-only at `/srv/desktop`:
+
+| Path                                   | Answer                                                                                     |
+| -------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `/desktop/latest.yml`                  | The current manifest, `Cache-Control: no-store` (never cached by a browser or Cloudflare). |
+| `/desktop/<installer>.exe`, `.blockmap` | The files, cached for a year (`immutable`): their names carry the version.               |
+| `/desktop/` or a missing file          | **404**. No listing, and never the frontend's `index.html`.                               |
+
+### 13.1 Publishing a release
+
+The files go in over SSH, never through the site. **The three files of a release go at the top of the
+`desktop-releases` volume**, side by side: the installer, its `.blockmap`, and `latest.yml`. Copy `latest.yml`
+**last**, so that no client ever reads a manifest naming an installer that is not there yet.
+
+```bash
+# On your PC: the release's three files, to a folder on the server.
+scp "Recruitment-Setup-1.4.0.exe" "Recruitment-Setup-1.4.0.exe.blockmap" latest.yml admin@SERVER:/tmp/desktop-release/
+```
+
+```bash
+# On the server. The volume's folder (under Openship the name has a prefix: check the listing).
+docker volume ls | grep desktop-releases
+DESKTOP_DIR="$(docker volume inspect -f '{{ .Mountpoint }}' NAME-FROM-THE-LISTING)"
+
+cd /tmp/desktop-release
+sudo install -m 644 *.exe *.blockmap "$DESKTOP_DIR/"
+# latest.yml last, and at once: written under a hidden name (never served), then renamed.
+sudo install -m 644 latest.yml "$DESKTOP_DIR/.latest.yml.new" && sudo mv "$DESKTOP_DIR/.latest.yml.new" "$DESKTOP_DIR/latest.yml"
+rm -r /tmp/desktop-release
+```
+
+Rules:
+
+- **Never upload a different file under a name that was published**: browsers and Cloudflare keep an installer for a
+  year. A new build is a new version number.
+- **Keep the previous version's installer and blockmap** for a while (clients in the middle of a download), then
+  delete the older ones: `sudo ls -l "$DESKTOP_DIR"`, `sudo rm "$DESKTOP_DIR/Recruitment-Setup-1.2.0.exe"*`.
+- **To withdraw a release**, put the previous `latest.yml` back (the same way, last and at once).
+- The files are not in `backup.sh`: they can be built again from the desktop app's tagged sources.
+
+Check from any machine:
+
+```bash
+curl -sI https://rec.1005.date/desktop/latest.yml | grep -iE '^HTTP|cache-control|cf-cache-status'
+#   HTTP/2 200, cache-control: no-store…, cf-cache-status: DYNAMIC or BYPASS (never HIT)
+curl -s https://rec.1005.date/desktop/latest.yml                  # the manifest, not the frontend's HTML
+curl -sI https://rec.1005.date/desktop/no-such-file | head -1      # 404
+```
+
+### 13.2 Cloudflare (`1005.date`)
+
+The site is behind Cloudflare, which can cache and challenge what the app asks for. The app cannot answer a
+challenge (a JavaScript or CAPTCHA page breaks the update), so in the Cloudflare dashboard of `1005.date`:
+
+1. **No cache for the manifest.** Caddy sends `Cache-Control: no-store` (and `Cloudflare-CDN-Cache-Control`), which
+   Cloudflare honours by default. To be explicit: **Caching → Cache Rules →** a rule *URI Path equals
+   `/desktop/latest.yml`* (hostname `rec.1005.date`) → **Bypass cache**. The installers may be cached: they follow
+   the year Caddy gives them.
+2. **No challenge on `/desktop/`.** **Security → WAF → Custom rules →** a rule *URI Path starts with `/desktop/`*
+   (hostname `rec.1005.date`) → action **Skip**, skipping the remaining custom rules, rate limiting rules, managed
+   rules and Super Bot Fight Mode. Place it first.
+3. **Bot Fight Mode** (the free plan's) cannot be skipped by a rule, as far as Cloudflare's documentation goes: if it
+   is on, the app may be challenged. Turn it off (**Security → Bots**), or use Super Bot Fight Mode, which the rule
+   above can skip. "I'm Under Attack" mode must stay off for the same reason.
+
+Then check with `curl` as above: no `cf-mitigated: challenge` header, and the YAML itself in the body.
+
+The checks of step 6 include `/desktop/`: a missing file and the folder itself must answer 404.

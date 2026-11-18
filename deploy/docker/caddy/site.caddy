@@ -1,5 +1,5 @@
 # What the site serves, in both layouts (imported by Caddyfile and Caddyfile.standalone): the frontend's build
-# at /, the API at /api, on one address.
+# at /, the API at /api, the desktop app's updates at /desktop, on one address.
 
 encode zstd gzip
 
@@ -38,6 +38,34 @@ route {
     handle @docs {
         root * /var/www/recruitment/public
         php_fastcgi app:9000
+    }
+
+    # The desktop app's updates (electron-updater): latest.yml, the installers and their .blockmap files, from the
+    # desktop-releases volume. They are copied there over SSH (docs/docker-deployment.md, step 13), never uploaded
+    # through the site. Files only: no listing, and a missing file is 404, never the frontend's index.html.
+    handle /desktop {
+        respond 404
+    }
+
+    handle_path /desktop/* {
+        root * /srv/desktop
+
+        # The manifest says which version is current: never kept by a browser, by Cloudflare or by any cache.
+        @manifest path *.yml *.yaml
+        header @manifest {
+            Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+            CDN-Cache-Control "no-store"
+            Cloudflare-CDN-Cache-Control "no-store"
+        }
+
+        # An installer and its blockmap never change under their name (the version is in it): kept a year.
+        @installers path *.exe *.blockmap *.msi *.zip *.7z
+        header @installers Cache-Control "public, max-age=31536000, immutable"
+
+        # No «browse»: a folder is never listed. Dot files (a latest.yml being written) are never served.
+        file_server {
+            hide .*
+        }
     }
 
     # The frontend, a single-page app: an unknown path is its index.html.

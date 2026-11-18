@@ -152,6 +152,9 @@ services:
       # Caddy's state (and its certificates in the standalone layout).
       - caddy-data:/data
       - caddy-config:/config
+      # The desktop app's updates, served at /desktop/ (latest.yml, installers, .blockmap). Filled over SSH
+      # (docs/docker-deployment.md, step 13); the web server only reads it.
+      - desktop-releases:/srv/desktop:ro
     depends_on:
       app:
         condition: service_healthy
@@ -163,3 +166,4 @@ volumes:
   storage-logs:
   caddy-data:
   caddy-config:
+  desktop-releases:
