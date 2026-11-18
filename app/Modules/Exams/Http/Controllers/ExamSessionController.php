@@ -31,7 +31,8 @@ class ExamSessionController extends Controller
     /**
      * List exam sessions
      *
-     * `from` / `to` (YYYY-MM-DD, Damascus days, included) on the start; `job_position_id`; soonest first; 25 per page.
+     * `from` / `to` (YYYY-MM-DD, Damascus days, included) on the start; `job_position_id`; `hall=out` the sessions
+     * taken out to a hall now (D-102); soonest first; 25 per page.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -39,6 +40,7 @@ class ExamSessionController extends Controller
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
             'job_position_id' => ['nullable', 'integer'],
+            'hall' => ['nullable', 'in:out'],
         ]);
 
         $sessions = ExamSession::query()
@@ -47,6 +49,7 @@ class ExamSessionController extends Controller
             ->whenGiven($filters['from'] ?? null, fn($query, $date) => $query->where('starts_at', '>=', BusinessDay::startOf($date)))
             ->whenGiven($filters['to'] ?? null, fn($query, $date) => $query->where('starts_at', '<', BusinessDay::startOfNext($date)))
             ->whenGiven($filters['job_position_id'] ?? null, fn($query, $id) => $query->whereHas('plan', fn($plan) => $plan->where('job_position_id', $id)))
+            ->whenGiven($filters['hall'] ?? null, fn($query) => $query->has('hallDownload'))
             ->orderBy('starts_at')
             ->orderBy('id')
             ->paginate(25)

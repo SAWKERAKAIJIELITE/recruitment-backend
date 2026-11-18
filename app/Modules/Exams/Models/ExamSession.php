@@ -2,18 +2,21 @@
 
 namespace App\Modules\Exams\Models;
 
+use App\Modules\Exams\Enums\HallDownloadStatus;
 use App\Modules\Identity\Models\StaffUser;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Facades\Date;
 
 /**
  * A sitting of one published plan version (D-056, D-073): a start, a place, the plan's duration, a late window
  * and the password its candidates log in with. It ends at start + duration + the extensions given to everyone;
- * one attempt may be given more on its own.
+ * one attempt may be given more on its own. It can be taken out to a hall with no internet (D-102): it is then frozen
+ * until brought back or cancelled.
  *
  * @property string $id
  * @property CarbonInterface $starts_at
@@ -21,6 +24,7 @@ use Illuminate\Support\Facades\Date;
  * @property int $duration_minutes
  * @property int $late_minutes
  * @property int $extra_minutes
+ * @property ?CarbonInterface $planned_starts_at
  */
 class ExamSession extends Model
 {
@@ -32,7 +36,7 @@ class ExamSession extends Model
 
     protected function casts(): array
     {
-        return ['starts_at' => 'datetime', 'password' => 'hashed', 'duration_minutes' => 'integer', 'late_minutes' => 'integer', 'extra_minutes' => 'integer'];
+        return ['starts_at' => 'datetime', 'planned_starts_at' => 'datetime', 'password' => 'hashed', 'duration_minutes' => 'integer', 'late_minutes' => 'integer', 'extra_minutes' => 'integer'];
     }
 
     public function plan(): BelongsTo
@@ -58,6 +62,23 @@ class ExamSession extends Model
     public function extensions(): HasMany
     {
         return $this->hasMany(ExamSessionExtension::class, 'session_id')->orderBy('id');
+    }
+
+    /** The taking-out to a hall now running, if any. */
+    public function hallDownload(): HasOne
+    {
+        return $this->hasOne(ExamHallDownload::class, 'session_id')->where('status', HallDownloadStatus::Out->value);
+    }
+
+    public function hallDownloads(): HasMany
+    {
+        return $this->hasMany(ExamHallDownload::class, 'session_id')->orderBy('downloaded_at');
+    }
+
+    /** Taken out to a hall: nothing about it changes on the server until it is brought back or cancelled. */
+    public function isOut(): bool
+    {
+        return ExamHallDownload::query()->where('session_id', $this->id)->where('status', HallDownloadStatus::Out)->exists();
     }
 
     public function creator(): BelongsTo

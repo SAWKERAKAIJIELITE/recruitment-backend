@@ -48,6 +48,10 @@ class TakeExam
                 $this->fail('booking', 'exams.candidate.not_booked', ['status' => $booking->status->labelAr()]);
             }
 
+            if ($session->isOut()) {
+                $this->fail('booking', 'exams.hall.sat_in_hall');   // the same exam is never sat in two places (D-102)
+            }
+
             if ($now->lessThan($session->starts_at)) {
                 $this->fail('booking', 'exams.candidate.not_yet', ['time' => $session->starts_at->toIso8601String()]);
             }

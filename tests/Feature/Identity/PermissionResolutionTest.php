@@ -42,8 +42,11 @@ class PermissionResolutionTest extends TestCase
     {
         $given = collect(RolesAndPermissionsSeeder::ROLES)->flatten()->unique();
         $adminOnly = ['users.manage', 'devices.approve', 'vacancies.manage'];
+        // Held by no role at first: the administrator gives it to whom the owner chooses (D-102).
+        $grantedLater = ['exams.offline'];
 
-        $this->assertEqualsCanonicalizing(array_keys(RolesAndPermissionsSeeder::PERMISSIONS), [...$given->all(), ...$adminOnly]);
+        $this->assertEqualsCanonicalizing(array_keys(RolesAndPermissionsSeeder::PERMISSIONS), [...$given->all(), ...$adminOnly, ...$grantedLater]);
+        $this->assertFalse($given->contains('exams.offline'));
     }
 
     public function test_unknown_abilities_and_roleless_users_get_nothing(): void

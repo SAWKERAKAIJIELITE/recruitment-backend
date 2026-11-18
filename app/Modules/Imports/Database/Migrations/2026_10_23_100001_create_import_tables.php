@@ -20,8 +20,8 @@ return new class extends Migration
             $table->uuid('id')->primary();
 
             // The file: kept unchanged as the batch's evidence.
-            $table->string('original_filename', 255);
-            $table->string('stored_path', 500);
+            $table->string('original_filename', 255)->index();
+            $table->string('stored_path', 500)->index();
             $table->char('file_sha256', 64);
             $table->unsignedBigInteger('file_size');
 

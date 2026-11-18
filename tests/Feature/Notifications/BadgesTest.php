@@ -66,9 +66,11 @@ class BadgesTest extends TestCase
             'notifications' => ['unread' => DB::table('notifications')->where('notifiable_id', $exams->id)->whereNull('read_at')->count()],
             'interviews' => ['to_book' => 1, 'to_record' => 1, 'total' => 2],
             'contracts' => null,
+            'exams' => ['hall_out' => 0, 'hall_overdue' => 0],   // sessions taken out to a hall (D-102)
         ]]);
         $this->asStaff($contracts)->getJson(self::URL)->assertOk()
             ->assertJsonPath('data.interviews', null)
+            ->assertJsonPath('data.exams', null)
             ->assertJsonPath('data.contracts', ['awaiting_contract' => 1, 'ending_soon' => 1, 'expired' => 0]);
 
         // The general manager sees both; Recruitment neither; the bell for everyone.

@@ -85,6 +85,10 @@ class ExamBookingResource extends JsonResource
                 'submitted_at' => $attempt->submitted_at?->toIso8601String(),
                 /** candidate (submitted) or timeout (closed by the server at the deadline). */
                 'closed_by' => $attempt->closed_by?->value,
+                /** Sat in a hall with no internet and brought back (D-102); its times are the hall's. */
+                'from_hall' => $attempt->hall_download_id !== null,
+                /** The receipt the candidate was shown at hand-in, in a hall (D-102): compare it in a dispute. */
+                'receipt_code' => $attempt->receipt_code,
                 'questions' => (int) $attempt->questions_count,
                 'answered' => (int) $attempt->answered_count,
                 /** Right answers, once closed. */

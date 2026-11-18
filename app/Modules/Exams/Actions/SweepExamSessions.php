@@ -28,7 +28,8 @@ use Illuminate\Support\Facades\Log;
  *    missing.
  *
  * Runs every minute (`exams:sweep`), and for one session whenever staff look at it; candidates' own attempts are
- * closed whenever they touch them. Running it twice changes nothing.
+ * closed whenever they touch them. Running it twice changes nothing. A session taken out to a hall is left alone:
+ * nobody started on the server, but they did in the hall; the upload records its absences (D-102).
  */
 class SweepExamSessions
 {
@@ -59,6 +60,7 @@ class SweepExamSessions
             ->where('status', BookingStatus::Booked)
             ->whenGiven($sessionId, fn($query, $id) => $query->where('session_id', $id))
             ->whereHas('session', fn($session) => $session->whereRaw("starts_at + late_minutes * interval '1 minute' <= ?", [$now]))
+            ->whereNotExists(fn($hall) => $hall->from('exam_hall_downloads')->whereColumn('exam_hall_downloads.session_id', 'exam_bookings.session_id')->where('exam_hall_downloads.status', 'out'))
             ->pluck('id');
 
         foreach ($late as $id) {
@@ -100,7 +102,8 @@ class SweepExamSessions
         }
     }
 
-    private function markAbsent(string $id): bool
+    /** Inside a transaction: a booked candidate who did not start becomes absent (or cancelled, the application having moved). */
+    public function markAbsent(string $id): bool
     {
         $booking = ExamBooking::query()->whereKey($id)->lockForUpdate()->with('session')->firstOrFail();
 

@@ -36,6 +36,8 @@ class RolesAndPermissionsSeeder extends Seeder
         'exam_bank.manage' => ['بنك الأسئلة وخطط الاختبار', false],
         'exams.manage' => ['جدولة جلسات الاختبار وإدخال العلامات اليدوية', false],
         'attempts.extend' => ['تمديد وقت الاختبار الجاري لمرشح أو لجميع المرشحين', false],
+        // No role holds it at first: the administrator gives it to whom the owner chooses (D-102).
+        'exams.offline' => ['إخراج جلسة اختبار إلى قاعة بلا إنترنت وإعادة نتائجها', false],
         'exam_results.correct' => ['تصحيح علامة يدوية بعد صدور نتيجة الاختبار', false],
         'pass_policies.manage' => ['إضافة إصدار جديد من قواعد النجاح', false],
         'exceptions.approve' => ['استثناء الرسوب في الاختبار / قبول عذر الغياب عنه', false],

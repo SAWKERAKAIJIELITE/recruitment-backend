@@ -73,6 +73,9 @@ final class AuditEvents
         'exam_result.revised' => 'تعديل نتيجة اختبار',
         'exam.exception_approved' => 'استثناء من الرسوب في الاختبار',
         'exam.excuse_accepted' => 'قبول عذر الغياب عن الاختبار',
+        'exam_hall.downloaded' => 'إخراج جلسة اختبار إلى قاعة بلا إنترنت',
+        'exam_hall.uploaded' => 'إعادة نتائج جلسة اختبار من القاعة',
+        'exam_hall.cancelled' => 'إلغاء إخراج جلسة اختبار إلى القاعة',
         // Interviews.
         'interview_sitting.created' => 'إنشاء جلسة مقابلات',
         'interview_sitting.updated' => 'تعديل جلسة مقابلات',

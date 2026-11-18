@@ -5,6 +5,7 @@ namespace App\Modules\Notifications\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Modules\Contracts\Enums\ContractState;
 use App\Modules\Contracts\Models\Contract;
+use App\Modules\Exams\Models\ExamHallDownload;
 use App\Modules\Interviews\Enums\InterviewStatus;
 use App\Modules\Interviews\Models\Interview;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
@@ -23,15 +24,30 @@ class BadgeController extends Controller
      * /notifications/unread-count). `interviews` (interviews.view): `to_book`, applications awaiting their interview with
      * none booked (the interview queue); `to_record`, booked interviews whose time has come, waiting for their result;
      * `total`. `contracts` (contracts.view): `awaiting_contract`, applications that passed their interview and wait for
-     * their first contract; `ending_soon` and `expired`, latest contracts in that state today.
+     * their first contract; `ending_soon` and `expired`, latest contracts in that state today. `exams` (exams.view):
+     * `hall_out`, sessions taken out to a hall with no internet now; `hall_overdue`, those still out
+     * `exams.hall_overdue_hours` (48) after they should have ended (D-102).
      *
-     * @response array{data: array{notifications: array{unread: int}, interviews: array{to_book: int, to_record: int, total: int}|null, contracts: array{awaiting_contract: int, ending_soon: int, expired: int}|null}}
+     * @response array{data: array{notifications: array{unread: int}, interviews: array{to_book: int, to_record: int, total: int}|null, contracts: array{awaiting_contract: int, ending_soon: int, expired: int}|null, exams: array{hall_out: int, hall_overdue: int}|null}}
      */
     public function index(Request $request): JsonResponse
     {
         $user = $request->user();
         $interviews = null;
         $contracts = null;
+        $exams = null;
+
+        if ($user->hasPermission('exams.view')) {
+            // Sessions taken out to a hall (D-102), and those still out long after they ended.
+            $out = ExamHallDownload::query()->where('status', 'out');
+            $exams = [
+                'hall_out' => (clone $out)->count(),
+                'hall_overdue' => (clone $out)->whereHas('session', fn($session) => $session->whereRaw(
+                    "starts_at + (duration_minutes + extra_minutes) * interval '1 minute' + ? * interval '1 hour' < ?",
+                    [(int) config('exams.hall_overdue_hours'), Date::now()],
+                ))->count(),
+            ];
+        }
 
         if ($user->hasPermission('interviews.view')) {
             $toBook = Application::query()
@@ -56,6 +72,7 @@ class BadgeController extends Controller
             'notifications' => ['unread' => $user->unreadNotifications()->count()],
             'interviews' => $interviews,
             'contracts' => $contracts,
+            'exams' => $exams,
         ]]);
     }
 }

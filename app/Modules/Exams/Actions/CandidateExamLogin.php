@@ -38,6 +38,8 @@ class CandidateExamLogin
             ->whereIn('status', [BookingStatus::Booked, BookingStatus::Attended])
             ->whereIn('application_id', $candidate->applications()->select('id'))
             ->whereHas('session', fn($session) => $session->where('starts_at', '<=', $now->copy()->addMinutes((int) config('exams.login_early_minutes'))))
+            // A session taken out to a hall is sat there only (D-102).
+            ->whereNotExists(fn($hall) => $hall->from('exam_hall_downloads')->whereColumn('exam_hall_downloads.session_id', 'exam_bookings.session_id')->where('exam_hall_downloads.status', 'out'))
             ->get()
             ->first(fn(ExamBooking $booking) => $this->withinWindow($booking, $now) && Hash::check($password, $booking->session->password));
 

@@ -17,4 +17,11 @@ return [
 
     // The most one extension may add (for everyone, or for one attempt).
     'max_extension_minutes' => 240,
+    // A session is taken out to a hall with no internet at most this many hours before it starts (D-102): the questions
+    // stay on the laptop no longer than needed.
+    'hall_download_hours' => (int) env('EXAMS_HALL_DOWNLOAD_HOURS', 48),
+    // A session still out this many hours after it ended is shown as overdue (the sidebar, the session).
+    'hall_overdue_hours' => (int) env('EXAMS_HALL_OVERDUE_HOURS', 48),
+    // The largest bundle a laptop may bring back.
+    'hall_bundle_max_kilobytes' => 10240,
 ];

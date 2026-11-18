@@ -23,12 +23,12 @@ class LoginRequest extends FormRequest
                 'required',
                 'string',
                 'max:255',
-                Password::min(8) // Minimum length of 8 characters
-                    ->letters()          // Must contain at least one letter
-                    ->mixedCase()        // Must contain both uppercase and lowercase letters
-                    ->numbers()          // Must contain at least one number
-                    ->symbols()          // Must contain at least one special character (!@#$%^&*)
-                    // ->uncompromised(),
+                // Password::min(8) // Minimum length of 8 characters
+                //     ->letters()          // Must contain at least one letter
+                //     ->mixedCase()        // Must contain both uppercase and lowercase letters
+                //     ->numbers()          // Must contain at least one number
+                //     ->symbols()          // Must contain at least one special character (!@#$%^&*)
+                //     ->uncompromised(),
             ],
             'device_name' => ['nullable', 'string', 'max:100'],
         ];

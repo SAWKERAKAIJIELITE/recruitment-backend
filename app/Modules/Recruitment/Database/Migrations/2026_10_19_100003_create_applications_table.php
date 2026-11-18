@@ -64,7 +64,7 @@ return new class extends Migration
             $table->foreignId('residence_district_id')->index()->constrained('districts')->restrictOnDelete();
             $table->unsignedBigInteger('residence_area_id')->nullable();   // optional (D-043); when given, it must be in the district
             $table->text('residence_details')->nullable();
-            $table->string('phone_number', 16);
+            $table->string('phone_number', 16)->nullable();
             $table->boolean('works_for_other_government_entity')->index();
             $table->boolean('full_commitment')->index();
             $table->boolean('overnight_work')->index();

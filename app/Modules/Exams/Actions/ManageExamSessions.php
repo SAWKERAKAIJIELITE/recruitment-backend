@@ -8,6 +8,7 @@ use App\Modules\Exams\Enums\ExamPlanStatus;
 use App\Modules\Exams\Models\ExamAttempt;
 use App\Modules\Exams\Models\ExamPlanVersion;
 use App\Modules\Exams\Models\ExamSession;
+use App\Modules\Exams\Support\HallGuard;
 use App\Modules\Identity\Models\StaffUser;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
@@ -17,7 +18,8 @@ use Illuminate\Validation\ValidationException;
  * Exam sessions (D-056, D-073): created on a published plan with the plan's duration, a late window and a password;
  * its questions are drawn at once. Until it starts, its start, place, late window and questions can change.
  * The password and notes can change at any time. An extension adds time for everyone still sitting
- * (permission attempts.extend). A session nobody was booked into can be deleted.
+ * (permission attempts.extend). A session nobody was booked into can be deleted. While it is out in a hall (D-102),
+ * only its notes change.
  */
 class ManageExamSessions
 {
@@ -60,6 +62,10 @@ class ManageExamSessions
             $session = $this->lock($session);
             $timing = array_intersect_key($data, array_flip(['starts_at', 'late_minutes', 'location']));
 
+            if (array_diff(array_keys($data), ['notes']) !== []) {
+                HallGuard::assertNotOut($session);
+            }
+
             if ($timing !== [] && $session->hasStarted()) {
                 $this->fail('session', 'exams.sessions.started');
             }
@@ -84,6 +90,7 @@ class ManageExamSessions
     {
         return DB::transaction(function () use ($session, $actor) {
             $session = $this->lock($session);
+            HallGuard::assertNotOut($session);
 
             if ($session->hasStarted()) {
                 $this->fail('session', 'exams.sessions.started');
@@ -101,6 +108,7 @@ class ManageExamSessions
     {
         DB::transaction(function () use ($session, $actor) {
             $session = $this->lock($session);
+            HallGuard::assertNotOut($session);
 
             if ($session->bookings()->exists() || $session->extensions()->exists()) {
                 $this->fail('session', 'exams.sessions.in_use');
@@ -122,6 +130,7 @@ class ManageExamSessions
     {
         return DB::transaction(function () use ($session, $minutes, $reason, $actor) {
             $session = $this->lock($session);
+            HallGuard::assertNotOut($session);
             $now = Date::now();
 
             if ($now->greaterThanOrEqualTo($session->endsAt())) {

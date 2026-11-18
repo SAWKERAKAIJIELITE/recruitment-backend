@@ -3,6 +3,7 @@
 use App\Modules\Exams\Http\Controllers\CandidateExamController;
 use App\Modules\Exams\Http\Controllers\ExamBookingController;
 use App\Modules\Exams\Http\Controllers\ExamDecisionController;
+use App\Modules\Exams\Http\Controllers\ExamHallController;
 use App\Modules\Exams\Http\Controllers\ExamPlanController;
 use App\Modules\Exams\Http\Controllers\ExamQuestionController;
 use App\Modules\Exams\Http\Controllers\ExamSessionController;
@@ -76,6 +77,13 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
     Route::middleware('can:exam_bank.manage')->group(function () {
         Route::get('exam-sessions/{session}/questions', [ExamSessionController::class, 'questions'])->whereUuid('session');
         Route::get('exam-attempts/{attempt}/answers', [ExamBookingController::class, 'answers'])->whereUuid('attempt');
+    });
+
+    // A session taken out to a hall with no internet, and brought back (D-102).
+    Route::middleware('can:exams.offline')->group(function () {
+        Route::post('exam-sessions/{session}/hall/download', [ExamHallController::class, 'download'])->whereUuid('session');
+        Route::post('exam-sessions/{session}/hall/upload', [ExamHallController::class, 'upload'])->whereUuid('session');
+        Route::post('exam-sessions/{session}/hall/cancel', [ExamHallController::class, 'cancel'])->whereUuid('session');
     });
 
     Route::middleware('can:attempts.extend')->group(function () {

@@ -6,6 +6,7 @@ use App\Modules\Audit\Support\AuditTrail;
 use App\Modules\Exams\Enums\BookingStatus;
 use App\Modules\Exams\Models\ExamBooking;
 use App\Modules\Exams\Models\ExamSession;
+use App\Modules\Exams\Support\HallGuard;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Models\Application;
@@ -30,6 +31,7 @@ class ManageExamBookings
     {
         return DB::transaction(function () use ($session, $applicationIds, $actor) {
             $session = ExamSession::query()->whereKey($session->id)->sharedLock()->with('plan')->firstOrFail();
+            HallGuard::assertNotOut($session);   // an excuse booking into it too: the laptop's list is fixed (D-102)
 
             if (Date::now()->greaterThanOrEqualTo($session->lateUntil())) {
                 $this->fail('session', 'exams.bookings.session_closed');
@@ -64,6 +66,7 @@ class ManageExamBookings
     {
         return DB::transaction(function () use ($booking, $reason, $actor) {
             $booking = ExamBooking::query()->whereKey($booking->id)->lockForUpdate()->firstOrFail();
+            HallGuard::assertNotOut(ExamSession::query()->findOrFail($booking->session_id), 'booking');
 
             if ($booking->status !== BookingStatus::Booked) {
                 $this->fail('booking', 'exams.bookings.not_waiting', ['status' => $booking->status->labelAr()]);
