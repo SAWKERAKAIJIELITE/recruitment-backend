@@ -61,6 +61,7 @@ check "the settings are not served (/.env)"              body_lacks 'APP_KEY' "$
 check "the other documentation pages are not served (/docs)" body_lacks 'scribe\|openapi\|postman' "$BASE/docs"
 check "a missing desktop update file is 404"           status_is 404 "$BASE/desktop/no-such-release.yml"
 check "the desktop folder is not listed (/desktop/)"     status_is 404 "$BASE/desktop/"
+check "a missing installer is not cached"               header_sent 'cache-control: no-store' "$BASE/desktop/no-such-release.exe"
 check "X-Content-Type-Options is sent"                   header_sent 'x-content-type-options: nosniff' "$BASE/api/v1/ping"
 check "X-Frame-Options is sent"                          header_sent 'x-frame-options: deny' "$BASE/api/v1/ping"
 case "$BASE" in

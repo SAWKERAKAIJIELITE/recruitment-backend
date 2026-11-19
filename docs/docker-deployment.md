@@ -326,7 +326,7 @@ the `desktop-releases` volume, mounted read-only at `/srv/desktop`:
 | -------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `/desktop/latest.yml`                  | The current manifest, `Cache-Control: no-store` (never cached by a browser or Cloudflare). |
 | `/desktop/<installer>.exe`, `.blockmap` | The files, cached for a year (`immutable`): their names carry the version.               |
-| `/desktop/` or a missing file          | **404**. No listing, and never the frontend's `index.html`.                               |
+| `/desktop/` or a missing file          | **404** with `Cache-Control: no-store`. No listing, and never the frontend's `index.html`. |
 
 ### 13.1 Publishing a release
 
@@ -386,5 +386,10 @@ challenge (a JavaScript or CAPTCHA page breaks the update), so in the Cloudflare
    above can skip. "I'm Under Attack" mode must stay off for the same reason.
 
 Then check with `curl` as above: no `cf-mitigated: challenge` header, and the YAML itself in the body.
+
+**After copying a release, if an installer still answers 404** with `cf-cache-status: HIT`, Cloudflare kept an
+old 404 (before the fix of 18 November 2026 a 404 went out with the year-long cache). Purge it: **Caching →
+Configuration → Purge Cache → Custom purge**, the installer's and the blockmap's full URLs (or, with a plan that
+allows it, the prefix `rec.1005.date/desktop/`).
 
 The checks of step 6 include `/desktop/`: a missing file and the folder itself must answer 404.
