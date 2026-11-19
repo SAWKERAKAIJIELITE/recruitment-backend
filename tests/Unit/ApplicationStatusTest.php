@@ -33,9 +33,26 @@ class ApplicationStatusTest extends TestCase
 
     public function test_the_happy_path_is_all_outcomes(): void
     {
-        $this->assertSame(D::Outcome, S::AwaitingExam->decisionRequiredFor(S::AwaitingInterview));
+        $this->assertSame(D::Outcome, S::AwaitingExam->decisionRequiredFor(S::ExamTaken));
+        $this->assertSame(D::Outcome, S::ExamTaken->decisionRequiredFor(S::AwaitingInterview));
         $this->assertSame(D::Outcome, S::AwaitingInterview->decisionRequiredFor(S::AwaitingContract));
         $this->assertSame(D::Outcome, S::AwaitingContract->decisionRequiredFor(S::ContractWritten));
+    }
+
+    public function test_an_exam_result_waits_for_the_approval_and_a_pass_never_goes_back(): void
+    {
+        // D-104: from awaiting_exam the result goes to exam_taken, never straight to passed or failed.
+        $this->assertNull(S::AwaitingExam->decisionRequiredFor(S::AwaitingInterview));
+        $this->assertNull(S::AwaitingExam->decisionRequiredFor(S::ExamFailed));
+        // The approval: passed, failed, or a pass failed by decision.
+        $this->assertSame([D::Outcome], S::ExamTaken->decisionsFor(S::AwaitingInterview));
+        $this->assertSame([D::Outcome, D::FailedByDecision], S::ExamTaken->decisionsFor(S::ExamFailed));
+        $this->assertSame(D::Outcome, S::ExamTaken->decisionRequiredFor(S::ExamFailed));
+        $this->assertSame(D::Closure, S::ExamTaken->decisionRequiredFor(S::Closed));
+        $this->assertTrue(S::ExamTaken->isLive());
+        // Nothing fails a candidate who already passed.
+        $this->assertSame([], S::AwaitingInterview->decisionsFor(S::ExamFailed));
+        $this->assertTrue(D::FailedByDecision->needsReasonAndActor());
     }
 
     public function test_failing_the_exams_can_only_be_overturned_by_an_exception(): void

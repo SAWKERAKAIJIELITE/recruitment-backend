@@ -8,7 +8,8 @@ use Illuminate\Support\Facades\Route;
 
 // Every route here needs a signed-in, active staff user. Documents are the Documenting office's (documents.view,
 // documents.manage); the Contracts office reads and attaches the documents of an application, like its contract
-// (contracts.view, contracts.manage; D-085).
+// (contracts.view, contracts.manage; D-085); Recruitment attaches the papers a candidate brought while adding them
+// (candidates.manage: incoming types, a received application; D-106).
 Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('api/v1/staff')->group(function () {
     Route::get('document-types', [DocumentTypeController::class, 'index']);
 
@@ -27,8 +28,8 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
         Route::get('documents/{document}/download', [DocumentController::class, 'download'])->whereUuid('document');
     });
 
-    Route::middleware(RequireAnyPermission::class . ':documents.manage,contracts.manage')->group(function () {
-        Route::post('applications/{application}/documents', [DocumentController::class, 'storeForApplication'])->whereUuid('application');
-        Route::post('documents/{document}/archive', [DocumentController::class, 'archive'])->whereUuid('document');
-    });
+    Route::post('applications/{application}/documents', [DocumentController::class, 'storeForApplication'])->whereUuid('application')
+        ->middleware(RequireAnyPermission::class . ':documents.manage,contracts.manage,candidates.manage');
+    Route::post('documents/{document}/archive', [DocumentController::class, 'archive'])->whereUuid('document')
+        ->middleware(RequireAnyPermission::class . ':documents.manage,contracts.manage');
 });

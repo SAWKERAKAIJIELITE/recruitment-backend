@@ -10,6 +10,7 @@ use App\Support\BusinessDay;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
@@ -93,6 +94,9 @@ final class ApplicationSearch
             'sort' => ['nullable', Rule::in(array_keys(self::SORTS))],
             'direction' => ['nullable', Rule::in(['asc', 'desc'])],
             'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
+            // Recruitment's calls (D-105): to_inform, not_reached or informed, of the appointment ahead; `any`: every
+            // application with an appointment ahead.
+            'call_state' => ['nullable', Rule::in([...Appointments::STATES, 'any'])],
         ];
 
         foreach (self::LIST_FILTERS as $filter => $table) {
@@ -175,6 +179,13 @@ final class ApplicationSearch
 
         if ($has('status')) {
             $query->whereIn('applications.current_status', (array) $filters['status']);
+        }
+
+        if ($has('call_state')) {
+            $now = Date::now();
+            $filters['call_state'] === 'any'
+                ? $query->whereRaw(Appointments::stateSql() . ' IS NOT NULL', [$now, $now])
+                : $query->whereRaw(Appointments::stateSql() . ' = ?', [$now, $now, $filters['call_state']]);
         }
 
         if ($has('live')) {

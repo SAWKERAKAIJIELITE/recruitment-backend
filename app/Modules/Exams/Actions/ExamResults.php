@@ -37,11 +37,12 @@ use Illuminate\Validation\ValidationException;
  *  - an online subject or part scores its right answers out of its questions; a hand-marked part (التجويد) its
  *    entered mark out of its scale;
  *  - when the attempt is closed and every hand mark is in, the engine decides under the plan's pass policy and the
- *    application moves at once: passed → awaiting_interview, failed → exam_failed, dated the day of the exam, with
- *    the booking as the cause;
+ *    application moves to exam_taken, dated the day of the exam, with the booking as the cause; it passes or fails
+ *    when the exams office approves the session's results (ExamResultsApproval, D-104);
  *  - a hand mark is entered once; changing it is a correction with a reason, and after the decision it needs the
- *    permission exam_results.correct: the result gets a new revision, and when passed/failed changes the
- *    application gets a correction event (only while that result is still its latest decision).
+ *    permission exam_results.correct: the result gets a new revision. Before the approval that is all (the approval
+ *    reads the latest revision); after it, when passed/failed changes the application gets a correction event (only
+ *    while the approval is still its latest decision). A pass the office failed by decision stays failed.
  */
 class ExamResults
 {
@@ -204,7 +205,8 @@ class ExamResults
         }
 
         try {
-            $this->lifecycle->move($application, $result->passed ? ApplicationStatus::AwaitingInterview : ApplicationStatus::ExamFailed, DecisionType::Outcome, $actor, null, $booking, $attempt->submitted_at);
+            // Passed or failed once the session's results are approved (D-104).
+            $this->lifecycle->move($application, ApplicationStatus::ExamTaken, DecisionType::Outcome, $actor, null, $booking, $attempt->submitted_at);
         } catch (IllegalStatusTransition $e) {
             // Kept, not lost with the attempt's closing: staff see the result and decide (logged).
             Log::warning('exam_result_not_applied', ['attempt_id' => $attempt->id, 'error' => $e->getMessage()]);
@@ -219,7 +221,11 @@ class ExamResults
         return $result;
     }
 
-    /** A hand mark was corrected after the decision: a new revision, and a correction event when the decision changes. */
+    /**
+     * A hand mark was corrected after the decision: a new revision. Once the results were approved, a correction event
+     * when passed/failed changes (D-104): before, the approval takes the latest revision; a pass failed by decision
+     * stays failed whatever the marks say.
+     */
     private function revise(ExamAttempt $attempt, string $reason, StaffUser $actor): void
     {
         $plan = $this->plan($attempt);
@@ -228,11 +234,16 @@ class ExamResults
 
         if ($result->passed !== $previous->passed) {
             $booking = ExamBooking::query()->findOrFail($attempt->booking_id);
+            $application = Application::query()->findOrFail($booking->application_id);
+            $failedByDecision = ! $result->passed && $application->current_status === ApplicationStatus::ExamFailed && $application->statusEvents()
+                ->where('exam_booking_id', $booking->id)->where('decision_type', DecisionType::FailedByDecision)->exists();
 
-            try {
-                $this->lifecycle->correct(Application::query()->findOrFail($booking->application_id), $result->passed ? ApplicationStatus::AwaitingInterview : ApplicationStatus::ExamFailed, $booking, $actor, $reason);
-            } catch (IllegalStatusTransition) {
-                $this->fail('marks', 'exams.results.not_latest');
+            if ($application->current_status !== ApplicationStatus::ExamTaken && ! $failedByDecision) {
+                try {
+                    $this->lifecycle->correct($application, $result->passed ? ApplicationStatus::AwaitingInterview : ApplicationStatus::ExamFailed, $booking, $actor, $reason);
+                } catch (IllegalStatusTransition) {
+                    $this->fail('marks', 'exams.results.not_latest');
+                }
             }
         }
 

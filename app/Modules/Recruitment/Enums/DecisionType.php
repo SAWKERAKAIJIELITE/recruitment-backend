@@ -29,9 +29,29 @@ enum DecisionType: string
      */
     case Correction = 'correction';
 
+    /**
+     * The exams office failed a candidate who passed, when it approved the session's results (ترسيب بقرار, D-104): a
+     * reason of a type (cheating, other) and an optional decision number. The computed result stays a pass.
+     */
+    case FailedByDecision = 'failed_by_decision';
+
     /** Decisions made by a person must carry a reason and an actor (analysis doc §07). */
     public function needsReasonAndActor(): bool
     {
-        return in_array($this, [self::Exception, self::ExcuseAccepted, self::Closure, self::Correction], true);
+        return in_array($this, [self::Exception, self::ExcuseAccepted, self::Closure, self::Correction, self::FailedByDecision], true);
+    }
+
+    public function labelAr(): string
+    {
+        return match ($this) {
+            self::Created => 'إنشاء الطلب',
+            self::Started => 'بدء دورة الطلب',
+            self::Outcome => 'نتيجة',
+            self::Exception => 'استثناء',
+            self::ExcuseAccepted => 'قبول عذر',
+            self::Closure => 'إغلاق',
+            self::Correction => 'تصحيح',
+            self::FailedByDecision => 'ترسيب بقرار',
+        };
     }
 }

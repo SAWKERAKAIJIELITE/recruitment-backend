@@ -55,7 +55,10 @@ class ExamSessionApiTest extends TestCase
         $this->planner = $this->examManager();        // so does exam_bank.manage
         $position = JobPosition::query()->findOrFail($this->referenceIds()['job_position_id']);
         $this->plan = $this->publishedPlan($position, $this->planContent([$this->subject()], $this->quran()), $this->planner);
-        $this->tajweed = (int) DB::table('exam_plan_subject_parts')->where('plan_version_id', $this->plan->id)->where('assessment', 'manual')->value('id');
+        // The hand-marked part's id, read from the plan as the frontend reads it (not the bank part's id).
+        $parts = collect($this->asStaff($this->staff)->getJson("/api/v1/staff/exam-plans/{$this->plan->id}")->assertOk()->json('data.subjects'))->flatMap(fn (array $subject) => $subject['parts']);
+        $this->tajweed = $parts->firstWhere('assessment', 'manual')['id'];
+        $this->assertSame((int) DB::table('exam_plan_subject_parts')->where('plan_version_id', $this->plan->id)->where('assessment', 'manual')->value('id'), $this->tajweed);
     }
 
     // ---- helpers ----
@@ -130,6 +133,12 @@ class ExamSessionApiTest extends TestCase
     private function booking(Application $application): array
     {
         return $this->asStaff($this->staff)->getJson("/api/v1/staff/applications/{$application->id}/exam-bookings")->assertOk()->json('data.0');
+    }
+
+    /** Approves a session's results (D-104), after it ends. */
+    private function approve(string $session, array $failures = [], ?StaffUser $as = null): TestResponse
+    {
+        return $this->asStaff($as ?? $this->staff)->postJson(self::URL."/{$session}/results-approval", $failures === [] ? [] : ['failures' => $failures]);
     }
 
     private function marks(string $booking, string $mark, ?string $reason = null, ?StaffUser $as = null): TestResponse
@@ -469,7 +478,8 @@ class ExamSessionApiTest extends TestCase
         $this->assertSame('98.00', $result['average']);   // الحديث 100, القرآن 60 + 36 = 96
         $this->assertSame(1, $result['outcome']['policy_version']);
 
-        $this->assertSame(S::AwaitingInterview, $application->fresh()->current_status);
+        // Decided: taken, waiting for the session's results to be approved (D-104).
+        $this->assertSame(S::ExamTaken, $application->fresh()->current_status);
         $event = $this->latestEvent($application);
         $this->assertSame($booking['id'], $event->exam_booking_id);
         $this->assertSame('outcome', $event->decision_type);
@@ -478,6 +488,13 @@ class ExamSessionApiTest extends TestCase
         $this->assertCount(1, $this->staff->createdExamSessions);
         $this->assertSame('2026-11-10 09:30:00+00', $event->occurred_at);
         $this->asStaff($this->staff)->getJson("/api/v1/staff/exam-bookings/{$booking['id']}")->assertOk()->assertJsonPath('data.decided_at', '2026-11-11T09:00:00+00:00');
+
+        // Approved: passed, dated the approval; the exam's day stays on exam_taken.
+        $this->travelTo('2026-11-11 10:00:00');
+        $this->approve($session)->assertOk()->assertJsonPath('meta', ['passed' => 1, 'failed' => 0, 'failed_by_decision' => 0]);
+        $this->assertSame(S::AwaitingInterview, $application->fresh()->current_status);
+        $approval = $this->latestEvent($application);
+        $this->assertSame(['outcome', $booking['id'], '2026-11-11 10:00:00+00', $this->staff->id], [$approval->decision_type, $approval->exam_booking_id, $approval->occurred_at, $approval->actor_id]);
     }
 
     public function test_a_failed_exam_its_reasons_and_an_exception(): void
@@ -493,9 +510,13 @@ class ExamSessionApiTest extends TestCase
         $result = $this->booking($application)['attempt']['result'];
         $this->assertFalse($result['passed']);
         $this->assertSame('subject_below_floor', $result['outcome']['reasons'][0]['code']);
+        $this->assertSame(S::ExamTaken, $application->fresh()->current_status);
+        $url = "/api/v1/staff/applications/{$application->id}/exam-exception";
+        $this->asStaff($this->examsStaff())->postJson($url, ['reason' => 'قبل الاعتماد'])->assertStatus(422)->assertJsonValidationErrors('application');
+        $this->travelTo('2026-11-10 10:00:00');
+        $this->approve($session)->assertOk()->assertJsonPath('meta.failed', 1);
         $this->assertSame(S::ExamFailed, $application->fresh()->current_status);
 
-        $url = "/api/v1/staff/applications/{$application->id}/exam-exception";
         $this->asStaff($this->hiringStaff())->postJson($url, ['reason' => 'حاجة ماسة'])->assertForbidden();   // Recruitment does not decide exams
         $approver = $this->examsStaff();
         $this->asStaff($approver)->postJson($url, ['reason' => 'حاجة ماسة إلى الاختصاص'])->assertOk()->assertJsonPath('application_status', 'awaiting_interview');
@@ -520,6 +541,8 @@ class ExamSessionApiTest extends TestCase
         // الحديث 3/5 = 60, القرآن 60 + 20 = 80: average 70, not above 70: failed.
         $this->answer($token, ['الحديث النبوي' => 3]);
         $this->asCandidate($token)->postJson('/api/v1/candidate/exam/submit')->assertOk();
+        $this->travelTo('2026-11-10 10:00:00');
+        $this->approve($session)->assertOk();
         $this->assertSame(S::ExamFailed, $application->fresh()->current_status);
         $this->assertSame('70.00', $this->booking($application)['attempt']['result']['average']);
 
@@ -554,7 +577,7 @@ class ExamSessionApiTest extends TestCase
         $this->answer($token);
 
         $this->asCandidate($token)->postJson('/api/v1/candidate/exam/submit')->assertOk();
-        $this->assertSame(S::AwaitingInterview, $application->fresh()->current_status);
+        $this->assertSame(S::ExamTaken, $application->fresh()->current_status);
         $this->assertNull(DB::table('exam_results')->value('decided_by'));   // the system decided
     }
 
@@ -592,7 +615,7 @@ class ExamSessionApiTest extends TestCase
 
         $rounds = $this->asStaff($this->staff)->getJson("/api/v1/staff/applications/{$application->id}/exam-bookings")->assertOk()->json('data');
         $this->assertSame([$session, $next], array_column(array_column($rounds, 'session'), 'id'));
-        $this->assertSame(['type' => 'excuse_accepted', 'at' => '2026-11-10T08:20:00+00:00', 'reason' => 'تقرير طبي', 'decision_number' => 'ق/2026/41', 'by' => ['id' => $approver->id, 'full_name' => $approver->full_name]], $rounds[0]['decision']);
+        $this->assertSame(['type' => 'excuse_accepted', 'type_label' => 'قبول عذر', 'reason_type' => null, 'reason_type_label' => null, 'at' => '2026-11-10T08:20:00+00:00', 'reason' => 'تقرير طبي', 'decision_number' => 'ق/2026/41', 'by' => ['id' => $approver->id, 'full_name' => $approver->full_name]], $rounds[0]['decision']);
         $this->assertNull($rounds[1]['decision']);
 
         // The history names the round each decision is about.
@@ -662,6 +685,8 @@ class ExamSessionApiTest extends TestCase
             $this->marks($this->booking($application)['id'], '40')->assertOk();
         }
 
+        $this->travelTo('2026-11-10 10:00:00');
+        $this->approve($session)->assertOk()->assertJsonPath('meta.passed', 2);
         $interviewer = $this->examsStaff();
         $ids = fn (string $rule) => array_column($this->asStaff($interviewer)->getJson('/api/v1/staff/interviews/queue?priority[]='.$rule)->assertOk()->json('data'), 'id');
         $this->assertSame([$stronger->id, $weaker->id], $ids('exam_average'));

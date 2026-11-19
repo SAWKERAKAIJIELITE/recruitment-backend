@@ -144,13 +144,14 @@ class ApplicationLifecycleTest extends TestCase
     {
         $application = $this->openApplication();
 
+        $this->lifecycle->move($application, S::ExamTaken, D::Outcome);
         $this->lifecycle->move($application, S::AwaitingInterview, D::Outcome);
         $this->lifecycle->move($application, S::AwaitingContract, D::Outcome);
         $this->lifecycle->move($application, S::ContractWritten, D::Outcome);
 
         $this->assertSame(S::ContractWritten, $application->current_status, 'the caller\'s model is reloaded');
         $this->assertSame(
-            ['received', 'awaiting_exam', 'awaiting_interview', 'awaiting_contract', 'contract_written'],
+            ['received', 'awaiting_exam', 'exam_taken', 'awaiting_interview', 'awaiting_contract', 'contract_written'],
             $this->statusesOf($application),
         );
     }
@@ -171,12 +172,13 @@ class ApplicationLifecycleTest extends TestCase
     {
         $this->freezeTime();
         $application = $this->openApplication();
+        $this->lifecycle->move($application, S::ExamTaken, D::Outcome);
         $this->lifecycle->move($application, S::AwaitingInterview, D::Outcome);
         $this->lifecycle->move($application, S::InterviewAbsent, D::Outcome);
         $this->lifecycle->move($application, S::AwaitingInterview, D::ExcuseAccepted, $this->hiringStaff(), 'Accepted');
 
         $this->assertSame(
-            ['received', 'awaiting_exam', 'awaiting_interview', 'interview_absent', 'awaiting_interview'],
+            ['received', 'awaiting_exam', 'exam_taken', 'awaiting_interview', 'interview_absent', 'awaiting_interview'],
             $this->statusesOf($application),
         );
     }
@@ -198,6 +200,7 @@ class ApplicationLifecycleTest extends TestCase
     public function test_the_decision_type_must_match_the_move(): void
     {
         $application = $this->openApplication();
+        $this->lifecycle->move($application, S::ExamTaken, D::Outcome);
         $this->lifecycle->move($application, S::ExamFailed, D::Outcome);
 
         // Failing can be overturned only by an exception, not by an ordinary outcome.
@@ -210,6 +213,7 @@ class ApplicationLifecycleTest extends TestCase
     {
         $actor = $this->hiringStaff();
         $application = $this->openApplication();
+        $this->lifecycle->move($application, S::ExamTaken, D::Outcome);
         $this->lifecycle->move($application, S::ExamFailed, D::Outcome);
 
         try {
@@ -229,6 +233,7 @@ class ApplicationLifecycleTest extends TestCase
     public function test_an_exception_without_an_actor_is_refused(): void
     {
         $application = $this->openApplication();
+        $this->lifecycle->move($application, S::ExamTaken, D::Outcome);
         $this->lifecycle->move($application, S::ExamFailed, D::Outcome);
 
         $this->expectException(IllegalStatusTransition::class);
@@ -251,6 +256,7 @@ class ApplicationLifecycleTest extends TestCase
     {
         $actor = $this->hiringStaff();
         $application = $this->openApplication();
+        $this->lifecycle->move($application, S::ExamTaken, D::Outcome);
         $this->lifecycle->move($application, S::ExamFailed, D::Outcome);
         $this->lifecycle->move($application, S::Closed, D::Closure, $actor, 'No exception was requested');
 
@@ -287,7 +293,7 @@ class ApplicationLifecycleTest extends TestCase
     public function test_a_written_contract_ends_only_through_contract_ended(): void
     {
         $application = $this->openApplication();
-        foreach ([S::AwaitingInterview, S::AwaitingContract, S::ContractWritten] as $to) {
+        foreach ([S::ExamTaken, S::AwaitingInterview, S::AwaitingContract, S::ContractWritten] as $to) {
             $this->lifecycle->move($application, $to, D::Outcome);
         }
 
@@ -311,6 +317,7 @@ class ApplicationLifecycleTest extends TestCase
         $application = $this->openApplication();
         $this->travelTo('2026-03-04 12:00:00');
 
+        $this->lifecycle->move($application, S::ExamTaken, D::Outcome, occurredAt: now()->parse('2026-03-02 10:15:30'));
         $event = $this->lifecycle->move($application, S::AwaitingInterview, D::Outcome, occurredAt: now()->parse('2026-03-02 10:15:30'));
 
         $this->assertSame('2026-03-02 10:15:30', $event->fresh()->occurred_at->format('Y-m-d H:i:s'));
@@ -323,7 +330,7 @@ class ApplicationLifecycleTest extends TestCase
 
         $this->expectException(IllegalStatusTransition::class);
 
-        $this->lifecycle->move($application, S::ExamFailed, D::Outcome, occurredAt: now()->addMinute());
+        $this->lifecycle->move($application, S::ExamTaken, D::Outcome, occurredAt: now()->addMinute());
     }
 
     public function test_a_decision_cannot_be_dated_before_the_previous_one(): void
@@ -334,7 +341,7 @@ class ApplicationLifecycleTest extends TestCase
 
         $this->expectException(IllegalStatusTransition::class);
 
-        $this->lifecycle->move($application, S::ExamFailed, D::Outcome, occurredAt: now()->parse('2026-02-28 23:59:59'));
+        $this->lifecycle->move($application, S::ExamTaken, D::Outcome, occurredAt: now()->parse('2026-02-28 23:59:59'));
     }
 
     public function test_the_database_refuses_an_event_dated_after_it_was_recorded(): void
@@ -403,6 +410,7 @@ class ApplicationLifecycleTest extends TestCase
         $application = $this->openApplication();
         $cause = $this->causeOf('trial_attempts');
 
+        $this->lifecycle->move($application, S::ExamTaken, D::Outcome, cause: $cause);
         $event = $this->lifecycle->move($application, S::ExamFailed, D::Outcome, cause: $cause);
 
         $this->assertSame($cause->getKey(), DB::table('application_status_events')->where('id', $event->id)->value('trial_attempt_id'));
@@ -413,6 +421,7 @@ class ApplicationLifecycleTest extends TestCase
         $this->createCauseTable('trial_attempts');
         $application = $this->openApplication();
         $cause = $this->causeOf('trial_attempts');
+        $this->lifecycle->move($application, S::ExamTaken, D::Outcome, cause: $cause);
         $this->lifecycle->move($application, S::ExamFailed, D::Outcome, cause: $cause);
 
         // The record the history points to cannot be deleted.
@@ -462,12 +471,13 @@ class ApplicationLifecycleTest extends TestCase
         $application = $this->openApplication();
         $stale = Application::findOrFail($application->id);   // loaded while still awaiting_exam
 
+        $this->lifecycle->move($application, S::ExamTaken, D::Outcome);
         $this->lifecycle->move($application, S::ExamFailed, D::Outcome);
 
         // The lifecycle reads the status from the locked row, not from the stale model.
         $this->expectException(IllegalStatusTransition::class);
 
-        $this->lifecycle->move($stale, S::AwaitingInterview, D::Outcome);
+        $this->lifecycle->move($stale, S::ExamTaken, D::Outcome);
     }
 
     // ---- what the database itself guarantees ----
@@ -564,6 +574,7 @@ class ApplicationLifecycleTest extends TestCase
     public function test_the_database_refuses_an_exception_without_a_reason(): void
     {
         $application = $this->openApplication();
+        $this->lifecycle->move($application, S::ExamTaken, D::Outcome);
         $failed = $this->lifecycle->move($application, S::ExamFailed, D::Outcome);
 
         $this->expectException(QueryException::class);

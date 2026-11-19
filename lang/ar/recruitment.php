@@ -19,6 +19,10 @@ return [
     'start_needs_one' => 'أرسل application_ids أو filters، وليس كليهما.',
     'start_nothing' => 'لا يوجد طلب مستلم يطابق المرشحات.',
     'identity_only_filter' => 'هذا المرشح غير متاح لمكتبك: يرى مكتب التوظيف وحده ملف المرشح كاملًا.',
+    // Recruitment's calls about the appointments (D-105).
+    'calls' => [
+        'no_appointment' => 'ليس لهذا الطلب موعد قادم (اختبار محجوز أو مقابلة مجدولة) يُبلَّغ به المرشح.',
+    ],
     // Lifecycle notifications (D-089), stored in Arabic.
     'moved_title_one' => 'تحديث طلب ترشيح',
     'moved_title_many' => 'تحديث :count طلب ترشيح',

@@ -33,6 +33,7 @@ final class LifecycleNotices
     private const SECTIONS = [
         'received' => [StaffRole::Recruitment],
         'awaiting_exam' => [StaffRole::ExamsInterviews, StaffRole::Exams],
+        'exam_taken' => [StaffRole::ExamsInterviews, StaffRole::Exams],
         'exam_failed' => [StaffRole::ExamsInterviews, StaffRole::Exams],
         'exam_absent' => [StaffRole::ExamsInterviews, StaffRole::Exams],
         'awaiting_interview' => [StaffRole::ExamsInterviews, StaffRole::Interviews],

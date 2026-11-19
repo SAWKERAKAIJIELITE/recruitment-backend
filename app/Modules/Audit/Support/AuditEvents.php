@@ -23,6 +23,7 @@ final class AuditEvents
         'exam.candidate_login' => 'دخول مرشح إلى الاختبار',
         // Recruitment.
         'application.updated' => 'تصحيح بيانات طلب',
+        'application.calls_recorded' => 'تسجيل اتصال بمرشح لإعلامه بموعده',
         'candidate.updated' => 'تصحيح بيانات مرشح',
         'candidate.deactivated' => 'إيقاف مرشح',
         'candidate.activated' => 'إعادة تفعيل مرشح',
@@ -70,6 +71,7 @@ final class AuditEvents
         'exam_marks.entered' => 'إدخال علامات يدوية',
         'exam_marks.corrected' => 'تصحيح علامات يدوية',
         'exam_result.decided' => 'صدور نتيجة اختبار',
+        'exam_session.results_approved' => 'اعتماد نتائج جلسة اختبار',
         'exam_result.revised' => 'تعديل نتيجة اختبار',
         'exam.exception_approved' => 'استثناء من الرسوب في الاختبار',
         'exam.excuse_accepted' => 'قبول عذر الغياب عن الاختبار',

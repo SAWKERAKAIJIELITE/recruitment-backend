@@ -64,6 +64,11 @@ class ApplicationSummaryResource extends JsonResource
             ],
             'notes' => $this->notes,
             'candidate' => new CandidateResource($this->candidate),
+            /**
+             * The appointment ahead (an exam booked, an interview scheduled) and whether Recruitment told the candidate
+             * (D-105): kind, time, place, `call_state` (to_inform, not_reached, informed) and `last_call`; null without one.
+             */
+            'appointment' => $this->getAttribute('appointment'),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

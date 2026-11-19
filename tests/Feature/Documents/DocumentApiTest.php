@@ -64,7 +64,7 @@ class DocumentApiTest extends TestCase
     {
         $lifecycle = app(ApplicationLifecycle::class);
 
-        foreach ([S::AwaitingInterview, S::AwaitingContract, S::ContractWritten] as $next) {
+        foreach ([S::ExamTaken, S::AwaitingInterview, S::AwaitingContract, S::ContractWritten] as $next) {
             $lifecycle->move($application, $next, D::Outcome);
 
             if ($next === $status) {
@@ -241,6 +241,37 @@ class DocumentApiTest extends TestCase
 
         // The Documenting office sees both.
         $this->assertCount(2, $this->asStaff($this->documentsStaff())->getJson("/api/v1/staff/applications/{$application->id}/documents?include_archived=1")->json('data.documents'));
+    }
+
+    public function test_recruitment_attaches_the_papers_a_candidate_brought_while_adding_them(): void
+    {
+        $recruitment = $this->hiringStaff();
+        $received = $this->openApplication($recruitment, [], start: false);
+
+        // The papers that came with the candidate (D-106): on the person, as the Documenting office stores them.
+        $card = $this->upload($received, 'صورة البطاقة الشخصية', null, $recruitment)->assertCreated()->assertJsonPath('data.application', null)->json('data.id');
+        $this->upload($received, 'السيرة الذاتية', null, $recruitment)->assertCreated();
+        $this->upload($received, 'كتاب الترشيح', null, $recruitment)->assertCreated()->assertJsonPath('data.application.id', $received->id);
+        $this->assertSame($received->candidate_id, Document::query()->findOrFail($card)->candidate_id);
+
+        // Not what the organization issues.
+        $this->upload($received, 'العقد', null, $recruitment)->assertStatus(422)->assertJsonValidationErrors('document_type_id');
+        $this->upload($received, 'قرار الاستثناء', null, $recruitment)->assertStatus(422)->assertJsonValidationErrors('document_type_id');
+
+        // Not once the application has started: then the Documenting office uploads.
+        $started = $this->openApplication($recruitment, ['candidate' => ['national_number' => '05555555555']]);
+        $this->upload($started, 'الشهادات العلمية', null, $recruitment)->assertStatus(422)->assertJsonValidationErrors('application');
+        $this->assertStringContainsString('بانتظار الاختبار', $this->upload($started, 'الشهادات العلمية', null, $recruitment)->json('errors.application.0'));
+        $this->upload($started, 'الشهادات العلمية')->assertCreated();
+
+        // Its own section stays the Documenting office's: Recruitment reads, downloads and archives nothing.
+        $this->asStaff($recruitment)->getJson("/api/v1/staff/applications/{$received->id}/documents")->assertForbidden();
+        $this->asStaff($recruitment)->get("/api/v1/staff/documents/{$card}/download")->assertForbidden();
+        $this->asStaff($recruitment)->postJson("/api/v1/staff/documents/{$card}/archive", ['reason' => 'نسخة خاطئة'])->assertForbidden();
+
+        // Another office without either permission is still refused.
+        $this->upload($received, 'السيرة الذاتية', null, $this->examsStaff())->assertForbidden();
+        $this->assertSame(1, DB::table('audit_events')->where('event', 'document.uploaded')->where('actor_id', $recruitment->id)->whereJsonContains('context->type', 'صورة البطاقة الشخصية')->count());
     }
 
     // ---- types ----

@@ -5,11 +5,13 @@ namespace App\Modules\Recruitment\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Modules\Recruitment\Actions\ApplicationLifecycle;
 use App\Modules\Recruitment\Actions\CreateApplication;
+use App\Modules\Recruitment\Actions\RecordAppointmentCalls;
 use App\Modules\Recruitment\Actions\UpdateApplication;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Exceptions\IllegalStatusTransition;
 use App\Modules\Recruitment\Http\Requests\CloseApplicationRequest;
+use App\Modules\Recruitment\Http\Requests\RecordCallsRequest;
 use App\Modules\Recruitment\Http\Requests\StartApplicationsRequest;
 use App\Modules\Recruitment\Http\Requests\StoreApplicationRequest;
 use App\Modules\Recruitment\Http\Requests\UpdateApplicationRequest;
@@ -18,6 +20,7 @@ use App\Modules\Recruitment\Http\Resources\ApplicationResource;
 use App\Modules\Recruitment\Http\Resources\ApplicationSummaryResource;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Queries\ApplicationSearch;
+use App\Modules\Recruitment\Queries\Appointments;
 use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -52,6 +55,9 @@ class ApplicationController extends Controller
      * - Ranges (included): `studying_years_min`/`_max`, `quran_parts_min`/`_max`, `birth_date_from`/`_to`,
      *   `age_min`/`age_max` (whole years today), `from`/`to` (opening date, Damascus days). `studying_years`: exact.
      * - `created_by`: the staff user who opened it; `import_batch_id`: imported by that batch.
+     * - `call_state` (D-105): `to_inform`, `not_reached` or `informed` about the appointment ahead (an exam booked, an
+     *   interview scheduled), or `any` (every application with one). Each full row has `appointment`: its kind, time,
+     *   place, call state and last call; null without one.
      * - `sort`: `created_at` (default, newest first), `updated_at` (the latest change first: a correction or a status
      *   move), `nomination_number`, `full_name`, `birth_date`, `status`;
      *   `direction`: `asc` or `desc`. `per_page`: 5 to 100 (25).
@@ -71,7 +77,15 @@ class ApplicationController extends Controller
             ->paginate((int) ($filters['per_page'] ?? 25))
             ->withQueryString();
 
-        return $full ? ApplicationSummaryResource::collection($applications) : ApplicationIdentityResource::collection($applications);
+        if (! $full) {
+            return ApplicationIdentityResource::collection($applications);
+        }
+
+        // Recruitment's calls about the appointments ahead (D-105), for the page in two queries.
+        $appointments = Appointments::of($applications->getCollection(), Date::now());
+        $applications->getCollection()->each(fn(Application $application) => $application->setAttribute('appointment', $appointments[$application->id] ?? null));
+
+        return ApplicationSummaryResource::collection($applications);
     }
 
     /**
@@ -115,6 +129,25 @@ class ApplicationController extends Controller
     }
 
     /**
+     * Record calls about appointments
+     *
+     * Recruitment told the candidates (or tried to) of the appointment their application waits for (D-105): an exam
+     * booked (until its session's late window closes) or an interview scheduled (until its time). `application_ids`
+     * (1 to 500), `reached` (true: informed; false: not reached), optional `note`. For information only: nothing moves
+     * and nothing is blocked. A call is about the time and place as they stand: when either changes, the application is
+     * `to_inform` again. All or nothing: an application without an appointment ahead is 422 on `application_ids.N`.
+     * Answers each application's `appointment` after the calls.
+     *
+     * @response array{data: list<array{application_id: string, appointment: array}>}
+     */
+    public function calls(RecordCallsRequest $request, RecordAppointmentCalls $calls): JsonResponse
+    {
+        $appointments = $calls->record($request->validated('application_ids'), $request->boolean('reached'), $request->validated('note'), $request->user());
+
+        return response()->json(['data' => array_map(fn(string $id) => ['application_id' => $id, 'appointment' => $appointments[$id]], $request->validated('application_ids'))], 201);
+    }
+
+    /**
      * Open an application
      *
      * Finds the person by national number (or creates them), takes the next nomination number and starts
@@ -150,7 +183,11 @@ class ApplicationController extends Controller
             return new ApplicationIdentityResource($application->load(ApplicationIdentityResource::RELATIONS));
         }
 
-        return new ApplicationResource($application->load(ApplicationResource::RELATIONS));
+        $application->load(ApplicationResource::RELATIONS);
+        // The appointment ahead and every call about it (D-105).
+        $application->setAttribute('appointment', Appointments::of(collect([$application]), Date::now(), withCalls: true)[$application->id] ?? null);
+
+        return new ApplicationResource($application);
     }
 
     /**

@@ -80,6 +80,7 @@ class ApplicationSearchTest extends TestCase
     public function test_one_or_several_statuses_and_live_or_ended(): void
     {
         $failed = $this->open('11111111111');
+        app(ApplicationLifecycle::class)->move($failed, ApplicationStatus::ExamTaken, DecisionType::Outcome);
         app(ApplicationLifecycle::class)->move($failed, ApplicationStatus::ExamFailed, DecisionType::Outcome);
         $this->open('22222222222');
         $closed = $this->open('33333333333');

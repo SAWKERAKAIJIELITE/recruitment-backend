@@ -14,9 +14,11 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
         Route::get('reports/results', [ResultsReportController::class, 'list']);
     });
 
+    // Each office's summary on its first screen (D-107): every staff user, each section filled for its readers.
+    Route::get('reports/summary', [ReportController::class, 'summary']);
+
     // Across every section: the general manager and the system administrator.
     Route::middleware('can:reports.view')->group(function () {
-        Route::get('reports/summary', [ReportController::class, 'summary']);
         Route::get('reports/workbook', [ReportController::class, 'workbook']);
     });
 

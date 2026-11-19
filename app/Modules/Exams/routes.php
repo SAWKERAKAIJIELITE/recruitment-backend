@@ -71,6 +71,8 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
         Route::post('exam-sessions/{session}/bookings', [ExamSessionController::class, 'book'])->whereUuid('session');
         Route::post('exam-bookings/{booking}/cancel', [ExamBookingController::class, 'cancel'])->whereUuid('booking');
         Route::post('exam-bookings/{booking}/marks', [ExamBookingController::class, 'marks'])->whereUuid('booking');
+        // The session's results, approved once after it (D-104); failing a pass by decision also needs exceptions.approve.
+        Route::post('exam-sessions/{session}/results-approval', [ExamSessionController::class, 'approveResults'])->whereUuid('session');
     });
 
     // The questions with their answers: only who manages the bank.

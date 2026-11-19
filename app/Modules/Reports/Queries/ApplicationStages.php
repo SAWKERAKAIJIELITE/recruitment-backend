@@ -14,6 +14,10 @@ use Carbon\CarbonInterface;
  * accepted excuses of its interview absences. A correction replaces the decision it corrects and keeps that
  * decision's date: the exam happened then.
  *
+ * Since D-104 an exam round is taken (exam_taken, the exam's day) and then approved: passed, failed, or failed by
+ * decision. The round keeps the exam's day; until the approval its result is `pending`. Rounds recorded before, from
+ * awaiting_exam straight to the result, read as before.
+ *
  * Each exam decision carries the booking that caused it (exam sessions, D-074), whose marks ExamScores reads.
  */
 final class ApplicationStages
@@ -21,7 +25,7 @@ final class ApplicationStages
     /**
      * @return array{
      *     nominated_at: ?CarbonInterface,
-     *     exams: list<array{round: int, result: string, at: CarbonInterface, corrected: bool, reason: ?string, booking_id: ?string, exception: ?array{at: CarbonInterface, reason: ?string}, excuse: ?array{at: CarbonInterface, reason: ?string}}>,
+     *     exams: list<array{round: int, result: string, at: CarbonInterface, corrected: bool, reason: ?string, booking_id: ?string, approved_at: ?CarbonInterface, failed_by_decision: ?array{at: CarbonInterface, reason: ?string, reason_type: string, decision_number: ?string}, exception: ?array{at: CarbonInterface, reason: ?string}, excuse: ?array{at: CarbonInterface, reason: ?string}}>,
      *     interview_excuses: array<string, array{at: CarbonInterface, reason: ?string}>
      * }
      */
@@ -49,10 +53,20 @@ final class ApplicationStages
                     'corrected' => false,
                     'reason' => $event->reason,
                     'booking_id' => $event->exam_booking_id,
+                    'approved_at' => null,
+                    'failed_by_decision' => null,
                     'exception' => null,
                     'excuse' => null,
                 ],
-                $stage === S::AwaitingExam && $event->decision_type === D::Correction && $last !== null => $exams[$last] = ['result' => self::examResult($event->to_status), 'corrected' => true] + $exams[$last],
+                // The approval of a taken exam (D-104): its result, dated with the exam's day still.
+                $stage === S::ExamTaken && in_array($event->decision_type, [D::Outcome, D::FailedByDecision], true) && $last !== null => $exams[$last] = [
+                    'result' => self::examResult($event->to_status),
+                    'approved_at' => $event->occurred_at,
+                    'failed_by_decision' => $event->decision_type !== D::FailedByDecision ? null : [
+                        'at' => $event->occurred_at, 'reason' => $event->reason, 'reason_type' => $event->reason_type->value, 'decision_number' => $event->decision_number,
+                    ],
+                ] + $exams[$last],
+                in_array($stage, [S::AwaitingExam, S::ExamTaken], true) && $event->decision_type === D::Correction && $last !== null => $exams[$last] = ['result' => self::examResult($event->to_status), 'corrected' => true] + $exams[$last],
                 $stage === S::ExamFailed && $event->decision_type === D::Exception && $last !== null => $exams[$last]['exception'] = ['at' => $event->occurred_at, 'reason' => $event->reason],
                 $stage === S::ExamAbsent && $event->decision_type === D::ExcuseAccepted && $last !== null => $exams[$last]['excuse'] = ['at' => $event->occurred_at, 'reason' => $event->reason],
                 $stage === S::InterviewAbsent && $event->decision_type === D::ExcuseAccepted && $event->interview_id !== null => $interviewExcuses[$event->interview_id] = ['at' => $event->occurred_at, 'reason' => $event->reason],
@@ -71,7 +85,7 @@ final class ApplicationStages
     /** step => state => label */
     private const STATE_LABELS = [
         'nomination' => ['current' => 'بانتظار البدء', 'done' => 'تم الترشيح', 'closed' => 'أُغلق الطلب'],
-        'exam' => ['pending' => 'لم يصل بعد', 'current' => 'بانتظار الاختبار', 'done' => 'ناجح', 'done_by_exception' => 'ناجح باستثناء', 'failed' => 'راسب', 'absent' => 'غائب', 'closed' => 'أُغلق الطلب'],
+        'exam' => ['pending' => 'لم يصل بعد', 'current' => 'بانتظار الاختبار', 'taken' => 'أدى الاختبار، بانتظار اعتماد النتيجة', 'done' => 'ناجح', 'done_by_exception' => 'ناجح باستثناء', 'failed' => 'راسب', 'failed_by_decision' => 'راسب بقرار', 'absent' => 'غائب', 'closed' => 'أُغلق الطلب'],
         'interview' => ['pending' => 'لم يصل بعد', 'current' => 'بانتظار المقابلة', 'done' => 'ناجح', 'failed' => 'راسب', 'absent' => 'غائب', 'closed' => 'أُغلق الطلب'],
         'contract' => ['pending' => 'لم يصل بعد', 'current' => 'بانتظار كتابة العقد', 'done' => 'كُتب العقد', 'ended' => 'انتهى العقد', 'closed' => 'أُغلق الطلب'],
     ];
@@ -111,17 +125,24 @@ final class ApplicationStages
         $status = $closed === null ? $status : ($closed->previousEvent?->to_status ?? S::Received);
         $reached = match ($status) {
             S::Received => 0,
-            S::AwaitingExam, S::ExamFailed, S::ExamAbsent => 1,
+            S::AwaitingExam, S::ExamTaken, S::ExamFailed, S::ExamAbsent => 1,
             S::AwaitingInterview, S::InterviewFailed, S::InterviewAbsent => 2,
             default => 3,
         };
         $at = fn(S $status) => isset($into[$status->value]) ? $into[$status->value]->occurred_at->toIso8601String() : null;
         $examByException = ($into[S::AwaitingInterview->value] ?? null)?->decision_type === D::Exception;
+        // The exam's own wording where the state alone says less (D-104): taken and waiting for the approval, or failed by decision.
+        $examLabel = match (true) {
+            $status === S::ExamTaken => 'taken',
+            $status === S::ExamFailed && ($into[S::ExamFailed->value] ?? null)?->decision_type === D::FailedByDecision => 'failed_by_decision',
+            default => null,
+        };
 
         // The stage reached, as it stands.
         $here = match ($status) {
             S::Received => ['current', $nominatedAt?->toIso8601String()],
             S::AwaitingExam => ['current', $at(S::AwaitingExam)],
+            S::ExamTaken => ['current', $at(S::ExamTaken)],
             S::ExamFailed => ['failed', $at(S::ExamFailed)],
             S::ExamAbsent => ['absent', $at(S::ExamAbsent)],
             S::AwaitingInterview => ['current', $at(S::AwaitingInterview)],
@@ -159,7 +180,11 @@ final class ApplicationStages
                 'step' => $step,
                 'label' => self::STEP_LABELS[$step],
                 'state' => $state,
-                'state_label' => self::STATE_LABELS[$step][$byException ? 'done_by_exception' : $state] ?? $state,
+                'state_label' => self::STATE_LABELS[$step][match (true) {
+                    (bool) $byException => 'done_by_exception',
+                    $step === 'exam' && $index === $reached && $examLabel !== null && $state !== 'closed' => $examLabel,
+                    default => $state,
+                }] ?? $state,
                 'at' => $date,
                 'rounds' => $rounds[$step] ?? null,
                 'by_exception' => $byException,
@@ -175,6 +200,7 @@ final class ApplicationStages
             S::AwaitingInterview => 'passed',
             S::ExamFailed => 'failed',
             S::ExamAbsent => 'absent',
+            S::ExamTaken => 'pending',
             default => throw new \LogicException("{$status->value} is not an exam outcome"),
         };
     }

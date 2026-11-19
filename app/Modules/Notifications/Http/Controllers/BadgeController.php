@@ -6,10 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Modules\Contracts\Enums\ContractState;
 use App\Modules\Contracts\Models\Contract;
 use App\Modules\Exams\Models\ExamHallDownload;
+use App\Modules\Exams\Models\ExamSession;
 use App\Modules\Interviews\Enums\InterviewStatus;
 use App\Modules\Interviews\Models\Interview;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Models\Application;
+use App\Modules\Recruitment\Queries\Appointments;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Date;
@@ -25,10 +27,13 @@ class BadgeController extends Controller
      * none booked (the interview queue); `to_record`, booked interviews whose time has come, waiting for their result;
      * `total`. `contracts` (contracts.view): `awaiting_contract`, applications that passed their interview and wait for
      * their first contract; `ending_soon` and `expired`, latest contracts in that state today. `exams` (exams.view):
-     * `hall_out`, sessions taken out to a hall with no internet now; `hall_overdue`, those still out
-     * `exams.hall_overdue_hours` (48) after they should have ended (D-102).
+     * `results_to_approve`, sessions with decided results waiting for the approval (D-104); `hall_out`, sessions taken
+     * out to a hall with no internet now; `hall_overdue`, those still out `exams.hall_overdue_hours` (48) after they
+     * should have ended (D-102). `calls` (candidates.manage, Recruitment): `to_inform`, applications whose appointment
+     * ahead (an exam booked, an interview scheduled) nobody told the candidate of yet, or whose time or place changed
+     * since; `not_reached`, those whose latest call was not answered (D-105).
      *
-     * @response array{data: array{notifications: array{unread: int}, interviews: array{to_book: int, to_record: int, total: int}|null, contracts: array{awaiting_contract: int, ending_soon: int, expired: int}|null, exams: array{hall_out: int, hall_overdue: int}|null}}
+     * @response array{data: array{notifications: array{unread: int}, interviews: array{to_book: int, to_record: int, total: int}|null, contracts: array{awaiting_contract: int, ending_soon: int, expired: int}|null, exams: array{results_to_approve: int, hall_out: int, hall_overdue: int}|null, calls: array{to_inform: int, not_reached: int}|null}}
      */
     public function index(Request $request): JsonResponse
     {
@@ -36,11 +41,25 @@ class BadgeController extends Controller
         $interviews = null;
         $contracts = null;
         $exams = null;
+        $calls = null;
+
+        if ($user->hasPermission('candidates.manage')) {
+            // Who Recruitment has to call about their appointment (D-105), in one pass.
+            $now = Date::now();
+            $states = Application::query()
+                ->whereIn('current_status', [ApplicationStatus::AwaitingExam, ApplicationStatus::AwaitingInterview])
+                ->toBase()
+                ->selectRaw(Appointments::stateSql() . ' AS state', [$now, $now])
+                ->pluck('state')
+                ->countBy();
+            $calls = ['to_inform' => (int) $states->get('to_inform', 0), 'not_reached' => (int) $states->get('not_reached', 0)];
+        }
 
         if ($user->hasPermission('exams.view')) {
             // Sessions taken out to a hall (D-102), and those still out long after they ended.
             $out = ExamHallDownload::query()->where('status', 'out');
             $exams = [
+                'results_to_approve' => ExamSession::query()->has('bookingsAwaitingApproval')->count(),
                 'hall_out' => (clone $out)->count(),
                 'hall_overdue' => (clone $out)->whereHas('session', fn($session) => $session->whereRaw(
                     "starts_at + (duration_minutes + extra_minutes) * interval '1 minute' + ? * interval '1 hour' < ?",
@@ -73,6 +92,7 @@ class BadgeController extends Controller
             'interviews' => $interviews,
             'contracts' => $contracts,
             'exams' => $exams,
+            'calls' => $calls,
         ]]);
     }
 }

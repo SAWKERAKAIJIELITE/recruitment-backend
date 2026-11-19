@@ -46,6 +46,7 @@ class ContractReminderTest extends TestCase
         $this->number++;
         $this->travelTo('2026-10-01 09:00:00');
         $application = $this->openApplication(null, ['candidate' => ['national_number' => sprintf('%011d', $this->number)]]);
+        app(ApplicationLifecycle::class)->move($application, S::ExamTaken, D::Outcome);
         app(ApplicationLifecycle::class)->move($application, S::AwaitingInterview, D::Outcome);
         app(ApplicationLifecycle::class)->move($application, S::AwaitingContract, D::Outcome);
         $this->travelTo('2026-10-31 06:00:00');

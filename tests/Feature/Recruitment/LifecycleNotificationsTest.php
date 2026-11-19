@@ -57,6 +57,7 @@ class LifecycleNotificationsTest extends TestCase
     public function test_a_recorded_interview_tells_recruitment_and_the_contracts_office_not_the_recorder(): void
     {
         $application = $this->openApplication($this->staff['recruitment']);
+        app(ApplicationLifecycle::class)->move($application, S::ExamTaken, D::Outcome);
         app(ApplicationLifecycle::class)->move($application, S::AwaitingInterview, D::Outcome);
         $this->forget();
 
@@ -119,6 +120,7 @@ class LifecycleNotificationsTest extends TestCase
         $this->forget();
 
         // Passed the exam: the interviews' section now (D-097).
+        app(ApplicationLifecycle::class)->move($application, S::ExamTaken, D::Outcome, $this->staff['exams_only']);
         app(ApplicationLifecycle::class)->move($application, S::AwaitingInterview, D::Outcome, $this->staff['exams_only']);
         $this->assertSame(['recruitment', 'recruitment_two', 'exams_interviews', 'exams_two', 'interviews_only'], array_keys($this->told()));
         $this->forget();
@@ -134,6 +136,7 @@ class LifecycleNotificationsTest extends TestCase
 
         try {
             DB::transaction(function () use ($application) {
+                app(ApplicationLifecycle::class)->move($application, S::ExamTaken, D::Outcome);
                 app(ApplicationLifecycle::class)->move($application, S::ExamFailed, D::Outcome);
                 throw new \RuntimeException('rolled back');
             });
@@ -147,6 +150,7 @@ class LifecycleNotificationsTest extends TestCase
         DB::transaction(function () use ($application) {
             try {
                 DB::transaction(function () use ($application) {
+                    app(ApplicationLifecycle::class)->move($application, S::ExamTaken, D::Outcome);
                     app(ApplicationLifecycle::class)->move($application, S::ExamFailed, D::Outcome);
                     throw new \RuntimeException('inner');
                 });

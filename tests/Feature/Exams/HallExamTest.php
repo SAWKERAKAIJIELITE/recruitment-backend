@@ -90,7 +90,7 @@ class HallExamTest extends TestCase
             ->assertJsonPath('data.hall.download_id', $package['download_id'])
             ->assertJsonPath('data.hall.by.id', $this->moderator->id)
             ->assertJsonPath('data.hall.overdue', false);
-        $this->asModerator()->getJson('/api/v1/staff/badges')->assertOk()->assertJsonPath('data.exams', ['hall_out' => 1, 'hall_overdue' => 0]);
+        $this->asModerator()->getJson('/api/v1/staff/badges')->assertOk()->assertJsonPath('data.exams', ['results_to_approve' => 0, 'hall_out' => 1, 'hall_overdue' => 0]);
         $this->asModerator()->getJson(self::URL . '?hall=out')->assertOk()->assertJsonCount(1, 'data');
 
         // While it is out, nothing about it changes, by any route; only its notes.
@@ -137,13 +137,15 @@ class HallExamTest extends TestCase
         $this->assertSame(['sat', 'sat', 'absent'], array_column($summary['bookings'], 'outcome'));
         $this->assertMatchesRegularExpression('/^[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/', $summary['bookings'][0]['receipt']);
 
-        // Marked and decided by the server, dated with the hall's times.
-        $this->assertSame(S::AwaitingInterview, $this->people['A']->fresh()->current_status);
-        $this->assertSame(S::ExamFailed, $this->people['B']->fresh()->current_status);
+        // Marked and decided by the server, dated with the hall's times; the results wait for the approval (D-104).
+        $this->assertSame(S::ExamTaken, $this->people['A']->fresh()->current_status);
+        $this->assertSame(S::ExamTaken, $this->people['B']->fresh()->current_status);
         $this->assertSame(S::ExamAbsent, $this->people['C']->fresh()->current_status);
         $this->assertSame('2026-11-11 09:00:00', $this->movedAt('A'));
         $this->assertSame('2026-11-11 10:25:00', $this->movedAt('B'));
         $this->assertSame('2026-11-11 08:25:00', $this->movedAt('C'));   // the hall's late window closed (08:10 + 15)
+        $this->asModerator()->postJson(self::URL . "/{$this->session}/results-approval")->assertOk()->assertJsonPath('meta', ['passed' => 1, 'failed' => 1, 'failed_by_decision' => 0]);
+        $this->assertSame([S::AwaitingInterview, S::ExamFailed], [$this->people['A']->fresh()->current_status, $this->people['B']->fresh()->current_status]);
 
         $session = $this->asModerator()->getJson(self::URL . "/{$this->session}")->assertOk();
         $this->assertSame(['ended', null], [$session->json('data.stage'), $session->json('data.hall')]);
@@ -302,9 +304,9 @@ class HallExamTest extends TestCase
             'C' => null,
         ]))->assertOk()->json();
 
-        // A's result is kept, not applied; C's booking is cancelled, not an absence; B moves on.
+        // A's result is kept, not applied; C's booking is cancelled, not an absence; B moves on (taken, waiting for the approval).
         $this->assertSame(['sat', 'sat', 'cancelled'], array_column($summary['bookings'], 'outcome'));
-        $this->assertSame([S::Closed, S::AwaitingInterview, S::Closed], array_map(fn(Application $a) => $a->fresh()->current_status, array_values($this->people)));
+        $this->assertSame([S::Closed, S::ExamTaken, S::Closed], array_map(fn(Application $a) => $a->fresh()->current_status, array_values($this->people)));
         $this->assertSame(1, DB::table('exam_results')->where('attempt_id', $this->attemptRow('A')->id)->count());
     }
 
@@ -330,7 +332,7 @@ class HallExamTest extends TestCase
         $this->assertSame(S::AwaitingExam, $this->people['D']->fresh()->current_status);
         $tajweed = (int) DB::table('exam_plan_subject_parts')->where('plan_version_id', $plan->id)->where('assessment', 'manual')->value('id');
         $this->asModerator()->postJson("/api/v1/staff/exam-bookings/{$this->bookingOf('D')}/marks", ['marks' => [['part_id' => $tajweed, 'mark' => '36']]])->assertOk();
-        $this->assertSame(S::AwaitingInterview, $this->people['D']->fresh()->current_status);
+        $this->assertSame(S::ExamTaken, $this->people['D']->fresh()->current_status);
         $this->assertSame('2026-11-11 13:00:00', $this->movedAt('D'));   // dated the hand-in in the hall
         $this->session = $main;
     }

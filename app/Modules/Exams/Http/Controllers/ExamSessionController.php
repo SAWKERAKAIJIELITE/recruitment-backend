@@ -3,11 +3,13 @@
 namespace App\Modules\Exams\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Modules\Exams\Actions\ExamResultsApproval;
 use App\Modules\Exams\Actions\ManageExamBookings;
 use App\Modules\Exams\Actions\ManageExamSessions;
 use App\Modules\Exams\Actions\SweepExamSessions;
 use App\Modules\Exams\Http\Requests\BookExamSessionRequest;
 use App\Modules\Exams\Http\Requests\ExtendExamRequest;
+use App\Modules\Exams\Http\Requests\ResultsApprovalRequest;
 use App\Modules\Exams\Http\Requests\StoreExamSessionRequest;
 use App\Modules\Exams\Http\Requests\UpdateExamSessionRequest;
 use App\Modules\Exams\Http\Resources\ExamBookingResource;
@@ -23,8 +25,8 @@ use Illuminate\Http\Response;
 
 /**
  * Exam sessions (D-056, D-073). Reading: exams.view.
- * Creating, changing and booking: exams.manage. The drawn questions (with their answers): exam_bank.manage.
- * More time for everyone: the permission attempts.extend.
+ * Creating, changing, booking and approving the results (D-104): exams.manage. The drawn questions (with their
+ * answers): exam_bank.manage. More time for everyone: the permission attempts.extend.
  */
 class ExamSessionController extends Controller
 {
@@ -32,7 +34,8 @@ class ExamSessionController extends Controller
      * List exam sessions
      *
      * `from` / `to` (YYYY-MM-DD, Damascus days, included) on the start; `job_position_id`; `hall=out` the sessions
-     * taken out to a hall now (D-102); soonest first; 25 per page.
+     * taken out to a hall now (D-102); `results`: `awaiting_approval` (decided results wait for the approval) or
+     * `approved` (D-104); soonest first; 25 per page.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -41,15 +44,17 @@ class ExamSessionController extends Controller
             'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
             'job_position_id' => ['nullable', 'integer'],
             'hall' => ['nullable', 'in:out'],
+            'results' => ['nullable', 'in:awaiting_approval,approved'],
         ]);
 
         $sessions = ExamSession::query()
             ->with(ExamSessionResource::RELATIONS)
-            ->withCount(['questions', 'bookings'])
+            ->withCount(ExamSessionResource::COUNTS)
             ->whenGiven($filters['from'] ?? null, fn($query, $date) => $query->where('starts_at', '>=', BusinessDay::startOf($date)))
             ->whenGiven($filters['to'] ?? null, fn($query, $date) => $query->where('starts_at', '<', BusinessDay::startOfNext($date)))
             ->whenGiven($filters['job_position_id'] ?? null, fn($query, $id) => $query->whereHas('plan', fn($plan) => $plan->where('job_position_id', $id)))
             ->whenGiven($filters['hall'] ?? null, fn($query) => $query->has('hallDownload'))
+            ->whenGiven($filters['results'] ?? null, fn($query, $results) => $results === 'approved' ? $query->whereNotNull('results_approved_at') : $query->has('bookingsAwaitingApproval'))
             ->orderBy('starts_at')
             ->orderBy('id')
             ->paginate(25)
@@ -63,7 +68,7 @@ class ExamSessionController extends Controller
     {
         $sweep->sweep($session->id);
 
-        return new ExamSessionResource($session->load([...ExamSessionResource::RELATIONS, 'extensions.author'])->loadCount(['questions', 'bookings']));
+        return new ExamSessionResource($session->load([...ExamSessionResource::RELATIONS, 'extensions.author'])->loadCount(ExamSessionResource::COUNTS));
     }
 
     /**
@@ -77,7 +82,7 @@ class ExamSessionController extends Controller
     {
         $session = $sessions->create($request->validated(), $request->user());
 
-        return ExamSessionResource::make($session->load(ExamSessionResource::RELATIONS)->loadCount(['questions', 'bookings']))->response()->setStatusCode(201);
+        return ExamSessionResource::make($session->load(ExamSessionResource::RELATIONS)->loadCount(ExamSessionResource::COUNTS))->response()->setStatusCode(201);
     }
 
     /**
@@ -90,7 +95,7 @@ class ExamSessionController extends Controller
     {
         $session = $sessions->update($session, $request->validated(), $request->user());
 
-        return new ExamSessionResource($session->load(ExamSessionResource::RELATIONS)->loadCount(['questions', 'bookings']));
+        return new ExamSessionResource($session->load(ExamSessionResource::RELATIONS)->loadCount(ExamSessionResource::COUNTS));
     }
 
     /**
@@ -114,7 +119,7 @@ class ExamSessionController extends Controller
     {
         $session = $sessions->redraw($session, $request->user());
 
-        return new ExamSessionResource($session->load(ExamSessionResource::RELATIONS)->loadCount(['questions', 'bookings']));
+        return new ExamSessionResource($session->load(ExamSessionResource::RELATIONS)->loadCount(ExamSessionResource::COUNTS));
     }
 
     /** The drawn questions, in the session's order, with their answers (exam_bank.manage). */
@@ -133,7 +138,32 @@ class ExamSessionController extends Controller
     {
         $session = $sessions->extend($session, (int) $request->validated('minutes'), $request->validated('reason'), $request->user());
 
-        return new ExamSessionResource($session->load([...ExamSessionResource::RELATIONS, 'extensions.author'])->loadCount(['questions', 'bookings']));
+        return new ExamSessionResource($session->load([...ExamSessionResource::RELATIONS, 'extensions.author'])->loadCount(ExamSessionResource::COUNTS));
+    }
+
+    /**
+     * Approve the session's results
+     *
+     * Once, after the session has ended, when no attempt runs and every result is decided (hand marks included); 422
+     * on `session` otherwise (and while it is out in a hall). Every candidate whose result waits (exam_taken) then
+     * passes (awaiting_interview) or fails (exam_failed) as the marks say, dated now, except those in `failures`:
+     * candidates who passed and are failed by decision (ترسيب بقرار: `reason_type` cheating or other, `reason`,
+     * optional `decision_number`), which also needs the permission exceptions.approve. Only a pass can be failed
+     * (422 on `failures.N.booking_id`); a failure is admitted only by an exception, after the approval. The computed
+     * results stay as they are. `meta`: how many passed, failed and were failed by decision.
+     */
+    public function approveResults(ResultsApprovalRequest $request, ExamSession $session, ExamResultsApproval $approval): JsonResponse
+    {
+        $failures = $request->failures();
+
+        if ($failures !== [] && ! $request->user()->hasPermission('exceptions.approve')) {
+            abort(403, __('exams.approval.failures_permission'));
+        }
+
+        $counts = $approval->approve($session, $failures, $request->user());
+        $fresh = ExamSession::query()->whereKey($session->id)->with(ExamSessionResource::RELATIONS)->withCount(ExamSessionResource::COUNTS)->firstOrFail();
+
+        return (new ExamSessionResource($fresh))->additional(['meta' => $counts])->response();
     }
 
     /**

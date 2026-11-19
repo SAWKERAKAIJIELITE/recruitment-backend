@@ -6,6 +6,7 @@ use App\Modules\Contracts\Models\Contract;
 use App\Modules\Interviews\Enums\InterviewGrade;
 use App\Modules\Interviews\Enums\InterviewStatus;
 use App\Modules\Interviews\Models\Interview;
+use App\Modules\Recruitment\Enums\DecisionReasonType;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Reports\Queries\ApplicationStages;
 use App\Modules\Reports\Queries\ExamScores;
@@ -93,8 +94,10 @@ final class RecruitmentTables
     /**
      * @param  Collection<int, Application>  $applications  loaded with RELATIONS
      * @param  string  $view  all, passed (regular passes and failures later admitted by an exception), failed, absent
+     * @param  bool  $identityOnly  for a reader who sees who the candidate is only (D-086): without the qualification
+     *                              and the residence
      */
-    public static function exams(Collection $applications, ReportPeriod $period, string $view = 'all'): ReportTable
+    public static function exams(Collection $applications, ReportPeriod $period, string $view = 'all', bool $identityOnly = false): ReportTable
     {
         $decisions = [];
 
@@ -119,7 +122,8 @@ final class RecruitmentTables
         $subjects = $view === 'absent' ? [] : $marks['subjects'];
         $withCause = in_array($view, ['all', 'failed'], true) && $subjects !== [];
 
-        $columns = [['nomination_number', 14], ['full_name', 24], ['nominating_entity', 18], ['qualification', 14], ['residence', 16], ['exam_round', 8], ['attendance', 9], ['exam_date', 12], ['exam_result', 11]];
+        $columns = [['nomination_number', 14], ['full_name', 24], ['nominating_entity', 18], ...($identityOnly ? [] : [['qualification', 14], ['residence', 16]]), ['exam_round', 8], ['attendance', 9], ['exam_date', 12], ['exam_result', 11]];
+        $scoresAt = count($columns);
         $scoreColumns = $subjects === [] ? [] : [...array_map(fn (string $name) => [$name, 10], array_values($subjects)), [__('reports.columns.exam_total', [], 'ar'), 10], [__('reports.columns.exam_average', [], 'ar'), 9]];
         $columns = match ($view) {
             'passed' => [...$columns, ['pass_kind', 22], ['exception_reason', 26]],
@@ -128,9 +132,13 @@ final class RecruitmentTables
             default => [...$columns, ['later_decision', 24], ['decision_reason', 26]],
         };
 
-        $rows = array_map(function (array $decision) use ($view, $marks, $subjects, $withCause) {
+        $rows = array_map(function (array $decision) use ($view, $marks, $subjects, $withCause, $identityOnly) {
             [$application, $exam] = $decision;
-            $later = $exam['exception'] ?? $exam['excuse'];
+            $later = $exam['exception'] ?? $exam['excuse'] ?? $exam['failed_by_decision'];
+            $byDecision = $exam['failed_by_decision'] === null ? null : __('reports.failed_by_decision_on', [
+                'date' => self::day($exam['failed_by_decision']['at']),
+                'type' => DecisionReasonType::from($exam['failed_by_decision']['reason_type'])->labelAr(),
+            ], 'ar');
             $score = $marks['scores'][$exam['booking_id'] ?? ''] ?? null;
             $scoreCells = $subjects === [] ? [] : [
                 ...array_map(fn (int $id) => $score['subjects'][$id] ?? null, array_keys($subjects)),
@@ -141,8 +149,10 @@ final class RecruitmentTables
                 $application->nomination_number,
                 $application->candidate->full_name,
                 $application->nominatingEntity->name_ar,
-                $application->academicQualification->name_ar,
-                self::join($application->residenceDistrict->name_ar, $application->residenceArea?->name_ar),
+                ...($identityOnly ? [] : [
+                    $application->academicQualification->name_ar,
+                    self::join($application->residenceDistrict->name_ar, $application->residenceArea?->name_ar),
+                ]),
                 $exam['round'],
                 __('reports.attendance.'.($exam['result'] === 'absent' ? 'absent' : 'present'), [], 'ar'),
                 self::day($exam['at']),
@@ -154,13 +164,16 @@ final class RecruitmentTables
                     $exam['exception'] === null ? __('reports.pass_kinds.regular', [], 'ar') : __('reports.pass_kinds.exception', ['date' => self::day($exam['exception']['at'])], 'ar'),
                     $exam['exception']['reason'] ?? null,
                 ],
-                'failed' => [$exam['exception'] === null ? null : __('reports.excepted_on', ['date' => self::day($exam['exception']['at'])], 'ar'), $exam['exception']['reason'] ?? null],
+                'failed' => [
+                    $exam['exception'] === null ? $byDecision : __('reports.excepted_on', ['date' => self::day($exam['exception']['at'])], 'ar'),
+                    $exam['exception']['reason'] ?? $exam['failed_by_decision']['reason'] ?? null,
+                ],
                 'absent' => [$exam['excuse'] === null ? null : __('reports.excused_on', ['date' => self::day($exam['excuse']['at'])], 'ar'), $exam['excuse']['reason'] ?? null],
                 default => [
                     match (true) {
                         $exam['exception'] !== null => __('reports.excepted_on', ['date' => self::day($exam['exception']['at'])], 'ar'),
                         $exam['excuse'] !== null => __('reports.excused_on', ['date' => self::day($exam['excuse']['at'])], 'ar'),
-                        default => null,
+                        default => $byDecision,
                     },
                     $later['reason'] ?? null,
                 ],
@@ -175,10 +188,18 @@ final class RecruitmentTables
         }
 
         $totals[__('reports.total_excepted', [], 'ar')] = count(array_filter($decisions, fn (array $decision) => $decision[1]['exception'] !== null));
+
+        if ($view !== 'absent') {
+            $totals[__('reports.total_failed_by_decision', [], 'ar')] = count(array_filter($decisions, fn (array $decision) => $decision[1]['failed_by_decision'] !== null));
+        }
+
+        if ($view === 'all') {
+            $totals[__('reports.total_awaiting_approval', [], 'ar')] = $results['pending'] ?? 0;
+        }
         $totals[__('reports.total_excused', [], 'ar')] = count(array_filter($decisions, fn (array $decision) => $decision[1]['excuse'] !== null));
 
         $columns = self::columns($columns);
-        array_splice($columns, 9, 0, [...$scoreColumns, ...($withCause ? [[__('reports.columns.failure_cause', [], 'ar'), 30]] : [])]);
+        array_splice($columns, $scoresAt, 0, [...$scoreColumns, ...($withCause ? [[__('reports.columns.failure_cause', [], 'ar'), 30]] : [])]);
 
         return new ReportTable(__("reports.tables.exams_{$view}", [], 'ar'), $columns, $rows, $totals, wide: $subjects !== []);
     }
@@ -270,13 +291,19 @@ final class RecruitmentTables
 
         $indicators = new ReportTable($t('indicators'), [[$t('indicator'), 34], [$t('value'), 14]], [
             [$t('nominations'), $totals['nominations']],
+            [$t('applications_started'), $totals['applications']['started']],
+            [$t('applications_closed'), $totals['applications']['closed']],
+            [$t('import_batches'), $totals['imports']['batches']],
+            [$t('import_applications'), $totals['imports']['applications']],
             [$t('exam_takers'), $totals['exams']['takers']],
             [$t('exam_passed'), $totals['exams']['passed']],
             [$t('exam_passed_by_exception'), $totals['exams']['passed_by_exception']],
             [$t('exam_failed'), $totals['exams']['failed']],
+            [$t('exam_failed_by_decision'), $totals['exams']['failed_by_decision']],
             [$t('exam_failed_then_excepted'), $totals['exams']['failed_then_excepted']],
             [$t('exam_absent'), $totals['exams']['absent']],
             [$t('exam_absent_excused'), $totals['exams']['absent_excused']],
+            [$t('exam_awaiting_approval'), $totals['exams']['awaiting_approval']],
             [$t('exam_pass_rate'), $percent($totals['exams']['pass_rate_percent'])],
             [$t('interview_takers'), $totals['interviews']['takers']],
             [$t('interview_passed'), $totals['interviews']['passed']],
@@ -286,6 +313,10 @@ final class RecruitmentTables
             [$t('interview_pass_rate'), $percent($totals['interviews']['pass_rate_percent'])],
             [$t('contracts_written'), $totals['contracts']['written']],
             [$t('contract_renewals'), $totals['contracts']['renewals']],
+            [$t('contracts_ended'), $totals['contracts']['ended']],
+            [$t('vacancies_left'), $summary['vacancies']['totals']['left']],
+            [$t('documents_uploaded'), $summary['documents']['uploaded']['total']],
+            [$t('applications_missing_documents'), $summary['documents']['missing']['applications']],
             [$t('days_to_exam'), $totals['average_days']['to_exam']],
             [$t('days_to_interview'), $totals['average_days']['to_interview']],
             [$t('days_to_contract'), $totals['average_days']['to_contract']],
@@ -297,12 +328,37 @@ final class RecruitmentTables
         $breakdown = fn (string $title, string $first, array $rows) => new ReportTable($title, [[$first, 34], [$t('nominations'), 14], [$t('exam_passed'), 14], [$t('exam_passed_by_exception'), 14], [$t('interview_passed'), 14], [$t('contracts_written'), 14]],
             array_map(fn (array $row) => [$row['name'], $row['nominations'], $row['exam_passed'], $row['exam_passed_by_exception'], $row['interview_passed'], $row['contracts_written']], $rows));
 
+        // The Contracts and Documenting offices' parts (D-107).
+        $endings = new ReportTable($t('contract_endings'), [[$t('end_reason'), 34], [$t('count'), 14]],
+            array_map(fn (array $row) => [$row['reason'], $row['count']], $summary['contract_endings']));
+        $documents = new ReportTable($t('documents_by_type'), [[$t('document_type'), 34], [$t('documents_uploaded'), 14], [$t('applications_missing_documents'), 14]],
+            self::documentRows($summary['documents']));
+
         return [
             $indicators,
             $monthly,
             $breakdown($t('by_nominating_entity'), __('reports.columns.nominating_entity', [], 'ar'), $summary['by_nominating_entity']),
             $breakdown($t('by_job_position'), __('reports.columns.job_position', [], 'ar'), $summary['by_job_position']),
+            $endings,
+            $documents,
         ];
+    }
+
+    /** Each document type with what was uploaded of it in the period and how many live applications miss it. */
+    private static function documentRows(array $documents): array
+    {
+        $rows = [];
+
+        foreach ($documents['uploaded']['by_type'] as $row) {
+            $rows[$row['type']['id']] = [$row['type']['name'], $row['count'], 0];
+        }
+
+        foreach ($documents['missing']['by_type'] as $row) {
+            $rows[$row['type']['id']] ??= [$row['type']['name'], 0, 0];
+            $rows[$row['type']['id']][2] = $row['applications'];
+        }
+
+        return array_values($rows);
     }
 
     /**

@@ -5,7 +5,9 @@ namespace App\Modules\Reports\Support;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Queries\ApplicationSearch;
 use App\Modules\Recruitment\Support\ApplicationRules;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 /**
  * The filters every report takes: those of the applications list (which applications), and the period (when; see
@@ -20,6 +22,26 @@ final class ReportFilters
     public static function rules(): array
     {
         return array_diff_key(ApplicationSearch::rules(), array_flip(self::LIST_ONLY)) + ReportPeriod::rules();
+    }
+
+    /**
+     * For a reader who sees who the candidate is only (no applications.view, D-086): the identity filters of the
+     * applications list, the period and the report's own (`format`, `sitting_id`), and `$also` of the applications'
+     * filters (the contracts report keeps those of the contracts list, D-098). Any other filter is 422, as on the list:
+     * filtering by health or residence would tell who has them, even with no such column.
+     *
+     * @param  list<string>  $also
+     */
+    public static function assertIdentityOnly(Request $request, array $also = []): void
+    {
+        $rules = ApplicationSearch::identityRules();
+        $all = ApplicationSearch::rules();
+
+        foreach ($also as $filter) {
+            $rules[$filter] = $all[$filter];
+        }
+
+        Validator::make($request->all(), $rules, ['*.prohibited' => __('recruitment.identity_only_filter')])->validate();
     }
 
     /** @return array<string, mixed> the validated filters that were given ("0" is given; D-091) */

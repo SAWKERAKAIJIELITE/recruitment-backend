@@ -49,6 +49,7 @@ class InterviewApiTest extends TestCase
     {
         $this->travel(-1)->days();
         $application = $this->openApplication(null, array_replace_recursive(['candidate' => ['national_number' => $number]], $overrides));
+        app(ApplicationLifecycle::class)->move($application, S::ExamTaken, D::Outcome);
         app(ApplicationLifecycle::class)->move($application, S::AwaitingInterview, D::Outcome);
         $this->travelBack();
         $this->travelTo('2026-10-30 09:00:00');

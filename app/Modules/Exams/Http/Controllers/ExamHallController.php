@@ -64,7 +64,7 @@ class ExamHallController extends Controller
     public function cancel(HallCancelRequest $request, ExamSession $session, HallExam $hall): JsonResponse
     {
         $result = $hall->cancel($session, $request->validated('download_id'), $request->validated('reason'), $request->boolean('questions_exposed'), $request->user());
-        $fresh = ExamSession::query()->whereKey($session->id)->with(ExamSessionResource::RELATIONS)->withCount(['questions', 'bookings'])->firstOrFail();
+        $fresh = ExamSession::query()->whereKey($session->id)->with(ExamSessionResource::RELATIONS)->withCount(ExamSessionResource::COUNTS)->firstOrFail();
 
         return (new ExamSessionResource($fresh))->additional(['meta' => ['redrawn' => $result['redrawn']]])->response();
     }

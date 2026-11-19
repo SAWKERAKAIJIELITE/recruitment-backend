@@ -43,6 +43,9 @@ class ExamPlanResource extends JsonResource
                 'questions' => $subject->difficultyCounts(),
                 'question_count' => $subject->totalQuestions(),
                 'parts' => $subject->parts->map(fn(ExamPlanSubjectPart $part) => [
+                    /** The plan's part: the key of a hand mark (`POST /exam-bookings/{id}/marks`, `marks.{id}`). */
+                    'id' => $part->id,
+                    /** The bank's part (subject part). */
                     'part' => ReferenceSummary::of($part->part),
                     'weight' => (string) $part->weight,
                     /** exam or manual (marked by hand outside the session). */

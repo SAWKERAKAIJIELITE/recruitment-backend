@@ -16,7 +16,10 @@ use Illuminate\Support\Facades\Date;
  */
 class ExamSessionResource extends JsonResource
 {
-    public const RELATIONS = ['plan.jobPosition', 'hallDownload.downloader', 'hallDownload.device'];
+    public const RELATIONS = ['plan.jobPosition', 'hallDownload.downloader', 'hallDownload.device', 'resultsApprover'];
+
+    /** The counts a session shows: its questions, its bookings, and the results waiting for the approval (D-104). */
+    public const COUNTS = ['questions', 'bookings', 'bookingsAwaitingApproval as awaiting_approval_count'];
 
     public function toArray(Request $request): array
     {
@@ -62,6 +65,16 @@ class ExamSessionResource extends JsonResource
                 'downloaded_at' => $hall->downloaded_at->toIso8601String(),
                 'overdue' => $now->greaterThan($this->endsAt()->copy()->addHours((int) config('exams.hall_overdue_hours'))),
             ],
+            /**
+             * The exams office approved the session's results (D-104): when and who. null until then; until then the
+             * candidates whose result is decided wait in exam_taken (neither passed nor failed yet).
+             */
+            'results_approval' => $this->results_approved_at === null ? null : [
+                'approved_at' => $this->results_approved_at->toIso8601String(),
+                'approved_by' => $this->resultsApprover === null ? null : ['id' => $this->resultsApprover->id, 'full_name' => $this->resultsApprover->full_name],
+            ],
+            /** Decided results waiting for the approval (the applications in exam_taken because of this session). */
+            'awaiting_approval' => $this->whenCounted('awaiting_approval_count', fn() => (int) $this->awaiting_approval_count),
             'location' => $this->location,
             'notes' => $this->notes,
             /** How many questions were drawn (the same for every candidate). */

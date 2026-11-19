@@ -23,7 +23,8 @@ use Illuminate\Validation\ValidationException;
  *  - an accepted absence excuse: exam_absent → awaiting_exam, optionally booked at once into the next session (a new
  *    round, a new attempt; the absence stays);
  *  - an exception for a failed exam: exam_failed → awaiting_interview, marked as an exception (the computed result
- *    stays failed).
+ *    stays failed). Not for a pass the office failed by decision when it approved the results (D-104): that would
+ *    take its own decision back.
  */
 class ExamDecisions
 {
@@ -50,6 +51,11 @@ class ExamDecisions
     {
         DB::transaction(function () use ($application, $reason, $occurredAt, $actor, $decisionNumber) {
             $application = $this->lock($application, ApplicationStatus::ExamFailed);
+
+            if ($application->history()->last()?->decision_type === DecisionType::FailedByDecision) {
+                throw ValidationException::withMessages(['application' => [__('exams.decisions.failed_by_decision')]]);
+            }
+
             $failed = $this->latestBooking($application, BookingStatus::Attended);
             $this->move($application, ApplicationStatus::AwaitingInterview, DecisionType::Exception, $actor, $reason, $failed, $occurredAt, $decisionNumber);
 

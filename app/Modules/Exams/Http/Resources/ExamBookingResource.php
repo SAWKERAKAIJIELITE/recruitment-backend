@@ -49,7 +49,13 @@ class ExamBookingResource extends JsonResource
             'id' => $this->id,
             'session_id' => $this->session_id,
             /** The session's time and place (D-100): a rebooked round needs no second call. */
-            'session' => $this->whenLoaded('session', fn() => ['id' => $this->session->id, 'starts_at' => $this->session->starts_at->toIso8601String(), 'location' => $this->session->location]),
+            'session' => $this->whenLoaded('session', fn() => [
+                'id' => $this->session->id,
+                'starts_at' => $this->session->starts_at->toIso8601String(),
+                'location' => $this->session->location,
+                /** When the session's results were approved (D-104); null until then. */
+                'results_approval' => $this->session->results_approved_at === null ? null : ['approved_at' => $this->session->results_approved_at->toIso8601String()],
+            ]),
             'round' => $this->round,
             'status' => $this->status->value,
             'status_label' => $this->status->labelAr(),
@@ -65,11 +71,15 @@ class ExamBookingResource extends JsonResource
             'decided_at' => $this->decided_at?->toIso8601String(),
             /**
              * The decision that followed this round (an application's bookings only; D-100): `exception` (a failure
-             * admitted to the interview) or `excuse_accepted` (an absence excused), with its date, reason, decision number
-             * and who made it; null when none.
+             * admitted to the interview), `excuse_accepted` (an absence excused) or `failed_by_decision` (a pass failed
+             * when the results were approved, D-104, with its `reason_type`: cheating or other), with its date, reason,
+             * decision number and who made it; null when none.
              */
             'decision' => $this->when($this->relationLoaded('decision'), fn() => $this->decision === null ? null : [
                 'type' => $this->decision->decision_type->value,
+                'type_label' => $this->decision->decision_type->labelAr(),
+                'reason_type' => $this->decision->reason_type?->value,
+                'reason_type_label' => $this->decision->reason_type?->labelAr(),
                 'at' => $this->decision->occurred_at->toIso8601String(),
                 'reason' => $this->decision->reason,
                 'decision_number' => $this->decision->decision_number,

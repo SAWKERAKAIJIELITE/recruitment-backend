@@ -22,6 +22,8 @@ Route::middleware(['api', 'auth:staff', EnsureStaffIsActive::class])->prefix('ap
 
     Route::middleware('can:candidates.manage')->group(function () {
         Route::post('applications', [ApplicationController::class, 'store']);
+        // Recruitment tells the candidates of their appointments (D-105).
+        Route::post('applications/calls', [ApplicationController::class, 'calls']);
         Route::patch('applications/{application}', [ApplicationController::class, 'update'])->whereUuid('application');
 
         Route::patch('candidates/{candidate}', [CandidateController::class, 'update'])->whereUuid('candidate');

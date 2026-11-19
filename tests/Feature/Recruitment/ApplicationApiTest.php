@@ -179,10 +179,10 @@ class ApplicationApiTest extends TestCase
     public static function outcomesThatKeepThePersonLive(): array
     {
         return [
-            'exam failed' => [[[S::ExamFailed, D::Outcome]]],
+            'exam failed' => [[[S::ExamTaken, D::Outcome], [S::ExamFailed, D::Outcome]]],
             'exam absent' => [[[S::ExamAbsent, D::Outcome]]],
-            'interview failed' => [[[S::AwaitingInterview, D::Outcome], [S::InterviewFailed, D::Outcome]]],
-            'contract written' => [[[S::AwaitingInterview, D::Outcome], [S::AwaitingContract, D::Outcome], [S::ContractWritten, D::Outcome]]],
+            'interview failed' => [[[S::ExamTaken, D::Outcome], [S::AwaitingInterview, D::Outcome], [S::InterviewFailed, D::Outcome]]],
+            'contract written' => [[[S::ExamTaken, D::Outcome], [S::AwaitingInterview, D::Outcome], [S::AwaitingContract, D::Outcome], [S::ContractWritten, D::Outcome]]],
         ];
     }
 
@@ -214,7 +214,7 @@ class ApplicationApiTest extends TestCase
     {
         $staff = $this->hiringStaff();
         $application = $this->openApplication($staff);
-        foreach ([S::AwaitingInterview, S::AwaitingContract, S::ContractWritten, S::ContractEnded] as $to) {
+        foreach ([S::ExamTaken, S::AwaitingInterview, S::AwaitingContract, S::ContractWritten, S::ContractEnded] as $to) {
             app(ApplicationLifecycle::class)->move($application, $to, D::Outcome);
         }
 
@@ -326,7 +326,7 @@ class ApplicationApiTest extends TestCase
             ->assertStatus(422)->assertJsonValidationErrors('status');
 
         $hired = $this->openApplication(null, ['candidate' => ['national_number' => '55555555555']]);
-        foreach ([S::AwaitingInterview, S::AwaitingContract, S::ContractWritten] as $to) {
+        foreach ([S::ExamTaken, S::AwaitingInterview, S::AwaitingContract, S::ContractWritten] as $to) {
             app(ApplicationLifecycle::class)->move($hired, $to, D::Outcome);
         }
 
@@ -547,6 +547,7 @@ class ApplicationApiTest extends TestCase
         $a = $this->openApplication($staff);
         $otherPosition = $this->jobPosition('إداري');
         $b = $this->openApplication($staff, ['job_position_id' => $otherPosition->id, 'candidate' => ['national_number' => '44444444444']]);
+        app(ApplicationLifecycle::class)->move($b, S::ExamTaken, D::Outcome);
         app(ApplicationLifecycle::class)->move($b, S::ExamFailed, D::Outcome);
 
         $this->asStaff($staff)->getJson(self::URL.'?status=exam_failed')->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $b->id);
@@ -604,6 +605,7 @@ class ApplicationApiTest extends TestCase
         $this->travelTo('2026-11-02 09:00:00');
         $lifecycle->move($application, S::AwaitingExam, D::Started, $staff);
         $this->travelTo('2026-11-03 09:00:00');
+        $lifecycle->move($application, S::ExamTaken, D::Outcome);
         $lifecycle->move($application, S::ExamFailed, D::Outcome);
         $this->assertSame(['done', 'failed', 'راسب', 1, 'pending'], [$stages()['nomination']['state'], $stages()['exam']['state'], $stages()['exam']['state_label'], $stages()['exam']['rounds'], $stages()['interview']['state']]);
 
@@ -633,7 +635,7 @@ class ApplicationApiTest extends TestCase
         $application = $this->openApplication($this->hiringStaff());
 
         $this->expectException(QueryException::class);
-        DB::transaction(fn() => app(ApplicationLifecycle::class)->move($application, S::ExamFailed, D::Outcome, null, null, null, null, 'ق/1'));
+        DB::transaction(fn() => app(ApplicationLifecycle::class)->move($application, S::ExamTaken, D::Outcome, null, null, null, null, 'ق/1'));
     }
 
     public function test_the_counts_per_status_follow_the_lists_filters(): void
@@ -642,6 +644,7 @@ class ApplicationApiTest extends TestCase
         $this->openApplication($staff);                                                                        // awaiting_exam
         $otherPosition = $this->jobPosition('إداري');
         $failed = $this->openApplication($staff, ['job_position_id' => $otherPosition->id, 'candidate' => ['national_number' => '44444444444']]);
+        app(ApplicationLifecycle::class)->move($failed, S::ExamTaken, D::Outcome);
         app(ApplicationLifecycle::class)->move($failed, S::ExamFailed, D::Outcome);
         $this->closeApplication($this->openApplication($staff, ['candidate' => ['national_number' => '55555555555']]));
         $counts = function (string $query = '', $user = null) use ($staff) {

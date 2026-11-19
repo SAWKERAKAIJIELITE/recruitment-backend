@@ -16,7 +16,8 @@ use Illuminate\Support\Facades\Date;
  * A sitting of one published plan version (D-056, D-073): a start, a place, the plan's duration, a late window
  * and the password its candidates log in with. It ends at start + duration + the extensions given to everyone;
  * one attempt may be given more on its own. It can be taken out to a hall with no internet (D-102): it is then frozen
- * until brought back or cancelled.
+ * until brought back or cancelled. Its results are approved once after it (D-104): until then the applications whose
+ * result is decided wait in exam_taken.
  *
  * @property string $id
  * @property CarbonInterface $starts_at
@@ -25,6 +26,7 @@ use Illuminate\Support\Facades\Date;
  * @property int $late_minutes
  * @property int $extra_minutes
  * @property ?CarbonInterface $planned_starts_at
+ * @property ?CarbonInterface $results_approved_at
  */
 class ExamSession extends Model
 {
@@ -36,7 +38,7 @@ class ExamSession extends Model
 
     protected function casts(): array
     {
-        return ['starts_at' => 'datetime', 'planned_starts_at' => 'datetime', 'password' => 'hashed', 'duration_minutes' => 'integer', 'late_minutes' => 'integer', 'extra_minutes' => 'integer'];
+        return ['starts_at' => 'datetime', 'planned_starts_at' => 'datetime', 'results_approved_at' => 'datetime', 'password' => 'hashed', 'duration_minutes' => 'integer', 'late_minutes' => 'integer', 'extra_minutes' => 'integer'];
     }
 
     public function plan(): BelongsTo
@@ -79,6 +81,21 @@ class ExamSession extends Model
     public function isOut(): bool
     {
         return ExamHallDownload::query()->where('session_id', $this->id)->where('status', HallDownloadStatus::Out)->exists();
+    }
+
+    /** Who approved the session's results (D-104). */
+    public function resultsApprover(): BelongsTo
+    {
+        return $this->belongsTo(StaffUser::class, 'results_approved_by');
+    }
+
+    /** Bookings whose application waits in exam_taken because of them: the approval moves them (D-104). */
+    public function bookingsAwaitingApproval(): HasMany
+    {
+        return $this->bookings()
+            ->where('exam_bookings.status', 'attended')
+            ->whereNotNull('exam_bookings.decided_at')
+            ->whereHas('application', fn($application) => $application->where('current_status', 'exam_taken'));
     }
 
     public function creator(): BelongsTo

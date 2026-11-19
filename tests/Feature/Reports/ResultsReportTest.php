@@ -45,6 +45,7 @@ class ResultsReportTest extends TestCase
         $this->travelTo('2026-10-01 09:00:00');
         $application = $this->openApplication(null, ['candidate' => ['national_number' => $number, 'full_name' => 'سامر خالد']]);
         $lifecycle = app(ApplicationLifecycle::class);
+        $lifecycle->move($application, S::ExamTaken, D::Outcome);
         $lifecycle->move($application, S::ExamFailed, D::Outcome);
         $this->travelTo('2026-10-02 09:00:00');
         $lifecycle->move($application, S::AwaitingInterview, D::Exception, $this->staff, self::REASON);

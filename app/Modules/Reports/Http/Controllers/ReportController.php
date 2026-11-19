@@ -5,6 +5,7 @@ namespace App\Modules\Reports\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Modules\Audit\Support\AuditTrail;
 use App\Modules\Contracts\Models\Contract;
+use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Interviews\Models\Interview;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Enums\DecisionType;
@@ -58,6 +59,9 @@ class ReportController extends Controller
         'dashboard' => ['dashboard', null],
     ];
 
+    /** The applications' filters the contracts list has (D-098), which the Contracts office keeps in its report. */
+    private const CONTRACTS_LIST_FILTERS = ['nominating_entity_id', 'residence_district_id', 'residence_area_id'];
+
     /** table builder => the permission that reads it (its section's, D-086) */
     private const READERS = [
         'applications' => 'applications.view',
@@ -71,18 +75,53 @@ class ReportController extends Controller
      * Dashboard indicators
      *
      * As the legacy "لوحة التحكم": nominations; exam takers, passes (and passes by exception apart), failures (with
-     * those later admitted by an exception), absences (with accepted excuses) and the pass rate; the same for
-     * interviews; first contracts and renewals; average days from nomination to each stage; the counts by month (the
-     * period's months, or from the first nomination when no period is given; at most 60), by nominating entity and
-     * by job position. Each is counted on its own date: a nomination by its date, an exam decision by its date, an
-     * interview by the day held, a contract by its writing date. `series` has the same counts by `group_by`: day,
-     * week (from Saturday) or month (default), on the period's days, or from the first nomination up to today.
+     * those later admitted by an exception, and those failed by decision), absences (with accepted excuses), results
+     * waiting for the approval, and the pass rate; the same for interviews; first contracts, renewals and endings;
+     * average days from nomination to each stage; the counts by month (the period's months, or from the first
+     * nomination when no period is given; at most 60), by nominating entity and by job position. Each is counted on
+     * its own date: a nomination by its date, an exam by the exam's day once its session's results are approved, an
+     * interview by the day held, a contract by its writing date. `series` has the same counts by `group_by`: day, week
+     * (from Saturday) or month (default), on the period's days, or from the first nomination up to today.
+     *
+     * Every staff user reads it, each office its own sections (D-107): `nominations` (applications.view: with the
+     * applications started and closed in the period, and with imports.view `imports`, the batches approved and the
+     * applications they brought), `exams` (exams.view), `interviews` (interviews.view), `contracts` (contracts.view:
+     * with `contract_endings` by reason and `vacancies`), `documents` (documents.view: uploaded by type and direction,
+     * and the live applications missing a required one). `sections` says which are filled; any other is null, in the
+     * totals and in the columns of `monthly`, `series` and the breakdowns. The general manager (reports.view) reads
+     * every one. Without applications.view the filters are the identity ones only (as on the applications list), with
+     * the period and `group_by`; any other is 422. 403 for a user who reads none.
      */
     public function summary(SummaryRequest $request): JsonResponse
     {
+        $user = $request->user();
+        $sections = self::summarySections($user);
+        abort_if($sections === [], 403);
+
+        if (! $user->hasPermission('applications.view')) {
+            ReportFilters::assertIdentityOnly($request);
+        }
+
         $filters = $request->filters();
 
-        return response()->json(['data' => Dashboard::build($filters, $request->groupBy()) + ['filters' => ReportFilters::describe($filters)]]);
+        return response()->json(['data' => Dashboard::build($filters, $request->groupBy(), $sections) + ['filters' => ReportFilters::describe($filters)]]);
+    }
+
+    /** @return list<string> the summary's sections a user reads (D-107) */
+    private static function summarySections(StaffUser $user): array
+    {
+        if ($user->hasPermission('reports.view')) {
+            return Dashboard::SECTIONS;
+        }
+
+        return array_values(array_filter(Dashboard::SECTIONS, fn (string $section) => $user->hasPermission(match ($section) {
+            'nominations' => 'applications.view',
+            'imports' => 'imports.view',
+            'exams' => 'exams.view',
+            'interviews' => 'interviews.view',
+            'contracts' => 'contracts.view',
+            'documents' => 'documents.view',
+        })));
     }
 
     /**
@@ -97,15 +136,29 @@ class ReportController extends Controller
      * indicators as tables). `format`: xlsx
      * (default) or pdf. Interviews also take `sitting_id`. Sorted by nomination number unless `sort` is sent. At most
      * 20,000 rows in Excel and 2,000 in PDF (422 on `format` beyond: narrow the filters).
+     *
+     * Without applications.view (an office that sees who the candidate is only, D-086), the exams and interviews
+     * reports take the identity filters only (`q`, `national_number`, `status`, `live`, `job_position_id`,
+     * `import_batch_id`, `from`, `to`) with the period, `format` and `sitting_id`, and the contracts report also the
+     * contracts list's (`nominating_entity_id`, `residence_district_id`, `residence_area_id`): any other is 422. The
+     * exams reports then leave out the qualification and the residence.
      */
     public function export(ExportReportRequest $request, ReportName $report): BinaryFileResponse|Response
     {
         $report = $report->value;
-        abort_unless($request->user()->hasPermission(self::READERS[self::REPORTS[$report][0]]), 403);
+        $kind = self::REPORTS[$report][0];
+        abort_unless($request->user()->hasPermission(self::READERS[$kind]), 403);
+        // An office that sees who the candidate is only filters and reads that much here too (D-086).
+        $identityOnly = in_array($kind, ['exams', 'interviews', 'contracts'], true) && ! $request->user()->hasPermission('applications.view');
+
+        if ($identityOnly) {
+            ReportFilters::assertIdentityOnly($request, $kind === 'contracts' ? self::CONTRACTS_LIST_FILTERS : []);
+        }
+
         $filters = $request->filters();
         $format = $filters['format'] ?? 'xlsx';
         $this->assertCountFits($report, $filters, $format);
-        $tables = $this->tables($report, $filters);
+        $tables = $this->tables($report, $filters, $identityOnly);
 
         foreach ($tables as $table) {
             $this->assertFits($table, $format);
@@ -178,7 +231,7 @@ class ReportController extends Controller
     }
 
     /** @return list<ReportTable> */
-    private function tables(string $report, array $filters): array
+    private function tables(string $report, array $filters, bool $identityOnly = false): array
     {
         [$kind, $view] = self::REPORTS[$report];
         $period = ReportPeriod::from($filters);
@@ -186,7 +239,7 @@ class ReportController extends Controller
 
         return match ($kind) {
             'applications' => [RecruitmentTables::applications($this->applications($applicationFilters), $period->isAllTime() ? null : $period)],
-            'exams' => [RecruitmentTables::exams($this->applications($applicationFilters), $period, $view)],
+            'exams' => [RecruitmentTables::exams($this->applications($applicationFilters), $period, $view, $identityOnly)],
             'interviews' => [RecruitmentTables::interviews($this->interviews($applicationFilters, $filters['sitting_id'] ?? null), $period, $view)],
             'contracts' => [RecruitmentTables::contracts($this->contracts($applicationFilters, $period)->with(RecruitmentTables::CONTRACT_RELATIONS)->get())],
             'dashboard' => RecruitmentTables::dashboard(Dashboard::build($filters)),
@@ -242,8 +295,10 @@ class ReportController extends Controller
             'passed' => [ApplicationStatus::AwaitingInterview, ApplicationStatus::ExamFailed],
             'failed' => [ApplicationStatus::ExamFailed],
             'absent' => [ApplicationStatus::ExamAbsent],
-            default => [ApplicationStatus::AwaitingInterview, ApplicationStatus::ExamFailed, ApplicationStatus::ExamAbsent],
+            default => [ApplicationStatus::ExamTaken, ApplicationStatus::AwaitingInterview, ApplicationStatus::ExamFailed, ApplicationStatus::ExamAbsent],
         };
+        // A round's result: since D-104 a round is taken (exam_taken) and its result is the approval that follows it.
+        $result = "coalesce((select n.to_status from application_status_events n where n.previous_event_id = e.id and e.to_status = 'exam_taken' and n.decision_type in ('outcome', 'failed_by_decision')), e.to_status)";
 
         $period = ReportPeriod::from($filters);
         $applications = ApplicationSearch::filter(Application::query(), ReportFilters::applicationFilters($filters))->select('applications.id');
@@ -260,8 +315,11 @@ class ReportController extends Controller
                 ->where('p.to_status', ApplicationStatus::AwaitingExam->value)
                 ->where('e.decision_type', DecisionType::Outcome->value)
                 ->where(fn ($query) => $query
-                    ->whereIn('e.to_status', array_map(fn (ApplicationStatus $status) => $status->value, $examStatuses))
-                    ->orWhereExists(fn ($correction) => $correction->from('application_status_events as c')->whereColumn('c.previous_event_id', 'e.id')->where('c.decision_type', DecisionType::Correction->value))), 'e.occurred_at')->count(),
+                    ->whereIn(DB::raw($result), array_map(fn (ApplicationStatus $status) => $status->value, $examStatuses))
+                    // Corrected (of the round, or of its approval): counted, whatever it says now.
+                    ->orWhereExists(fn ($correction) => $correction->from('application_status_events as c')->where('c.decision_type', DecisionType::Correction->value)
+                        ->where(fn ($after) => $after->whereColumn('c.previous_event_id', 'e.id')
+                            ->orWhereIn('c.previous_event_id', fn ($approval) => $approval->from('application_status_events as a')->select('a.id')->whereColumn('a.previous_event_id', 'e.id'))))), 'e.occurred_at')->count(),
             'interviews' => $within(Interview::query()
                 ->whereIn('application_id', $applications)
                 ->when($view !== 'all', fn ($query) => $query->where('result', $view))

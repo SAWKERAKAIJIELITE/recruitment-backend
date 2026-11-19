@@ -69,6 +69,12 @@ class ApplicationResource extends JsonResource
             'history' => StatusEventResource::collection($this->history()),
             /** The stepper's stages (nomination, exam, interview, first contract) with their state and date (D-100). */
             'stages' => ApplicationStages::steps($this->resource),
+            /**
+             * The appointment the application waits for (an exam booked, an interview scheduled) and Recruitment's calls
+             * about it (D-105): kind, time, place, `call_state` (to_inform, not_reached, informed) and every call. null
+             * without one (or when the resource was not built by the show route).
+             */
+            'appointment' => $this->getAttribute('appointment'),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

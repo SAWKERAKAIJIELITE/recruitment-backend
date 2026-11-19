@@ -24,10 +24,11 @@ use Tests\TestCase;
  * §04 to §08). Each step is taken by the office whose section it is, as a real user of that role, and checked on the
  * application, its history, its stages and the counts the offices see.
  *
- *   received ─start→ awaiting_exam ─pass→ awaiting_interview ─pass→ awaiting_contract ─write→ contract_written ─end→ contract_ended
- *                      │  ↑ excuse          ↑ exception  │  ↑ excuse
- *                      ├→ exam_absent        exam_failed ←┤  ├→ interview_absent
- *                      └→ exam_failed                     └→ interview_failed
+ *   received ─start→ awaiting_exam ─take→ exam_taken ─approve: pass→ awaiting_interview ─pass→ awaiting_contract ─write→ contract_written ─end→ contract_ended
+ *                      │  ↑ excuse                │                  ↑ exception  │  ↑ excuse
+ *                      ├→ exam_absent             └─approve: fail→ exam_failed    ├→ interview_absent
+ *                      │                                                          └→ interview_failed
+ *                      (an exam result waits in exam_taken until the exams office approves the session's results, D-104)
  *   and closed from every status that waits (received to awaiting_contract).
  */
 class ApplicationJourneyTest extends TestCase
@@ -100,6 +101,12 @@ class ApplicationJourneyTest extends TestCase
             fn(array $event) => ($event['from_status'] ?? '·') . " → {$event['to_status']} ({$event['decision_type']})",
             $this->asStaff($this->recruitment)->getJson("/api/v1/staff/applications/{$application->id}")->assertOk()->json('data.history'),
         );
+    }
+
+    /** The exams office approves a session's results (D-104), once it has ended. */
+    private function approveResults(string $session): TestResponse
+    {
+        return $this->asStaff($this->exams)->postJson("/api/v1/staff/exam-sessions/{$session}/results-approval");
     }
 
     private function examSession(string $startsAt): string
@@ -199,8 +206,17 @@ class ApplicationJourneyTest extends TestCase
         $this->sitExam('04444444444', 5);   // D passes; C does not come
         $this->travelTo('2026-11-02 08:20:00');
         $this->artisan('exams:sweep')->assertSuccessful();
+        $this->assertSame(['exam_taken', 'exam_taken', 'exam_absent', 'exam_taken'], [$this->statusOf($a), $this->statusOf($b), $this->statusOf($c), $this->statusOf($d)]);
+        $this->assertSame(0, DB::table('notifications')->where('notifiable_id', $this->interviews->id)->count());     // nothing passed yet
+        $this->assertSame(1, $this->asStaff($this->exams)->getJson('/api/v1/staff/badges')->json('data.exams.results_to_approve'));
+
+        // The exams office approves the session once it has ended (D-104): now they pass or fail.
+        $this->approveResults($first)->assertStatus(422)->assertJsonValidationErrors('session');                        // not ended yet
+        $this->travelTo('2026-11-02 10:00:00');
+        $this->approveResults($first)->assertOk()->assertJsonPath('meta', ['passed' => 2, 'failed' => 1, 'failed_by_decision' => 0]);
         $this->assertSame(['awaiting_interview', 'exam_failed', 'exam_absent', 'awaiting_interview'], [$this->statusOf($a), $this->statusOf($b), $this->statusOf($c), $this->statusOf($d)]);
         $this->assertSame(['nomination' => 'done', 'exam' => 'failed', 'interview' => 'pending', 'contract' => 'pending'], $this->stages($b));
+        $this->assertGreaterThan(0, DB::table('notifications')->where('notifiable_id', $this->interviews->id)->count());   // the interviews are told now
 
         // 3. The exams office's decisions: B admitted by exception, C's absence excused with a second round.
         $this->asStaff($this->interviews)->postJson("/api/v1/staff/applications/{$b->id}/exam-exception", ['reason' => 'قرار اللجنة'])->assertForbidden();
@@ -210,6 +226,8 @@ class ApplicationJourneyTest extends TestCase
             ->assertOk()->assertJsonPath('booking.round', 2);
         $this->travelTo('2026-11-05 08:01:00');
         $this->sitExam('03333333333', 5);
+        $this->travelTo('2026-11-05 10:00:00');
+        $this->approveResults($second)->assertOk()->assertJsonPath('meta.passed', 1);
         $this->assertSame(['awaiting_interview', 'awaiting_interview'], [$this->statusOf($b), $this->statusOf($c)]);
         $rounds = $this->asStaff($this->exams)->getJson("/api/v1/staff/applications/{$c->id}/exam-bookings")->assertOk()->json('data');
         $this->assertSame(['absent', 'ق/2026/8', '2026-11-05T08:00:00+00:00'], [$rounds[0]['status'], $rounds[0]['decision']['decision_number'], $rounds[1]['session']['starts_at']]);
@@ -278,8 +296,8 @@ class ApplicationJourneyTest extends TestCase
 
         // 9. What each file says about its way: the history, the stages, the decisions' numbers.
         $this->assertSame([
-            '· → received (created)', 'received → awaiting_exam (started)', 'awaiting_exam → exam_failed (outcome)',
-            'exam_failed → awaiting_interview (exception)', 'awaiting_interview → interview_absent (outcome)',
+            '· → received (created)', 'received → awaiting_exam (started)', 'awaiting_exam → exam_taken (outcome)',
+            'exam_taken → exam_failed (outcome)', 'exam_failed → awaiting_interview (exception)', 'awaiting_interview → interview_absent (outcome)',
             'interview_absent → awaiting_interview (excuse_accepted)', 'awaiting_interview → awaiting_contract (outcome)',
             'awaiting_contract → contract_written (outcome)',
         ], $this->history($b));
@@ -292,7 +310,7 @@ class ApplicationJourneyTest extends TestCase
         $this->assertSame(6, $totals['nominations']);                                                               // four imported, two again
         $this->assertSame([4, 3, 1, 1, 1, 1], [$totals['exams']['takers'], $totals['exams']['passed'], $totals['exams']['failed'], $totals['exams']['passed_by_exception'], $totals['exams']['absent'], $totals['exams']['absent_excused']]);
         $this->assertSame([4, 3, 1, 1, 1], [$totals['interviews']['takers'], $totals['interviews']['passed'], $totals['interviews']['failed'], $totals['interviews']['absent'], $totals['interviews']['absent_excused']]);
-        $this->assertSame(['written' => 3, 'renewals' => 1], $totals['contracts']);
+        $this->assertSame(['written' => 3, 'renewals' => 1, 'ended' => 1], $totals['contracts']);
         $this->asStaff($this->manager)->get('/api/v1/staff/reports/contracts')->assertOk();
         $this->asStaff($this->manager)->get("/api/v1/staff/applications/{$a->id}/results-statement")->assertOk()->assertHeader('Content-Type', 'application/pdf');
 
@@ -325,8 +343,8 @@ class ApplicationJourneyTest extends TestCase
             $this->sitExam($application->candidate->national_number, 5);
         }
 
-        $this->travelTo('2026-11-02 08:20:00');
-        $this->artisan('exams:sweep')->assertSuccessful();
+        $this->travelTo('2026-11-02 10:00:00');
+        $this->approveResults($session)->assertOk();
 
         // The interview: one absent, two pass; one stays waiting for its interview.
         $this->travelTo('2026-11-06 09:00:00');
@@ -398,6 +416,12 @@ class ApplicationJourneyTest extends TestCase
         $this->asStaff($this->exams)->postJson("/api/v1/staff/exam-sessions/{$session}/bookings", ['application_ids' => [$a->id]])->assertCreated();
         $this->travelTo('2026-11-02 08:01:00');
         $this->sitExam('01111111111', 5);
+        // Taken, not approved yet (D-104): no interview, no exception.
+        $this->asStaff($this->interviews)->postJson("/api/v1/staff/applications/{$a->id}/interviews", ['sitting_id' => $sitting])->assertStatus(422);
+        $this->asStaff($this->exams)->postJson("/api/v1/staff/applications/{$a->id}/exam-exception", ['reason' => 'قرار اللجنة'])->assertStatus(422);
+        $this->travelTo('2026-11-02 10:00:00');
+        $this->approveResults($session)->assertOk();
+        $this->approveResults($session)->assertStatus(422)->assertJsonValidationErrors('session');                       // once
         $this->travelTo('2026-11-06 09:00:00');
         $this->asStaff($this->interviews)->postJson("/api/v1/staff/applications/{$a->id}/interviews", ['sitting_id' => $sitting])->assertCreated();
         $interview = $this->scheduledInterview($a);

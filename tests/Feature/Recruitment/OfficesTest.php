@@ -82,6 +82,7 @@ class OfficesTest extends TestCase
         $this->assertArrayNotHasKey('phone_number', $entry);
         $this->assertArrayNotHasKey('residence', $entry);
 
+        app(ApplicationLifecycle::class)->move($application, S::ExamTaken, D::Outcome);
         app(ApplicationLifecycle::class)->move($application, S::AwaitingInterview, D::Outcome);
         $entry = $this->asStaff($exams)->getJson('/api/v1/staff/interviews/queue')->assertOk()->json('data.0');
         $this->assertSame(['position', 'waiting_since', 'id', 'nomination_number', 'status', 'status_label', 'job_position', 'candidate', 'created_at', 'updated_at'], array_keys($entry));

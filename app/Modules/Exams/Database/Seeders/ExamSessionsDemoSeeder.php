@@ -26,8 +26,8 @@ use Illuminate\Support\Facades\Date;
  * Demo exam sessions (local only), on the first published plan, for six people nominated for its job position three
  * days ago (national numbers 09000000301 to 09000000306):
  *
- *  - one held yesterday: the first candidate sat it (answers saved, submitted, التجويد marked: decided), the
- *    second did not come (absent);
+ *  - one held yesterday: the first candidate sat it (answers saved, submitted, التجويد marked: decided, waiting for
+ *    the exams office to approve the session's results, D-104), the second did not come (absent);
  *  - one tomorrow at 09:00 with the next candidates booked; they log in with their national number and the
  *    password DEMO_PASSWORD, from 08:00.
  */

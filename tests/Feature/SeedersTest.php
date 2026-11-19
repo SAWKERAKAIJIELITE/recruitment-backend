@@ -114,8 +114,8 @@ class SeedersTest extends TestCase
 
         $this->assertSame(0, DB::table('application_status_events')->where('occurred_at', '>', now())->count());
         $this->assertSame(0, DB::table('application_status_events')->whereColumn('occurred_at', '<>', 'created_at')->count());
-        $this->assertSame(['closure', 'created', 'exception', 'excuse_accepted', 'outcome', 'started'], DB::table('application_status_events')->distinct()->orderBy('decision_type')->pluck('decision_type')->all());
-        $this->assertSame(0, DB::table('application_status_events')->whereIn('decision_type', ['closure', 'exception', 'excuse_accepted'])->where(fn($q) => $q->whereNull('reason')->orWhereNull('actor_id'))->count());
+        $this->assertSame(['closure', 'created', 'exception', 'excuse_accepted', 'failed_by_decision', 'outcome', 'started'], DB::table('application_status_events')->distinct()->orderBy('decision_type')->pluck('decision_type')->all());
+        $this->assertSame(0, DB::table('application_status_events')->whereIn('decision_type', ['closure', 'exception', 'excuse_accepted', 'failed_by_decision'])->where(fn($q) => $q->whereNull('reason')->orWhereNull('actor_id'))->count());
     }
 
     public function test_the_demo_has_a_person_nominated_twice_and_a_deactivated_person(): void

@@ -36,7 +36,7 @@ class BadgesTest extends TestCase
     {
         $application = $this->openApplication(null, ['candidate' => ['national_number' => $number]]);
 
-        foreach ($moves as $status) {
+        foreach ($moves === [] ? [] : [S::ExamTaken, ...$moves] as $status) {
             app(ApplicationLifecycle::class)->move($application, $status, D::Outcome);
         }
 
@@ -66,18 +66,21 @@ class BadgesTest extends TestCase
             'notifications' => ['unread' => DB::table('notifications')->where('notifiable_id', $exams->id)->whereNull('read_at')->count()],
             'interviews' => ['to_book' => 1, 'to_record' => 1, 'total' => 2],
             'contracts' => null,
-            'exams' => ['hall_out' => 0, 'hall_overdue' => 0],   // sessions taken out to a hall (D-102)
+            'exams' => ['results_to_approve' => 0, 'hall_out' => 0, 'hall_overdue' => 0],   // results to approve (D-104), sessions taken out to a hall (D-102)
+            'calls' => null,                                                                   // Recruitment's (D-105)
         ]]);
         $this->asStaff($contracts)->getJson(self::URL)->assertOk()
             ->assertJsonPath('data.interviews', null)
             ->assertJsonPath('data.exams', null)
             ->assertJsonPath('data.contracts', ['awaiting_contract' => 1, 'ending_soon' => 1, 'expired' => 0]);
 
-        // The general manager sees both; Recruitment neither; the bell for everyone.
+        // The general manager sees both; Recruitment neither, but its calls (D-105); the bell for everyone.
         $manager = $this->asStaff(StaffUserFactory::new()->withRole('general_manager')->create())->getJson(self::URL)->assertOk();
         $this->assertSame(2, $manager->json('data.interviews.total'));
         $this->assertSame(1, $manager->json('data.contracts.awaiting_contract'));
         $this->asStaff($this->hiringStaff())->getJson(self::URL)->assertOk()
-            ->assertJsonPath('data.interviews', null)->assertJsonPath('data.contracts', null)->assertJsonStructure(['data' => ['notifications' => ['unread']]]);
+            ->assertJsonPath('data.interviews', null)->assertJsonPath('data.contracts', null)->assertJsonStructure(['data' => ['notifications' => ['unread']]])
+            ->assertJsonPath('data.calls', ['to_inform' => 1, 'not_reached' => 0]);   // the later interview, still ahead
+        $this->assertNull($manager->json('data.calls'));
     }
 }

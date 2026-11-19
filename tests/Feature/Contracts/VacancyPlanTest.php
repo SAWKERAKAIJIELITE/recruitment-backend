@@ -80,6 +80,7 @@ class VacancyPlanTest extends TestCase
     private function awaitingContract(string $number, ?int $position = null): Application
     {
         $application = $this->openApplication(null, ['candidate' => ['national_number' => $number]] + ($position === null ? [] : ['job_position_id' => $position]));
+        app(ApplicationLifecycle::class)->move($application, S::ExamTaken, D::Outcome);
         app(ApplicationLifecycle::class)->move($application, S::AwaitingInterview, D::Outcome);
         app(ApplicationLifecycle::class)->move($application, S::AwaitingContract, D::Outcome);
 

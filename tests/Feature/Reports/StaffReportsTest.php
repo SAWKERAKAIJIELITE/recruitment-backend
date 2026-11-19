@@ -3,7 +3,10 @@
 namespace Tests\Feature\Reports;
 
 use App\Modules\Contracts\Actions\ManageContracts;
+use App\Modules\Contracts\Models\Contract;
 use App\Modules\Contracts\Models\ContractType;
+use App\Modules\Documents\Database\Seeders\DocumentTypesSeeder;
+use App\Modules\Documents\Models\DocumentType;
 use App\Modules\Identity\Database\Factories\StaffUserFactory;
 use App\Modules\Identity\Database\Seeders\RolesAndPermissionsSeeder;
 use App\Modules\Identity\Models\StaffUser;
@@ -14,10 +17,13 @@ use App\Modules\Recruitment\Enums\ApplicationStatus as S;
 use App\Modules\Recruitment\Enums\DecisionType as D;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Models\NominatingEntity;
+use App\Modules\Reports\Queries\Dashboard;
 use Carbon\CarbonInterface;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
@@ -76,8 +82,10 @@ class StaffReportsTest extends TestCase
         $open('B', '2026-03-02 09:00:00', '02222222222', ['studies_discontinued' => true, 'studying_years' => 3]);
         $open('C', '2026-03-05 09:00:00', '03333333333');
 
+        $lifecycle->move($this->people['A'], S::ExamTaken, D::Outcome, null, null, null, $this->at('2026-03-10 09:00:00'));
         $lifecycle->move($this->people['A'], S::ExamFailed, D::Outcome, null, null, null, $this->at('2026-03-10 09:00:00'));
         $lifecycle->move($this->people['B'], S::ExamAbsent, D::Outcome, null, null, null, Date::now());
+        $lifecycle->move($this->people['C'], S::ExamTaken, D::Outcome, null, null, null, Date::now());
         $lifecycle->move($this->people['C'], S::AwaitingInterview, D::Outcome, null, null, null, Date::now());
         $lifecycle->move($this->people['A'], S::AwaitingInterview, D::Exception, $this->staff, 'قرار اللجنة العليا', null, $this->at('2026-03-12 09:00:00'));
         $lifecycle->move($this->people['B'], S::AwaitingExam, D::ExcuseAccepted, $this->staff, 'مرض موثق', null, $this->at('2026-03-15 09:00:00'));
@@ -99,6 +107,7 @@ class StaffReportsTest extends TestCase
         ], $this->staff);
 
         $open('D', '2026-05-01 09:00:00', '04444444444', ['nominating_entity_id' => $other->id]);
+        $lifecycle->move($this->people['B'], S::ExamTaken, D::Outcome, null, null, null, $this->at('2026-05-03 09:00:00'));
         $lifecycle->move($this->people['B'], S::AwaitingInterview, D::Outcome, null, null, null, $this->at('2026-05-03 09:00:00'));
 
         $this->at('2026-05-10 12:00:00');
@@ -152,9 +161,9 @@ class StaffReportsTest extends TestCase
         $this->summary()
             ->assertJsonPath('data.period', ['from' => null, 'to' => null])
             ->assertJsonPath('data.totals.nominations', 4)
-            ->assertJsonPath('data.totals.exams', ['takers' => 3, 'passed' => 2, 'passed_by_exception' => 1, 'failed' => 1, 'failed_then_excepted' => 1, 'absent' => 1, 'absent_excused' => 1, 'pass_rate_percent' => 66.7])
+            ->assertJsonPath('data.totals.exams', ['takers' => 3, 'passed' => 2, 'passed_by_exception' => 1, 'failed' => 1, 'failed_by_decision' => 0, 'failed_then_excepted' => 1, 'absent' => 1, 'absent_excused' => 1, 'awaiting_approval' => 0, 'pass_rate_percent' => 66.7])
             ->assertJsonPath('data.totals.interviews', ['takers' => 2, 'passed' => 1, 'failed' => 1, 'absent' => 1, 'absent_excused' => 1, 'pass_rate_percent' => 50])
-            ->assertJsonPath('data.totals.contracts', ['written' => 1, 'renewals' => 0])
+            ->assertJsonPath('data.totals.contracts', ['written' => 1, 'renewals' => 0, 'ended' => 0])
             ->assertJsonPath('data.totals.average_days.to_exam', 7.3)              // 9, 8 and 5 days: the first decision of each
             ->assertJsonPath('data.totals.average_days.to_interview', 35)
             ->assertJsonPath('data.totals.average_days.to_contract', 49.6)        // 1 March 09:00 UTC to 20 April
@@ -223,6 +232,75 @@ class StaffReportsTest extends TestCase
             ->assertJsonPath('data.totals.exams.takers', 0)
             ->assertJsonPath('data.totals.exams.pass_rate_percent', null)
             ->assertJsonPath('data.filters', ['الجهة المرشِّحة' => 'مركز التحفيظ']);
+    }
+
+    public function test_each_office_reads_its_own_summary(): void
+    {
+        // Documents for the Documenting office's part: the ID card of A only.
+        $this->seed(DocumentTypesSeeder::class);
+        Storage::fake(config('documents.disk'));
+        $card = DocumentType::query()->where('name_ar', 'صورة البطاقة الشخصية')->firstOrFail();
+        $this->asStaff($this->documentsStaff())->post("/api/v1/staff/applications/{$this->people['A']->id}/documents", [
+            'document_type_id' => $card->id, 'file' => UploadedFile::fake()->createWithContent('id.pdf', "%PDF-1.4\n%%EOF\n"),
+        ], ['Accept' => 'application/json'])->assertCreated();
+        $read = fn (StaffUser $user, string $query = '') => $this->asStaff($user)->getJson('/api/v1/staff/reports/summary' . $query)->assertOk()->json('data');
+        $filled = fn (array $data) => array_keys(array_filter($data['sections']));
+
+        // The Exams and Interviews office: both its sections, nothing of the others, not even in the columns (D-107).
+        $exams = $read($this->examsStaff());
+        $this->assertSame(['exams', 'interviews'], $filled($exams));
+        $this->assertSame([null, null, null, null], [$exams['totals']['nominations'], $exams['totals']['applications'], $exams['totals']['imports'], $exams['totals']['contracts']]);
+        $this->assertSame(['takers' => 3, 'passed' => 2, 'passed_by_exception' => 1], array_slice($exams['totals']['exams'], 0, 3));
+        $this->assertSame(2, $exams['totals']['interviews']['takers']);
+        $this->assertSame(['to_exam' => 7.3, 'to_interview' => 35, 'to_contract' => null], $exams['totals']['average_days']);
+        $this->assertSame(['month' => '2026-03', 'nominations' => null, 'exam_takers' => 2, 'interview_takers' => 0, 'contracts_written' => null], $exams['monthly'][0]);
+        $this->assertNull($exams['series']['points'][0]['nominations']);
+        $this->assertSame([['id' => $this->people['A']->nominating_entity_id, 'name' => 'مديرية أوقاف دمشق', 'nominations' => null, 'exam_passed' => 2, 'exam_passed_by_exception' => 1, 'interview_passed' => 1, 'contracts_written' => null]], $exams['by_nominating_entity']);
+        $this->assertSame([null, null, null], [$exams['contract_endings'], $exams['vacancies'], $exams['documents']]);
+
+        // Each role of the office its half (D-097).
+        $this->assertSame(['exams'], $filled($read($this->staffOf('exams'))));
+        $this->assertSame(['interviews'], $filled($read($this->staffOf('interviews'))));
+
+        // It filters by who the candidate is only, as on the list.
+        $this->asStaff($this->examsStaff())->getJson("/api/v1/staff/reports/summary?health_condition_id={$this->referenceIds()['health_condition_id']}")->assertStatus(422)->assertJsonValidationErrors('health_condition_id');
+        $this->assertSame(0, $read($this->examsStaff(), '?job_position_id=' . $this->people['A']->job_position_id . '&year=2025')['totals']['exams']['takers']);
+
+        // Recruitment: the nominations, the starts and closures, the imports.
+        $recruitment = $read($this->hiringStaff(), '?year=2026');
+        $this->assertSame(['nominations', 'imports'], $filled($recruitment));
+        $this->assertSame([4, ['started' => 4, 'closed' => 0], ['batches' => 0, 'applications' => 0]], [$recruitment['totals']['nominations'], $recruitment['totals']['applications'], $recruitment['totals']['imports']]);
+        $this->assertNull($recruitment['totals']['exams']);
+        $this->assertSame([3, null], [$recruitment['by_nominating_entity'][0]['nominations'], $recruitment['by_nominating_entity'][0]['exam_passed']]);
+
+        // While A's file is live: A misses the certificates and the contract (an application's own document).
+        $missing = $read($this->documentsStaff())['documents']['missing'];
+        $this->assertSame(4, $missing['applications']);
+        $this->assertSame(['الشهادات العلمية' => 4, 'صورة البطاقة الشخصية' => 3, 'العقد' => 1], array_column(array_map(fn (array $row) => ['name' => $row['type']['name'], 'n' => $row['applications']], $missing['by_type']), 'n', 'name'));
+
+        // Contracts: its contracts, their endings by reason, the vacancies of the plan in force.
+        app(ManageContracts::class)->end(Contract::query()->sole(), Date::parse('2026-05-31'), 'انتهاء المدة', $this->staff);
+        $contracts = $read($this->contractsStaff(), '?year=2026');
+        $this->assertSame(['contracts'], $filled($contracts));
+        $this->assertSame(['written' => 1, 'renewals' => 0, 'ended' => 1], $contracts['totals']['contracts']);
+        $this->assertSame([['reason' => 'انتهاء المدة', 'count' => 1]], $contracts['contract_endings']);
+        $this->assertSame(['vacancies' => 100, 'used' => 1, 'left' => 99], $contracts['vacancies']['totals']);
+        $this->assertCount(1, $contracts['vacancies']['plans']);
+        $this->assertSame(49.6, $contracts['totals']['average_days']['to_contract']);
+
+        // Documenting: what was uploaded, and the live applications missing a required document.
+        $documents = $read($this->documentsStaff())['documents'];
+        $this->assertSame(['total' => 1, 'by_type' => [['type' => ['id' => $card->id, 'name' => 'صورة البطاقة الشخصية'], 'direction' => 'incoming', 'count' => 1]]], $documents['uploaded']);
+        $this->assertSame(3, $documents['missing']['applications']);                                   // B, C and D (A's file ended above)
+        $this->assertSame(['الشهادات العلمية' => 3, 'صورة البطاقة الشخصية' => 3], array_column(array_map(fn (array $row) => ['name' => $row['type']['name'], 'n' => $row['applications']], $documents['missing']['by_type']), 'n', 'name'));
+
+        // The general manager: every section, the new ones included.
+        $manager = $read(StaffUserFactory::new()->withRole('general_manager')->create(), '?year=2026');
+        $this->assertSame(Dashboard::SECTIONS, $filled($manager));
+        $this->assertSame([4, 1, 1], [$manager['totals']['nominations'], $manager['totals']['contracts']['ended'], $manager['documents']['uploaded']['total']]);
+
+        // Someone who reads no section reads nothing.
+        $this->asStaff(StaffUserFactory::new()->create())->getJson('/api/v1/staff/reports/summary')->assertForbidden();
     }
 
     public function test_the_period_is_checked(): void
@@ -350,6 +428,7 @@ class StaffReportsTest extends TestCase
     {
         $this->at('2026-06-01 10:00:00');
         $waiting = $this->openApplication($this->staff, ['candidate' => ['national_number' => '05555555555', 'full_name' => 'سامر خالد الأحمد', 'mother_name' => 'مريم', 'birth_date' => '1995-10-13']]);
+        app(ApplicationLifecycle::class)->move($waiting, S::ExamTaken, D::Outcome);
         app(ApplicationLifecycle::class)->move($waiting, S::AwaitingInterview, D::Outcome);
         app(ApplicationLifecycle::class)->move($waiting, S::AwaitingContract, D::Outcome);
 
@@ -381,11 +460,49 @@ class StaffReportsTest extends TestCase
         $this->asStaff($recruitment)->get('/api/v1/staff/reports/applications')->assertOk();
         $this->asStaff($recruitment)->get('/api/v1/staff/reports/conscription-list')->assertOk();
         $this->asStaff($recruitment)->get('/api/v1/staff/reports/exams')->assertForbidden();
-        $this->asStaff($recruitment)->getJson('/api/v1/staff/reports/summary')->assertForbidden();
+        $this->asStaff($recruitment)->getJson('/api/v1/staff/reports/summary')->assertOk()->assertJsonPath('data.totals.exams', null);   // its own sections (D-107)
         $this->asStaff($exams)->get('/api/v1/staff/reports/exams-failed')->assertOk();
         $this->asStaff($exams)->get('/api/v1/staff/reports/interviews')->assertOk();
         $this->asStaff($exams)->get('/api/v1/staff/reports/applications')->assertForbidden();
         $this->asStaff($exams)->get('/api/v1/staff/reports/dashboard')->assertForbidden();
         $this->asStaff($this->contractsStaff())->get('/api/v1/staff/reports/interviews')->assertForbidden();
+    }
+
+    public function test_an_office_that_sees_who_the_candidate_is_only_exports_that_much(): void
+    {
+        $ids = $this->referenceIds();
+        $exams = $this->examsStaff();
+        $contracts = $this->contractsStaff();
+
+        // Filtering by what only Recruitment sees would tell who has it, even with no such column (D-086).
+        foreach (['health_condition_id' => $ids['health_condition_id'], 'residence_district_id' => $ids['residence_district_id'], 'academic_qualification_id' => $ids['academic_qualification_id'], 'age_min' => 30, 'phone_number' => '0912'] as $filter => $value) {
+            foreach (['exams', 'exams-passed', 'interviews', 'interviews-absent'] as $report) {
+                $this->asStaff($exams)->getJson("/api/v1/staff/reports/{$report}?{$filter}={$value}")->assertStatus(422)->assertJsonValidationErrors($filter);
+            }
+        }
+
+        $this->asStaff($exams)->getJson('/api/v1/staff/reports/exams?sort=birth_date')->assertStatus(422)->assertJsonValidationErrors('sort');
+        $this->asStaff($exams)->get("/api/v1/staff/reports/exams?job_position_id={$ids['job_position_id']}&year=2026&status=awaiting_interview&q=المرشح&format=pdf")->assertOk();
+        $this->asStaff($exams)->get('/api/v1/staff/reports/interviews?live=1&from=2026-01-01&to=2026-12-31')->assertOk();
+
+        // The exams record leaves out the qualification and the residence; whoever sees the full file keeps them.
+        $headers = fn (Worksheet $sheet) => array_values(array_filter($sheet->rangeToArray("A5:{$sheet->getHighestColumn()}5", null, false, false)[0], fn ($cell) => $cell !== null));
+        $identity = $headers($this->sheet($this->asStaff($exams)->get('/api/v1/staff/reports/exams')));
+        $full = $headers($this->sheet($this->asStaff($this->staff)->get('/api/v1/staff/reports/exams')));
+        $this->assertContains('المؤهل العلمي', $full);
+        $this->assertContains('مكان الإقامة الحالية', $full);
+        $this->assertSame(array_values(array_diff($full, ['المؤهل العلمي', 'مكان الإقامة الحالية'])), $identity);
+        $rows = $this->rows($this->sheet($this->asStaff($exams)->get('/api/v1/staff/reports/exams')));
+        $this->assertSame(['1', 'حاضر', '2026-03-10', 'راسب', 'قُبل باستثناء في 2026-03-12', 'قرار اللجنة العليا'], array_slice($rows[0], 3));
+
+        // The Contracts office keeps the filters of its own list (D-098), and nothing more.
+        $this->asStaff($contracts)->get("/api/v1/staff/reports/contracts?nominating_entity_id={$ids['nominating_entity_id']}&residence_district_id={$ids['residence_district_id']}&residence_area_id={$ids['residence_area_id']}")->assertOk();
+        $this->asStaff($contracts)->getJson("/api/v1/staff/reports/contracts?health_condition_id={$ids['health_condition_id']}")->assertStatus(422)->assertJsonValidationErrors('health_condition_id');
+        $this->asStaff($contracts)->getJson('/api/v1/staff/reports/contracts?age_max=40')->assertStatus(422);
+
+        // Recruitment and the general manager filter by anything, as on the list.
+        $manager = StaffUserFactory::new()->withRole('general_manager')->create();
+        $this->asStaff($manager)->get("/api/v1/staff/reports/exams?health_condition_id={$ids['health_condition_id']}")->assertOk();
+        $this->asStaff($manager)->get('/api/v1/staff/reports/contracts?age_max=40')->assertOk();
     }
 }

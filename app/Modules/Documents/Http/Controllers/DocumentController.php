@@ -5,6 +5,7 @@ namespace App\Modules\Documents\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Modules\Audit\Support\AuditTrail;
 use App\Modules\Documents\Actions\ManageDocuments;
+use App\Modules\Documents\Enums\DocumentDirection;
 use App\Modules\Documents\Enums\DocumentScope;
 use App\Modules\Documents\Http\Requests\ArchiveDocumentRequest;
 use App\Modules\Documents\Http\Requests\StoreDocumentRequest;
@@ -13,6 +14,7 @@ use App\Modules\Documents\Http\Resources\DocumentTypeResource;
 use App\Modules\Documents\Models\Document;
 use App\Modules\Documents\Models\DocumentType;
 use App\Modules\Documents\Support\DocumentRequirements;
+use App\Modules\Recruitment\Enums\ApplicationStatus;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Models\Candidate;
 use Illuminate\Http\JsonResponse;
@@ -20,13 +22,16 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * Documents of people and applications (D-057), the Documenting office's (D-085): reading and downloading with
  * documents.view, uploading and archiving with documents.manage. The Contracts office reaches only the documents of
  * an application (its contract): it reads them with contracts.view and uploads or archives them with
- * contracts.manage; a person's documents (ID card, certificates) are not its own (403).
+ * contracts.manage; a person's documents (ID card, certificates) are not its own (403). Recruitment attaches the
+ * papers a candidate brought when it adds them (candidates.manage, D-106): incoming types, while the application is
+ * received; it reads none (the section stays the Documenting office's).
  */
 class DocumentController extends Controller
 {
@@ -107,12 +112,26 @@ class DocumentController extends Controller
      *
      * multipart/form-data: `document_type_id`, `file`, optional `notes`. A person-level type (ID card,
      * certificates) is stored on the person; an application-level one (contract) on this application. The Contracts
-     * office uploads application-level types only (403).
+     * office uploads application-level types only (403). Recruitment (candidates.manage, without documents.manage)
+     * uploads the papers the candidate brought while adding them (D-106): an incoming type (422 on
+     * `document_type_id` otherwise), to an application still received (422 on `application` once it has started).
      */
     public function storeForApplication(StoreDocumentRequest $request, Application $application, ManageDocuments $documents): JsonResponse
     {
         $type = $this->type($request);
-        abort_if(self::applicationDocumentsOnly($request, 'manage') && $type->scope !== DocumentScope::Application, 403);
+        $user = $request->user();
+
+        if (! $user->hasPermission('documents.manage') && ! ($user->hasPermission('contracts.manage') && $type->scope === DocumentScope::Application)) {
+            abort_unless($user->hasPermission('candidates.manage'), 403);
+
+            if ($application->current_status !== ApplicationStatus::Received) {
+                throw ValidationException::withMessages(['application' => [__('documents.recruitment.received_only', ['status' => $application->current_status->labelAr()])]]);
+            }
+
+            if ($type->direction !== DocumentDirection::Incoming) {
+                throw ValidationException::withMessages(['document_type_id' => [__('documents.recruitment.incoming_only')]]);
+            }
+        }
 
         $document = $documents->upload($request->file('file'), $type, $application->candidate, $application, $request->validated('notes'), $request->user());
 

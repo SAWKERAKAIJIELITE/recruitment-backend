@@ -4,6 +4,7 @@ namespace App\Modules\Recruitment\Models;
 
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
+use App\Modules\Recruitment\Enums\DecisionReasonType;
 use App\Modules\Recruitment\Enums\DecisionType;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -27,6 +28,7 @@ class ApplicationStatusEvent extends Model
         return [
             'to_status' => ApplicationStatus::class,
             'decision_type' => DecisionType::class,
+            'reason_type' => DecisionReasonType::class,
             'occurred_at' => 'datetime',
         ];
     }

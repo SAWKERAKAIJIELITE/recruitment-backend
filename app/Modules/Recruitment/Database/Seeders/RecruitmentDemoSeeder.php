@@ -9,6 +9,7 @@ use App\Modules\Recruitment\Actions\CreateApplication;
 use App\Modules\Recruitment\Database\Seeders\Demo\DemoPeople;
 use App\Modules\Recruitment\Database\Seeders\Demo\DemoReferences;
 use App\Modules\Recruitment\Enums\ApplicationStatus as S;
+use App\Modules\Recruitment\Enums\DecisionReasonType;
 use App\Modules\Recruitment\Enums\DecisionType as D;
 use App\Modules\Recruitment\Models\Application;
 use App\Modules\Recruitment\Models\Candidate;
@@ -35,24 +36,30 @@ class RecruitmentDemoSeeder extends Seeder
     /**
      * Each scenario: the moves after the application is opened (received), and how many people follow it. Every
      * scenario but `received` and `closed` starts the application first (D-087).
-     * A move: [to status, decision type, reason for decisions made by a person].
+     * A move: [to status, decision type, reason for decisions made by a person, reason type of a failure by decision].
      */
     private const SCENARIOS = [
         'received' => [3, []],
         'awaiting_exam' => [8, []],
-        'exam_failed' => [3, [[S::ExamFailed, D::Outcome]]],
+        // Took the exam; the session's results wait for the exams office's approval (D-104).
+        'exam_taken' => [2, [self::TAKEN]],
+        'exam_failed' => [3, [self::TAKEN, [S::ExamFailed, D::Outcome]]],
+        'exam_failed_by_decision' => [1, [self::TAKEN, [S::ExamFailed, D::FailedByDecision, 'ضُبط مع ورقة إجابات أثناء الاختبار', DecisionReasonType::Cheating]]],
         'exam_absent' => [2, [[S::ExamAbsent, D::Outcome]]],
         'exam_absent_excused' => [1, [[S::ExamAbsent, D::Outcome], [S::AwaitingExam, D::ExcuseAccepted, 'عذر طبي موثق بتقرير من مشفى حكومي']]],
-        'awaiting_interview' => [5, [[S::AwaitingInterview, D::Outcome]]],
-        'exam_exception' => [1, [[S::ExamFailed, D::Outcome], [S::AwaitingInterview, D::Exception, 'معدل قريب من حد النجاح وحاجة ماسة إلى الاختصاص']]],
-        'interview_failed' => [2, [[S::AwaitingInterview, D::Outcome], [S::InterviewFailed, D::Outcome]]],
-        'interview_absent' => [1, [[S::AwaitingInterview, D::Outcome], [S::InterviewAbsent, D::Outcome]]],
-        'interview_absent_excused' => [1, [[S::AwaitingInterview, D::Outcome], [S::InterviewAbsent, D::Outcome], [S::AwaitingInterview, D::ExcuseAccepted, 'تعارض مع موعد امتحان جامعي']]],
+        'awaiting_interview' => [5, [self::TAKEN, [S::AwaitingInterview, D::Outcome]]],
+        'exam_exception' => [1, [self::TAKEN, [S::ExamFailed, D::Outcome], [S::AwaitingInterview, D::Exception, 'معدل قريب من حد النجاح وحاجة ماسة إلى الاختصاص']]],
+        'interview_failed' => [2, [self::TAKEN, [S::AwaitingInterview, D::Outcome], [S::InterviewFailed, D::Outcome]]],
+        'interview_absent' => [1, [self::TAKEN, [S::AwaitingInterview, D::Outcome], [S::InterviewAbsent, D::Outcome]]],
+        'interview_absent_excused' => [1, [self::TAKEN, [S::AwaitingInterview, D::Outcome], [S::InterviewAbsent, D::Outcome], [S::AwaitingInterview, D::ExcuseAccepted, 'تعارض مع موعد امتحان جامعي']]],
         // Contracts are written for most of them by ContractsDemoSeeder.
-        'awaiting_contract' => [9, [[S::AwaitingInterview, D::Outcome], [S::AwaitingContract, D::Outcome]]],
+        'awaiting_contract' => [9, [self::TAKEN, [S::AwaitingInterview, D::Outcome], [S::AwaitingContract, D::Outcome]]],
         'closed' => [2, [[S::Closed, D::Closure, 'انسحب المرشح بطلب خطي']]],   // before it started
-        'closed_after_interview' => [1, [[S::AwaitingInterview, D::Outcome], [S::InterviewFailed, D::Outcome], [S::Closed, D::Closure, 'لا مجال لإعادة المقابلة']]],
+        'closed_after_interview' => [1, [self::TAKEN, [S::AwaitingInterview, D::Outcome], [S::InterviewFailed, D::Outcome], [S::Closed, D::Closure, 'لا مجال لإعادة المقابلة']]],
     ];
+
+    /** The exam taken and decided: the result follows when the session's results are approved (D-104). */
+    private const TAKEN = [S::ExamTaken, D::Outcome];
 
     /** The demo starts this many days ago; every date stays in the past. */
     private const DAYS_BACK = 160;
@@ -127,7 +134,7 @@ class RecruitmentDemoSeeder extends Seeder
 
             // Recruitment starts and closes; the Exams and Interviews office records the rest.
             $actor = in_array($type, [D::Started, D::Closure], true) ? $staff : $exams;
-            $this->lifecycle->move($application, $to, $type, $actor, $move[2] ?? null);
+            $this->lifecycle->move($application, $to, $type, $actor, $move[2] ?? null, reasonType: $move[3] ?? null);
         }
 
         return $at;

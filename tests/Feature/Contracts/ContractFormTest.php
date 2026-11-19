@@ -52,6 +52,7 @@ class ContractFormTest extends TestCase
     {
         $this->travelTo('2026-10-01 09:00:00');
         $application = $this->openApplication(null, array_replace_recursive(['candidate' => ['national_number' => $number]], $overrides));
+        app(ApplicationLifecycle::class)->move($application, S::ExamTaken, D::Outcome);
         app(ApplicationLifecycle::class)->move($application, S::AwaitingInterview, D::Outcome);
         app(ApplicationLifecycle::class)->move($application, S::AwaitingContract, D::Outcome);
         $this->travelTo('2026-10-31 10:00:00');

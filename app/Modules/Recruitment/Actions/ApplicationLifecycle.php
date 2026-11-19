@@ -5,6 +5,7 @@ namespace App\Modules\Recruitment\Actions;
 use App\Modules\Identity\Models\StaffUser;
 use App\Modules\Recruitment\Contracts\StatusChangeCause;
 use App\Modules\Recruitment\Enums\ApplicationStatus;
+use App\Modules\Recruitment\Enums\DecisionReasonType;
 use App\Modules\Recruitment\Enums\DecisionType;
 use App\Modules\Recruitment\Exceptions\IllegalStatusTransition;
 use App\Modules\Recruitment\Models\Application;
@@ -106,6 +107,7 @@ class ApplicationLifecycle
     /**
      * @param  StatusChangeCause|null  $cause  the record behind the move (exam attempt, interview, contract, ...), D-038
      * @param  CarbonInterface|null  $occurredAt  when the decision happened in reality; now when null (D-039)
+     * @param  DecisionReasonType|null  $reasonType  what kind of reason a failure by decision has (D-104); none otherwise
      *
      * @throws IllegalStatusTransition when the move, the decision type behind it, or its date is not allowed
      */
@@ -118,20 +120,27 @@ class ApplicationLifecycle
         ?StatusChangeCause $cause = null,
         ?CarbonInterface $occurredAt = null,
         ?string $decisionNumber = null,
+        ?DecisionReasonType $reasonType = null,
     ): ApplicationStatusEvent {
-        return DB::transaction(function () use ($application, $to, $type, $actor, $reason, $cause, $occurredAt, $decisionNumber) {
+        return DB::transaction(function () use ($application, $to, $type, $actor, $reason, $cause, $occurredAt, $decisionNumber, $reasonType) {
             // Lock the row and read the status from the database: two simultaneous moves cannot both win.
             $locked = Application::query()->whereKey($application->getKey())->lockForUpdate()->firstOrFail();
             $from = $locked->current_status;
 
-            $required = $from->decisionRequiredFor($to);
+            $allowed = $from->decisionsFor($to);
 
-            if ($required === null) {
+            if ($allowed === []) {
                 throw new IllegalStatusTransition("An application cannot move from {$from->value} to {$to->value}.");
             }
 
-            if ($required !== $type) {
-                throw new IllegalStatusTransition("Moving from {$from->value} to {$to->value} requires a decision of type {$required->value}, not {$type->value}.");
+            if (! in_array($type, $allowed, true)) {
+                $names = implode(' or ', array_map(fn(DecisionType $allowedType) => $allowedType->value, $allowed));
+
+                throw new IllegalStatusTransition("Moving from {$from->value} to {$to->value} requires a decision of type {$names}, not {$type->value}.");
+            }
+
+            if (($type === DecisionType::FailedByDecision) !== ($reasonType !== null)) {
+                throw new IllegalStatusTransition('A failure by decision, and only it, says what kind of reason it has.');
             }
 
             $reason = $reason === null ? null : trim($reason);
@@ -148,7 +157,7 @@ class ApplicationLifecycle
             $occurredAt = $this->checkedDate($occurredAt, $latest);
 
             $decisionNumber = $decisionNumber === null || trim($decisionNumber) === '' ? null : trim($decisionNumber);
-            $event = $this->append($locked, $latest->id, $to, $type, $actor, $reason, $cause, $occurredAt, $decisionNumber);
+            $event = $this->append($locked, $latest->id, $to, $type, $actor, $reason, $cause, $occurredAt, $decisionNumber, $reasonType);
 
             $this->reload($application);
 
@@ -182,7 +191,7 @@ class ApplicationLifecycle
 
             $before = $this->statusBefore($latest);
 
-            if ($to === $locked->current_status || $before?->decisionRequiredFor($to) !== DecisionType::Outcome) {
+            if ($to === $locked->current_status || ! in_array(DecisionType::Outcome, $before?->decisionsFor($to) ?? [], true)) {
                 throw new IllegalStatusTransition("A correction cannot move from {$locked->current_status->value} to {$to->value}.");
             }
 
