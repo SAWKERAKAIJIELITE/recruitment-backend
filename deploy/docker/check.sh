@@ -37,7 +37,7 @@ seeded()       { docker compose exec -T db sh -c 'psql -U postgres -d "$APP_DB_N
 scheduled()    { docker compose exec -T scheduler php artisan schedule:list | grep -q 'exams:sweep'; }
 
 echo "1. The containers"
-for service in db app scheduler web; do
+for service in db app scheduler web desktop-sync; do
     check "$service is running" running "$service"
 done
 check "db is healthy"  healthy db

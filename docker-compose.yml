@@ -152,12 +152,29 @@ services:
       # Caddy's state (and its certificates in the standalone layout).
       - caddy-data:/data
       - caddy-config:/config
-      # The desktop app's updates, served at /desktop/ (latest.yml, installers, .blockmap). Filled over SSH
-      # (docs/docker-deployment.md, step 13); the web server only reads it.
+      # The desktop app's updates, served at /desktop/ (latest.yml, installers, .blockmap). Filled by the
+      # desktop-sync service (docs/docker-deployment.md, step 13); the web server only reads it.
       - desktop-releases:/srv/desktop:ro
     depends_on:
       app:
         condition: service_healthy
+    logging: *logging
+
+  # The desktop app's updates: the latest release of DESKTOP_RELEASES_REPO on GitHub, copied into the
+  # desktop-releases volume (deploy/docker/desktop-sync.sh). Idle while DESKTOP_RELEASES_REPO is empty.
+  desktop-sync:
+    build:
+      context: .
+      dockerfile: deploy/docker/desktop-sync.Dockerfile
+    image: recruitment-desktop-sync:latest
+    restart: unless-stopped
+    environment:
+      DESKTOP_RELEASES_REPO: ${DESKTOP_RELEASES_REPO:-}
+      DESKTOP_RELEASES_TOKEN: ${DESKTOP_RELEASES_TOKEN:-}
+      DESKTOP_SYNC_INTERVAL: ${DESKTOP_SYNC_INTERVAL:-300}
+      DESKTOP_KEEP_DAYS: ${DESKTOP_KEEP_DAYS:-30}
+    volumes:
+      - desktop-releases:/srv/desktop
     logging: *logging
 
 volumes:

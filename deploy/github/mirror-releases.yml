@@ -1,0 +1,64 @@
+# Copies the upstream repository's latest release (its notes and every file: the installer, its .blockmap,
+# latest.yml) into this fork, because syncing a fork on GitHub copies commits but never releases.
+# docs/docker-deployment.md, step 13.
+#
+# Not a workflow of this repository: copy it into the FORK of the desktop app as
+#   .github/workflows/mirror-releases.yml
+# on its default branch, then in the fork:
+#   1. Actions tab: enable workflows (GitHub turns them off in forks).
+#   2. Settings → Secrets and variables → Actions → New repository secret UPSTREAM_TOKEN: a fine-grained token
+#      that can read the upstream repository (Repository access: that repository; Permissions: Contents,
+#      read-only). Not needed if the upstream repository is public.
+#   3. Change UPSTREAM below if the upstream repository is another one.
+# It runs every 15 minutes and on demand (Actions → Mirror upstream releases → Run workflow).
+name: Mirror upstream releases
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mirror-releases
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: BaraaJadaan/hiring-management
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Copy the latest upstream release
+        env:
+          UPSTREAM_TOKEN: ${{ secrets.UPSTREAM_TOKEN || github.token }}
+          FORK_TOKEN: ${{ github.token }}
+          FORK: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          tag="$(GH_TOKEN="$UPSTREAM_TOKEN" gh release view --repo "$UPSTREAM" --json tagName --jq .tagName)"
+          echo "The latest release of $UPSTREAM: $tag"
+
+          # Already here and published: nothing to do. Here as a draft: an earlier run stopped half-way.
+          if draft="$(GH_TOKEN="$FORK_TOKEN" gh release view "$tag" --repo "$FORK" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [ "$draft" = "false" ]; then
+              echo "$tag is already published in $FORK."
+              exit 0
+            fi
+            GH_TOKEN="$FORK_TOKEN" gh release delete "$tag" --repo "$FORK" --yes
+          fi
+
+          mkdir -p assets
+          GH_TOKEN="$UPSTREAM_TOKEN" gh release download "$tag" --repo "$UPSTREAM" --dir assets
+          GH_TOKEN="$UPSTREAM_TOKEN" gh release view "$tag" --repo "$UPSTREAM" --json body --jq .body > notes.md
+          ls -l assets
+
+          # A draft first, with every file; published (and marked latest) only once complete, so the server never
+          # takes a release whose installer is still uploading.
+          GH_TOKEN="$FORK_TOKEN" gh release create "$tag" assets/* --repo "$FORK" --draft --title "$tag" --notes-file notes.md
+          GH_TOKEN="$FORK_TOKEN" gh release edit "$tag" --repo "$FORK" --draft=false --latest
+          echo "$tag published in $FORK."

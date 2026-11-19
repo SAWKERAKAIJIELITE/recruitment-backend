@@ -385,7 +385,8 @@ How the site is laid out (`deploy/nginx/recruitment.conf`):
 - Security headers: `nosniff`, `X-Frame-Options DENY`, `Referrer-Policy no-referrer`, HSTS; `server_tokens off`.
 - `/desktop/…` is where the installed desktop app finds its updates (`latest.yml`, the installer, its `.blockmap`).
   In production (Docker, `rec.1005.date`) **the three files of a release go at the top of the `desktop-releases`
-  volume**, copied over SSH with `latest.yml` last: [docker-deployment.md](docker-deployment.md), step 13. The
+  volume**, copied there automatically from the latest GitHub release by the `desktop-sync` service (by hand over
+  SSH only as a fallback, `latest.yml` last): [docker-deployment.md](docker-deployment.md), step 13. The
   nginx file of this guide has no `/desktop/` location.
 
 The frontend (and the EXE) are configured with the API's base address: `https://hr.example.local/api/v1`.

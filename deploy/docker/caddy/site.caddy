@@ -41,8 +41,8 @@ route {
     }
 
     # The desktop app's updates (electron-updater): latest.yml, the installers and their .blockmap files, from the
-    # desktop-releases volume. They are copied there over SSH (docs/docker-deployment.md, step 13), never uploaded
-    # through the site. Files only: no listing, and a missing file is 404, never the frontend's index.html.
+    # desktop-releases volume. The desktop-sync service copies them there from GitHub (docs/docker-deployment.md,
+    # step 13); nothing is ever uploaded through the site. Files only: no listing, and a missing file is 404, never the frontend's index.html.
     handle /desktop {
         respond 404
     }

@@ -328,15 +328,70 @@ the `desktop-releases` volume, mounted read-only at `/srv/desktop`:
 | `/desktop/<installer>.exe`, `.blockmap` | The files, cached for a year (`immutable`): their names carry the version.               |
 | `/desktop/` or a missing file          | **404** with `Cache-Control: no-store`. No listing, and never the frontend's `index.html`. |
 
-### 13.1 Publishing a release
+### 13.1 Publishing a release: automatic
 
-The files go in over SSH, never through the site. **The three files of a release go at the top of the
-`desktop-releases` volume**, side by side: the installer, its `.blockmap`, and `latest.yml`. Copy `latest.yml`
-**last**, so that no client ever reads a manifest naming an installer that is not there yet.
+Nobody copies files to the server. A release published on GitHub reaches `/desktop/` by itself:
+
+```
+the desktop app's repository ── release v0.2.4 ──▶ the fork ──▶ desktop-sync (on the server) ──▶ /desktop/
+ (BaraaJadaan/hiring-management)    mirror-releases.yml,         every 5 minutes: the fork's
+                                    every 15 minutes             latest release, into the volume
+```
+
+1. **The fork copies the releases** (syncing a fork never does). Put
+   [deploy/github/mirror-releases.yml](../deploy/github/mirror-releases.yml) in the fork as
+   `.github/workflows/mirror-releases.yml`, on its default branch, and follow the three steps at the top of that
+   file: enable Actions in the fork, add the `UPSTREAM_TOKEN` secret (a fine-grained token that reads the upstream
+   repository, Contents read-only), check `UPSTREAM`. It copies the latest release, its notes and every file, as
+   a draft first and published only once complete. **Actions → Mirror upstream releases → Run workflow** runs it
+   at once.
+2. **The server takes the fork's latest release.** The `desktop-sync` service
+   ([deploy/docker/desktop-sync.sh](../deploy/docker/desktop-sync.sh)) looks every 5 minutes. In Openship, on the
+   `desktop-sync` service (or in `.env`):
+
+   | Setting                  | Value                                                                                              |
+   | ------------------------ | -------------------------------------------------------------------------------------------------- |
+   | `DESKTOP_RELEASES_REPO`  | The fork, `owner/name`. Empty: the service idles and `/desktop/` stays empty.                      |
+   | `DESKTOP_RELEASES_TOKEN` | A fine-grained token: repository access the fork only, Contents read-only. Needed for a private fork. |
+   | `DESKTOP_SYNC_INTERVAL`  | Seconds between two looks (300).                                                                   |
+   | `DESKTOP_KEEP_DAYS`      | Days the files of older releases are kept after a new one (30), for clients mid-download.          |
+
+   It downloads the installer and the `.blockmap` first, each under a hidden name, checks its size, and renames
+   it; `latest.yml` comes **last**, so a client never reads a manifest naming an installer that is not there yet.
+   Drafts and pre-releases are never taken. Its log (`docker compose logs desktop-sync`, or the service's Logs
+   tab) shows each release: «release v0.2.4 is served».
+
+The server can also read the upstream repository directly (`DESKTOP_RELEASES_REPO=BaraaJadaan/hiring-management`
+with a token that reads it); then the fork's workflow is not needed.
+
+Keep the tokens in GitHub's secrets and Openship's settings only, and give each one read access to one
+repository. A token that ends stops the copying: the workflow's run and the service's log say so.
+
+Rules for the desktop app's releases:
+
+- **Never publish a different file under a name that was published**: browsers and Cloudflare keep an installer
+  for a year. A new build is a new version number.
+- **To withdraw a release**, delete it (or mark it a pre-release) in both the upstream repository and the fork: the
+  previous one becomes the latest, and the server serves it again within minutes.
+- The files are not in `backup.sh`: GitHub keeps them.
+
+Check from any machine:
+
+```bash
+curl -sI https://rec.1005.date/desktop/latest.yml | grep -iE '^HTTP|cache-control|cf-cache-status'
+#   HTTP/2 200, cache-control: no-store…, cf-cache-status: DYNAMIC or BYPASS (never HIT)
+curl -s https://rec.1005.date/desktop/latest.yml                  # the manifest, not the frontend's HTML
+curl -sI https://rec.1005.date/desktop/no-such-file | head -1      # 404
+```
+
+### 13.2 Publishing by hand (when GitHub cannot be used)
+
+Over SSH, never through the site: the three files at the top of the `desktop-releases` volume, `latest.yml`
+**last**. Set `DESKTOP_RELEASES_REPO` empty first, or `desktop-sync` puts GitHub's latest release back.
 
 ```bash
 # On your PC: the release's three files, to a folder on the server.
-scp "Recruitment-Setup-1.4.0.exe" "Recruitment-Setup-1.4.0.exe.blockmap" latest.yml admin@SERVER:/tmp/desktop-release/
+scp "Kafaa-Setup-0.2.4.exe" "Kafaa-Setup-0.2.4.exe.blockmap" latest.yml admin@SERVER:/tmp/desktop-release/
 ```
 
 ```bash
@@ -351,25 +406,7 @@ sudo install -m 644 latest.yml "$DESKTOP_DIR/.latest.yml.new" && sudo mv "$DESKT
 rm -r /tmp/desktop-release
 ```
 
-Rules:
-
-- **Never upload a different file under a name that was published**: browsers and Cloudflare keep an installer for a
-  year. A new build is a new version number.
-- **Keep the previous version's installer and blockmap** for a while (clients in the middle of a download), then
-  delete the older ones: `sudo ls -l "$DESKTOP_DIR"`, `sudo rm "$DESKTOP_DIR/Recruitment-Setup-1.2.0.exe"*`.
-- **To withdraw a release**, put the previous `latest.yml` back (the same way, last and at once).
-- The files are not in `backup.sh`: they can be built again from the desktop app's tagged sources.
-
-Check from any machine:
-
-```bash
-curl -sI https://rec.1005.date/desktop/latest.yml | grep -iE '^HTTP|cache-control|cf-cache-status'
-#   HTTP/2 200, cache-control: no-store…, cf-cache-status: DYNAMIC or BYPASS (never HIT)
-curl -s https://rec.1005.date/desktop/latest.yml                  # the manifest, not the frontend's HTML
-curl -sI https://rec.1005.date/desktop/no-such-file | head -1      # 404
-```
-
-### 13.2 Cloudflare (`1005.date`)
+### 13.3 Cloudflare (`1005.date`)
 
 The site is behind Cloudflare, which can cache and challenge what the app asks for. The app cannot answer a
 challenge (a JavaScript or CAPTCHA page breaks the update), so in the Cloudflare dashboard of `1005.date`:
